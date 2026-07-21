@@ -71,6 +71,7 @@ if "schedule:" not in read(".github/workflows/system.yml") or "schedule:" not in
     raise SystemExit("system and optional package checks must be scheduled")
 
 common = read("scripts/ryzen/worker-common.sh")
+system_stage = read("scripts/ryzen/stages/system.sh")
 for stage in ("system", "packages", "iso"):
     if not (ROOT / f"scripts/ryzen/stages/{stage}.sh").is_file():
         raise SystemExit(f"missing stage {stage}")
@@ -80,6 +81,10 @@ if common.rfind('"${RESULT}/complete.json"') < common.rfind("--immutable"):
     raise SystemExit("completion marker is not the last immutable repository write")
 if "FREESENSE_DIST_WORLD_ARCHIVE" not in common:
     raise SystemExit("system world is not seeded from pinned base.txz")
+distfiles_dir = "mkdir -p /usr/ports/distfiles"
+source_archive = "tar czf /usr/ports/distfiles/freesense-src.tar.gz"
+if distfiles_dir not in system_stage or system_stage.find(distfiles_dir) > system_stage.find(source_archive):
+    raise SystemExit("system source archive is written before its distfiles directory exists")
 
 lock = json.loads(read("config/freebsd-16.json"))
 if lock.get("schema_version") != "freesense.freebsd-pin/v2" or not lock.get("ready"):
