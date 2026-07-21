@@ -46,7 +46,7 @@ func TestSmokeRejectsConflictingExistingMarker(t *testing.T) {
 	key := filepath.Join(
 		root,
 		"smoke",
-		"credential-broker",
+		"broker",
 		"0123456789abcdef0123456789abcdef01234567.json",
 	)
 	if err := os.MkdirAll(filepath.Dir(key), 0o755); err != nil {
