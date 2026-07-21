@@ -12,6 +12,7 @@ mkdir -p /root/work/system/All
 find "${core}" -type f -name '*.pkg' -exec cp {} /root/work/system/All/ \;
 
 create_jail
+configure_poudriere
 export REPO_KIND=system OVERLAY_DIR=/root/freesense-system-ports
 ./build.sh --update-poudriere-ports
 cp tools/conf/pfPorts/poudriere_system tools/conf/pfPorts/poudriere_bulk
@@ -20,7 +21,6 @@ rm -f /usr/ports/distfiles/freesense-src.tar.gz
 tar czf /usr/ports/distfiles/freesense-src.tar.gz -C /root \
   --exclude='freesense-src/.git' --exclude='freesense-src/tmp' \
   --exclude='freesense-src/logs' freesense-src
-grep -qx 'NOLINUX=yes' /usr/local/etc/poudriere.conf
 env NOLINUX=yes ./build.sh --update-pkg-repo
 latest=$(find /usr/local/poudriere/data/packages -type l -name .latest -exec realpath {} \; | head -1)
 test -n "${latest}"

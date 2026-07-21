@@ -84,10 +84,12 @@ if "FREESENSE_DIST_WORLD_ARCHIVE" not in common:
     raise SystemExit("system world is not seeded from pinned base.txz")
 distfiles_dir = "mkdir -p /usr/ports/distfiles"
 source_archive = "tar czf /usr/ports/distfiles/freesense-src.tar.gz"
+if "configure_poudriere()" not in common or "NOLINUX=yes" not in common:
+    raise SystemExit("runner must explicitly configure Poudriere without Linux compatibility modules")
 for name, stage in (("system", system_stage), ("packages", packages_stage)):
     if distfiles_dir not in stage or stage.find(distfiles_dir) > stage.find(source_archive):
         raise SystemExit(f"{name} source archive is written before its distfiles directory exists")
-    nolinux_config = "grep -qx 'NOLINUX=yes' /usr/local/etc/poudriere.conf"
+    nolinux_config = "configure_poudriere"
     nolinux_bulk = "env NOLINUX=yes ./build.sh --update-pkg-repo"
     if nolinux_config not in stage or nolinux_bulk not in stage:
         raise SystemExit(f"{name} bulk build may load unused Linux compatibility modules")

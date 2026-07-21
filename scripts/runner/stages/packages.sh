@@ -2,6 +2,7 @@ configure_source
 fetch_repository system "${SYSTEM_ID}" /root/system-repo
 cd /root/freesense-src
 create_jail
+configure_poudriere
 export REPO_KIND=packages OVERLAY_DIR=/root/freesense-packages
 export FREESENSE_SYSTEM_OVERLAY_DIR=/root/freesense-system-ports
 ./build.sh --update-poudriere-ports
@@ -20,7 +21,6 @@ rm -f /usr/ports/distfiles/freesense-src.tar.gz
 tar czf /usr/ports/distfiles/freesense-src.tar.gz -C /root \
   --exclude='freesense-src/.git' --exclude='freesense-src/tmp' \
   --exclude='freesense-src/logs' freesense-src
-grep -qx 'NOLINUX=yes' /usr/local/etc/poudriere.conf
 env NOLINUX=yes ./build.sh --update-pkg-repo
 latest=$(find /usr/local/poudriere/data/packages -type l -name .latest -exec realpath {} \; | head -1)
 mkdir -p /root/work/packages/All

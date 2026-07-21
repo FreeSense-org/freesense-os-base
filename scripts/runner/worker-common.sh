@@ -95,6 +95,16 @@ export FREESENSE_CHANNEL_PUBLIC_KEY_FILE="/root/sign/channel-public.pem"
 EOF
 }
 
+configure_poudriere() {
+  config=/usr/local/etc/poudriere.conf
+  mkdir -p "$(dirname "${config}")"
+  touch "${config}"
+  if ! grep -qx 'NOLINUX=yes' "${config}"; then
+    printf '\n# FreeSense builds do not need Linux compatibility modules.\nNOLINUX=yes\n' >>"${config}"
+  fi
+  grep -qx 'NOLINUX=yes' "${config}"
+}
+
 create_jail() {
   [ -s /root/jail-base.txz ] || fetch_input "${JAIL_OBJECT}" /root/jail-base.txz
   poudriere jail -c -j FreeSense_main_amd64 -a amd64.amd64 \
