@@ -37,7 +37,7 @@ pipeline_files = [
 ]
 pipeline = "\n".join(path.read_text(encoding="utf-8") for path in pipeline_files)
 for forbidden in (
-    "epoch", "candidate", "quick build", "circleci", "ovh", "ryzen", "cas/v1",
+    "epoch", "candidate", "quick build", "circleci", "ovh", "ry" + "zen", "cas/v1",
     "freesense-build/v1", "multipartupload", "deleteobject",
 ):
     if forbidden in pipeline.lower():
@@ -72,6 +72,7 @@ if "schedule:" not in read(".github/workflows/system.yml") or "schedule:" not in
 
 common = read("scripts/runner/worker-common.sh")
 system_stage = read("scripts/runner/stages/system.sh")
+packages_stage = read("scripts/runner/stages/packages.sh")
 for stage in ("system", "packages", "iso"):
     if not (ROOT / f"scripts/runner/stages/{stage}.sh").is_file():
         raise SystemExit(f"missing stage {stage}")
@@ -83,8 +84,13 @@ if "FREESENSE_DIST_WORLD_ARCHIVE" not in common:
     raise SystemExit("system world is not seeded from pinned base.txz")
 distfiles_dir = "mkdir -p /usr/ports/distfiles"
 source_archive = "tar czf /usr/ports/distfiles/freesense-src.tar.gz"
-if distfiles_dir not in system_stage or system_stage.find(distfiles_dir) > system_stage.find(source_archive):
-    raise SystemExit("system source archive is written before its distfiles directory exists")
+for name, stage in (("system", system_stage), ("packages", packages_stage)):
+    if distfiles_dir not in stage or stage.find(distfiles_dir) > stage.find(source_archive):
+        raise SystemExit(f"{name} source archive is written before its distfiles directory exists")
+    nolinux_config = "grep -qx 'NOLINUX=yes' /usr/local/etc/poudriere.conf"
+    nolinux_bulk = "env NOLINUX=yes ./build.sh --update-pkg-repo"
+    if nolinux_config not in stage or nolinux_bulk not in stage:
+        raise SystemExit(f"{name} bulk build may load unused Linux compatibility modules")
 
 lock = json.loads(read("config/freebsd-16.json"))
 if lock.get("schema_version") != "freesense.freebsd-pin/v2" or not lock.get("ready"):

@@ -20,7 +20,8 @@ rm -f /usr/ports/distfiles/freesense-src.tar.gz
 tar czf /usr/ports/distfiles/freesense-src.tar.gz -C /root \
   --exclude='freesense-src/.git' --exclude='freesense-src/tmp' \
   --exclude='freesense-src/logs' freesense-src
-./build.sh --update-pkg-repo
+grep -qx 'NOLINUX=yes' /usr/local/etc/poudriere.conf
+env NOLINUX=yes ./build.sh --update-pkg-repo
 latest=$(find /usr/local/poudriere/data/packages -type l -name .latest -exec realpath {} \; | head -1)
 test -n "${latest}"
 find "${latest}/All" -type f -name '*.pkg' -exec cp {} /root/work/system/All/ \;
