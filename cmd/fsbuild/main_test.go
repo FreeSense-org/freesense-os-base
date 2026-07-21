@@ -1,0 +1,209 @@
+package main
+
+import (
+	"encoding/json"
+	"strings"
+	"testing"
+)
+
+const (
+	resultID   = "1111111111111111111111111111111111111111111111111111111111111111"
+	systemID   = "2222222222222222222222222222222222222222222222222222222222222222"
+	platformID = "3333333333333333333333333333333333333333333333333333333333333333"
+	otherID    = "4444444444444444444444444444444444444444444444444444444444444444"
+	isoSHA256  = "5555555555555555555555555555555555555555555555555555555555555555"
+)
+
+func TestValidateResultMarkerAcceptsCompleteClosures(t *testing.T) {
+	tests := []struct {
+		name       string
+		stage      string
+		id         string
+		systemID   string
+		platformID string
+		marker     resultMarker
+	}{
+		{
+			name:       "system",
+			stage:      "system",
+			id:         systemID,
+			platformID: platformID,
+			marker:     repositoryMarker("system", systemID, systemID, platformID),
+		},
+		{
+			name:       "packages",
+			stage:      "packages",
+			id:         resultID,
+			systemID:   systemID,
+			platformID: platformID,
+			marker:     repositoryMarker("packages", resultID, systemID, platformID),
+		},
+		{
+			name:       "iso",
+			stage:      "iso",
+			id:         resultID,
+			systemID:   systemID,
+			platformID: platformID,
+			marker:     isoMarker(resultID, systemID, platformID, "FreeSense-16-devel.iso"),
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			marker, err := validateResultMarker(
+				test.stage,
+				test.id,
+				test.systemID,
+				test.platformID,
+				1,
+				marshalMarker(t, test.marker),
+			)
+			if err != nil {
+				t.Fatalf("validateResultMarker() error = %v", err)
+			}
+			if marker.Fingerprint != test.id {
+				t.Fatalf("validated fingerprint = %q, want %q", marker.Fingerprint, test.id)
+			}
+		})
+	}
+}
+
+func TestValidateResultMarkerRejectsBrokenClosures(t *testing.T) {
+	tests := []struct {
+		name       string
+		stage      string
+		id         string
+		systemID   string
+		platformID string
+		marker     resultMarker
+		wantError  string
+	}{
+		{
+			name:       "generation mismatch",
+			stage:      "system",
+			id:         systemID,
+			platformID: platformID,
+			marker:     repositoryMarker("system", systemID, systemID, platformID),
+			wantError:  "different generation",
+		},
+		{
+			name:       "system platform mismatch",
+			stage:      "system",
+			id:         systemID,
+			platformID: platformID,
+			marker:     repositoryMarker("system", systemID, systemID, otherID),
+			wantError:  "invalid closure",
+		},
+		{
+			name:       "system identity mismatch",
+			stage:      "system",
+			id:         systemID,
+			platformID: platformID,
+			marker:     repositoryMarker("system", systemID, otherID, platformID),
+			wantError:  "invalid identity",
+		},
+		{
+			name:       "packages system mismatch",
+			stage:      "packages",
+			id:         resultID,
+			systemID:   systemID,
+			platformID: platformID,
+			marker:     repositoryMarker("packages", resultID, otherID, platformID),
+			wantError:  "different system",
+		},
+		{
+			name:       "iso platform mismatch",
+			stage:      "iso",
+			id:         resultID,
+			systemID:   systemID,
+			platformID: platformID,
+			marker:     isoMarker(resultID, systemID, otherID, "FreeSense.iso"),
+			wantError:  "invalid closure",
+		},
+		{
+			name:       "iso system mismatch",
+			stage:      "iso",
+			id:         resultID,
+			systemID:   systemID,
+			platformID: platformID,
+			marker:     isoMarker(resultID, otherID, platformID, "FreeSense.iso"),
+			wantError:  "invalid closure",
+		},
+		{
+			name:       "unsafe iso file",
+			stage:      "iso",
+			id:         resultID,
+			systemID:   systemID,
+			platformID: platformID,
+			marker:     isoMarker(resultID, systemID, platformID, "../FreeSense.iso"),
+			wantError:  "invalid closure",
+		},
+		{
+			name:       "content identity mismatch",
+			stage:      "packages",
+			id:         resultID,
+			systemID:   systemID,
+			platformID: platformID,
+			marker:     repositoryMarker("packages", otherID, systemID, platformID),
+			wantError:  "conflicts with its content ID",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			expectedGeneration := uint64(1)
+			if test.name == "generation mismatch" {
+				expectedGeneration = 2
+			}
+			_, err := validateResultMarker(
+				test.stage,
+				test.id,
+				test.systemID,
+				test.platformID,
+				expectedGeneration,
+				marshalMarker(t, test.marker),
+			)
+			if err == nil {
+				t.Fatal("validateResultMarker() unexpectedly succeeded")
+			}
+			if !strings.Contains(err.Error(), test.wantError) {
+				t.Fatalf("validateResultMarker() error = %q, want substring %q", err, test.wantError)
+			}
+		})
+	}
+}
+
+func repositoryMarker(stage, fingerprint, boundSystem, platform string) resultMarker {
+	marker := resultMarker{
+		SchemaVersion: "freesense.artifact/v1",
+		Stage:         stage,
+		Fingerprint:   fingerprint,
+		Generation:    1,
+	}
+	marker.Inputs.Platform = platform
+	marker.Inputs.System = boundSystem
+	return marker
+}
+
+func isoMarker(fingerprint, system, platform, file string) resultMarker {
+	marker := resultMarker{
+		SchemaVersion: "freesense.iso/v1",
+		Fingerprint:   fingerprint,
+		Generation:    1,
+		System:        system,
+		SHA256:        isoSHA256,
+		Size:          1024,
+		File:          file,
+	}
+	marker.Inputs.Platform = platform
+	return marker
+}
+
+func marshalMarker(t *testing.T, marker resultMarker) []byte {
+	t.Helper()
+	data, err := json.Marshal(marker)
+	if err != nil {
+		t.Fatalf("json.Marshal() error = %v", err)
+	}
+	return data
+}

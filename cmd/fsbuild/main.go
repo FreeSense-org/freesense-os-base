@@ -3,6 +3,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -97,6 +98,7 @@ func commandChannel(ctx context.Context, args []string) error {
 	case "update":
 		artifactURL := flags.String("url", "", "immutable public artifact URL")
 		generation := flags.Uint64("generation", 0, "reserved build generation")
+		systemFingerprint := flags.String("system-fingerprint", "", "exact system fingerprint required for packages")
 		packageTrain := flags.String("package-train", "", "major.minor compatibility train")
 		abi := flags.String("abi", "FreeBSD:16:amd64", "pkg ABI")
 		altABI := flags.String("altabi", "freebsd:16:x86:64", "pkg alternate ABI")
@@ -110,7 +112,7 @@ func commandChannel(ctx context.Context, args []string) error {
 		}
 		mutate = func(payload control.Payload) (control.Payload, error) {
 			return control.Update(payload, control.UpdateOptions{
-				Channel: "devel", Component: *component, Fingerprint: *fingerprint,
+				Channel: "devel", Component: *component, Fingerprint: *fingerprint, SystemFingerprint: *systemFingerprint,
 				URL: *artifactURL, Generation: *generation, PackageTrain: *packageTrain,
 				ABI: *abi, AltABI: *altABI, PublishedAt: when,
 			})
@@ -161,8 +163,13 @@ func commandChannel(ctx context.Context, args []string) error {
 	for attempt := 1; attempt <= 5; attempt++ {
 		existing, getErr := backend.Get(ctx, control.ManifestKey)
 		payload := control.Payload{}
+		var beforeMutation []byte
 		if getErr == nil {
 			payload, err = control.ParseSigned(existing.Data, &privateKey.PublicKey)
+			if err != nil {
+				return err
+			}
+			beforeMutation, err = json.Marshal(payload)
 			if err != nil {
 				return err
 			}
@@ -172,6 +179,17 @@ func commandChannel(ctx context.Context, args []string) error {
 		payload, err = mutate(payload)
 		if err != nil {
 			return err
+		}
+		if getErr == nil {
+			afterMutation, marshalErr := json.Marshal(payload)
+			if marshalErr != nil {
+				return marshalErr
+			}
+			if bytes.Equal(beforeMutation, afterMutation) {
+				return writeJSON(*output, map[string]any{
+					"updated": false, "attempt": attempt, "sha256": store.BytesContent(existing.Data).SHA256,
+				})
+			}
 		}
 		encoded, err := control.MarshalSigned(payload, privateKey)
 		if err != nil {
@@ -201,19 +219,25 @@ func commandChannel(ctx context.Context, args []string) error {
 
 func commandResult(ctx context.Context, args []string) error {
 	if len(args) == 0 || args[0] != "check" {
-		return errors.New("usage: fsbuild result check --stage NAME --id SHA256 --github-output PATH")
+		return errors.New("usage: fsbuild result check --stage NAME --id SHA256 --platform-id SHA256 [--generation NUMBER] [--system-id SHA256] --github-output PATH")
 	}
 	flags := newFlagSet("result check")
 	stage := flags.String("stage", "", "platform, system, packages, or iso")
 	id := flags.String("id", "", "content-derived result ID")
+	systemID := flags.String("system-id", "", "exact required system for packages or ISO")
+	platformID := flags.String("platform-id", "", "exact platform closure")
 	packageTrain := flags.String("package-train", "", "required for optional package results")
+	generation := flags.Uint64("generation", 0, "expected reserved or selected generation")
 	githubOutput := flags.String("github-output", os.Getenv("GITHUB_OUTPUT"), "GitHub output file")
 	if err := parseFlags(flags, args[1:]); err != nil {
 		return err
 	}
-	if !map[string]bool{"platform": true, "system": true, "packages": true, "iso": true}[*stage] ||
-		!sha256Pattern.MatchString(*id) {
+	if !map[string]bool{"system": true, "packages": true, "iso": true}[*stage] ||
+		!sha256Pattern.MatchString(*id) || !sha256Pattern.MatchString(*platformID) {
 		return errors.New("result stage or ID is invalid")
+	}
+	if (*stage == "packages" || *stage == "iso") && !sha256Pattern.MatchString(*systemID) {
+		return errors.New("packages and ISO result checks require --system-id")
 	}
 	backend, err := openStore()
 	if err != nil {
@@ -226,18 +250,33 @@ func commandResult(ctx context.Context, args []string) error {
 		}
 		key = fmt.Sprintf("artifacts/packages/%s/%s/complete.json", *packageTrain, *id)
 	}
-	object, err := backend.Get(ctx, key)
+	object, err := store.GetArtifact(ctx, backend, key)
 	complete := false
 	if errors.Is(err, store.ErrNotFound) {
 		complete = false
 	} else if err != nil {
 		return err
 	} else {
-		var marker struct {
-			Fingerprint string `json:"fingerprint"`
+		marker, validateErr := validateResultMarker(*stage, *id, *systemID, *platformID, *generation, object.Data)
+		if validateErr != nil {
+			return validateErr
 		}
-		if json.Unmarshal(object.Data, &marker) != nil || marker.Fingerprint != *id {
-			return errors.New("result completion marker conflicts with its content ID")
+		if *stage == "iso" {
+			info, headErr := store.HeadArtifact(ctx, backend, fmt.Sprintf("artifacts/iso/%s/%s", *id, marker.File))
+			if headErr != nil || info.Size != marker.Size || (info.SHA256 != "" && info.SHA256 != marker.SHA256) {
+				return errors.New("ISO completion marker does not match its immutable image")
+			}
+		} else {
+			prefix := fmt.Sprintf("artifacts/%s/%s/amd64", *stage, *id)
+			if *stage == "packages" {
+				prefix = fmt.Sprintf("artifacts/packages/%s/%s/amd64", *packageTrain, *id)
+			}
+			for _, catalog := range []string{"meta.conf", "packagesite.pkg"} {
+				info, headErr := store.HeadArtifact(ctx, backend, prefix+"/"+catalog)
+				if headErr != nil || info.Size <= 0 {
+					return errors.New("repository completion marker is missing a required catalog")
+				}
+			}
 		}
 		complete = true
 	}
@@ -251,6 +290,49 @@ func commandResult(ctx context.Context, args []string) error {
 	defer file.Close()
 	_, err = fmt.Fprintf(file, "complete=%t\n", complete)
 	return err
+}
+
+type resultMarker struct {
+	SchemaVersion string `json:"schema_version"`
+	Stage         string `json:"stage"`
+	Fingerprint   string `json:"fingerprint"`
+	Generation    uint64 `json:"generation"`
+	System        string `json:"system"`
+	SHA256        string `json:"sha256"`
+	Size          int64  `json:"size"`
+	File          string `json:"file"`
+	Inputs        struct {
+		Platform string `json:"platform"`
+		System   string `json:"system"`
+	} `json:"inputs"`
+}
+
+func validateResultMarker(stage, id, systemID, platformID string, generation uint64, data []byte) (resultMarker, error) {
+	var marker resultMarker
+	if err := json.Unmarshal(data, &marker); err != nil || marker.Fingerprint != id || marker.Generation == 0 {
+		return resultMarker{}, errors.New("result completion marker conflicts with its content ID")
+	}
+	if generation != 0 && marker.Generation != generation {
+		return resultMarker{}, errors.New("result completion marker belongs to a different generation")
+	}
+	if stage == "iso" {
+		if marker.SchemaVersion != "freesense.iso/v1" || marker.System != systemID ||
+			marker.Inputs.Platform != platformID || !sha256Pattern.MatchString(marker.SHA256) || marker.Size <= 0 ||
+			!regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*\.iso$`).MatchString(marker.File) {
+			return resultMarker{}, errors.New("ISO completion marker has an invalid closure")
+		}
+		return marker, nil
+	}
+	if marker.SchemaVersion != "freesense.artifact/v1" || marker.Stage != stage || marker.Inputs.Platform != platformID {
+		return resultMarker{}, errors.New("repository completion marker has an invalid closure")
+	}
+	if stage == "system" && marker.Inputs.System != id {
+		return resultMarker{}, errors.New("system completion marker has an invalid identity")
+	}
+	if stage == "packages" && marker.Inputs.System != systemID {
+		return resultMarker{}, errors.New("packages completion marker is bound to a different system")
+	}
+	return marker, nil
 }
 
 func commandBlob(ctx context.Context, args []string) error {

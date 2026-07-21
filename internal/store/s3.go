@@ -92,6 +92,17 @@ func NewS3(config S3Config) (*S3, error) {
 }
 
 func (s3 *S3) Get(ctx context.Context, key string) (Object, error) {
+	return s3.get(ctx, key, true)
+}
+
+// GetArtifact accepts artifacts uploaded by rclone, which does not attach
+// fsbuild's custom SHA-256 metadata. The downloaded bytes are always hashed;
+// metadata is verified whenever it is present.
+func (s3 *S3) GetArtifact(ctx context.Context, key string) (Object, error) {
+	return s3.get(ctx, key, false)
+}
+
+func (s3 *S3) get(ctx context.Context, key string, requireMetadata bool) (Object, error) {
 	response, err := s3.do(ctx, http.MethodGet, key, "", Content{})
 	if err != nil {
 		return Object{}, err
@@ -101,13 +112,18 @@ func (s3 *S3) Get(ctx context.Context, key string) (Object, error) {
 	if err != nil {
 		return Object{}, fmt.Errorf("read S3 object %q: %w", key, err)
 	}
-	expected, err := responseSHA256(response, key)
+	var expected string
+	if requireMetadata {
+		expected, err = responseSHA256(response, key)
+	} else {
+		expected, err = optionalResponseSHA256(response, key)
+	}
 	if err != nil {
 		return Object{}, err
 	}
 	sum := sha256.Sum256(data)
 	actual := hex.EncodeToString(sum[:])
-	if actual != expected {
+	if expected != "" && actual != expected {
 		return Object{}, fmt.Errorf("S3 object %q failed SHA-256 verification", key)
 	}
 	return Object{
@@ -117,12 +133,27 @@ func (s3 *S3) Get(ctx context.Context, key string) (Object, error) {
 }
 
 func (s3 *S3) Head(ctx context.Context, key string) (ObjectInfo, error) {
+	return s3.head(ctx, key, true)
+}
+
+// HeadArtifact permits absent fsbuild metadata for rclone-created artifacts.
+// If metadata exists it is still required to be a valid SHA-256 value.
+func (s3 *S3) HeadArtifact(ctx context.Context, key string) (ObjectInfo, error) {
+	return s3.head(ctx, key, false)
+}
+
+func (s3 *S3) head(ctx context.Context, key string, requireMetadata bool) (ObjectInfo, error) {
 	response, err := s3.do(ctx, http.MethodHead, key, "", Content{})
 	if err != nil {
 		return ObjectInfo{}, err
 	}
 	defer response.Body.Close()
-	digest, err := responseSHA256(response, key)
+	var digest string
+	if requireMetadata {
+		digest, err = responseSHA256(response, key)
+	} else {
+		digest, err = optionalResponseSHA256(response, key)
+	}
 	if err != nil {
 		return ObjectInfo{}, err
 	}
@@ -765,9 +796,28 @@ func parseHTTPTime(value string) time.Time {
 	return parsed.UTC()
 }
 
-func responseSHA256(response *http.Response, key string) (string, error) {
-	digest := strings.TrimSpace(response.Header.Get("x-amz-meta-fsbuild-sha256"))
+func optionalResponseSHA256(response *http.Response, key string) (string, error) {
+	const metadataName = "x-amz-meta-fsbuild-sha256"
+	present := false
+	for name := range response.Header {
+		if strings.EqualFold(name, metadataName) {
+			present = true
+			break
+		}
+	}
+	if !present {
+		return "", nil
+	}
+	digest := strings.TrimSpace(response.Header.Get(metadataName))
 	if !validSHA256(digest) {
+		return "", fmt.Errorf("S3 object %q has invalid fsbuild SHA-256 metadata", key)
+	}
+	return digest, nil
+}
+
+func responseSHA256(response *http.Response, key string) (string, error) {
+	digest, err := optionalResponseSHA256(response, key)
+	if err != nil || digest == "" {
 		return "", fmt.Errorf("S3 object %q has no valid fsbuild SHA-256 metadata", key)
 	}
 	return digest, nil

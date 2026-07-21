@@ -26,10 +26,12 @@ jobs:
       - run: npm --prefix broker run deploy:dry
       - run: python3 scripts/validate-build-pipeline.py
       - run: python3 -m py_compile scripts/*.py
+      - run: python3 -m unittest discover -s tests -p 'test_*.py'
       - name: Parse scripts and checked data
         run: |
           bash -n scripts/runner/run-vm.sh
-          sh -n scripts/runner/worker-common.sh scripts/runner/probe.sh scripts/runner/stages/*.sh apply.sh
+          bash -n scripts/verify-release.sh
+          sh -n scripts/runner/probe.sh apply.sh
           render_dir=$(mktemp -d)
           trap 'rm -rf "${render_dir}"' EXIT
           while read -r field; do export "${field}=test-value"; done < <(

@@ -1,35 +1,46 @@
 configure_source
 fetch_repository system "${SYSTEM_ID}" /root/system-repo
 cd /root/freesense-src
-create_jail
 configure_poudriere
+create_jail
 export REPO_KIND=packages OVERLAY_DIR=/root/freesense-packages
 export FREESENSE_SYSTEM_OVERLAY_DIR=/root/freesense-system-ports
 phase optional-ports-tree
 ./build.sh --update-poudriere-ports
 cp tools/conf/pfPorts/poudriere_packages tools/conf/pfPorts/poudriere_bulk
 
-# Seed Poudriere with the already-tested system packages. It will build only
-# changed optional ports and their missing dependencies.
-cache=/usr/local/poudriere/data/packages/FreeSense_main_amd64-FreeSense_main/.real_system
-mkdir -p "${cache}/All"
-cp /root/system-repo/All/*.pkg "${cache}/All/"
-pkg repo "${cache}"
-ln -sfn .real_system "${cache%/.real_system}/.latest"
+phase optional-system-seed
+seed_poudriere_repository /root/system-repo
+phase optional-system-seed-ready
 
 create_source_archive
 phase optional-packages-build
 env NOLINUX=yes ./build.sh --update-pkg-repo
 phase optional-packages-ready
-latest=$(find /usr/local/poudriere/data/packages -type l -name .latest -exec realpath {} \; | head -1)
-test -n "${latest}"
+latest=$(poudriere_latest_repository)
 mkdir -p /root/work/packages/All
-: >/tmp/system-names
-for package in /root/system-repo/All/*.pkg; do pkg query -F "${package}" '%n' >>/tmp/system-names; done
-sort -u /tmp/system-names -o /tmp/system-names
-for package in "${latest}"/All/*.pkg; do
-  name=$(pkg query -F "${package}" '%n')
-  grep -qx "${name}" /tmp/system-names || cp "${package}" /root/work/packages/All/
+inventory=/tmp/combined-package-inventory
+: >"${inventory}"
+for package in /root/system-repo/All/*.pkg; do
+  inventory_package "${package}" "${inventory}"
 done
+for package in "${latest}"/All/*.pkg; do
+  merge_package "${package}" /root/work/packages/All "${inventory}" identical
+done
+phase optional-closure-check
+: >/tmp/available-packages
+for package in /root/system-repo/All/*.pkg /root/work/packages/All/*.pkg; do
+  pkg query -F "${package}" '%n|%v' >>/tmp/available-packages
+done
+sort -u /tmp/available-packages -o /tmp/available-packages
+for package in /root/work/packages/All/*.pkg; do
+  pkg query -F "${package}" '%dn|%dv' | while IFS= read -r dependency; do
+    [ -z "${dependency}" ] || grep -Fqx "${dependency}" /tmp/available-packages || {
+      echo "optional package dependency is absent from the combined System/package closure: ${dependency}" >&2
+      exit 1
+    }
+  done
+done
+phase optional-closure-ready
 sign_repository /root/work/packages
 publish_repository /root/work/packages

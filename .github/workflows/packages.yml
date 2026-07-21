@@ -2,14 +2,16 @@ name: Optional packages
 
 on:
   workflow_dispatch:
-  schedule:
-    - cron: "17 3 * * *"
+  workflow_run:
+    workflows: [System]
+    types: [completed]
 
 permissions: {contents: read, id-token: write}
 concurrency: {group: package-planner, cancel-in-progress: false}
 
 jobs:
   plan:
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-24.04
     environment: build-coordinator
     outputs:
@@ -35,7 +37,11 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with: {go-version-file: go.mod, cache: false}
       - id: plan
-        run: python3 scripts/plan.py packages --os-base-sha "${GITHUB_SHA}" --github-output "${GITHUB_OUTPUT}"
+        run: |
+          python3 scripts/channel.py --public-key config/channel-signing-public.pem \
+            --channel devel --component system --json-output "${RUNNER_TEMP}/system.json"
+          python3 scripts/plan.py packages --system-closure "${RUNNER_TEMP}/system.json" \
+            --github-output "${GITHUB_OUTPUT}"
       - if: steps.plan.outputs.needed == 'true'
         run: go build -trimpath -o "${RUNNER_TEMP}/fsbuild" ./cmd/fsbuild
       - if: steps.plan.outputs.needed == 'true'
@@ -108,6 +114,7 @@ jobs:
           key=$(mktemp); trap 'rm -f "$key"' EXIT; chmod 600 "$key"; printf '%s' "${SIGNING_KEY}" >"$key"
           "${RUNNER_TEMP}/fsbuild" channel update --component packages \
             --fingerprint "${{ needs.plan.outputs.packages }}" \
+            --system-fingerprint "${{ needs.plan.outputs.system }}" \
             --url "${{ needs.plan.outputs.public_base_url }}/artifacts/packages/${{ needs.plan.outputs.package_train }}/${{ needs.plan.outputs.packages }}/amd64" \
             --generation "${{ needs.plan.outputs.generation }}" --package-train "${{ needs.plan.outputs.package_train }}" \
             --abi "${{ needs.plan.outputs.abi }}" --altabi "${{ needs.plan.outputs.altabi }}" \

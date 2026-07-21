@@ -48,40 +48,30 @@ jobs:
           --expected-bucket "${R2_BUCKET}" --expected-prefix v1 --expected-endpoint "${R2_ENDPOINT}"
           --github-env "${GITHUB_ENV}"
       - name: Verify current development repositories
-        if: inputs.operation == 'verify'
+        if: github.event_name == 'schedule' || inputs.operation == 'verify'
         env: {R2_BUCKET: "${{ vars.R2_BUILD_BUCKET }}", FSBUILD_STORE_PREFIX: v1}
-        run: |
-          set -euo pipefail
-          for component in system packages; do
-            output="${RUNNER_TEMP}/${component}.out"
-            python3 scripts/channel.py --public-key "${RUNNER_TEMP}/channel.pub" \
-              --channel devel --component "$component" --github-output "$output"
-            fingerprint=$(sed -n 's/^fingerprint=//p' "$output")
-            url=$(sed -n 's/^url=//p' "$output")
-            curl -fsS --proto '=https' "${url%/amd64}/complete.json" | \
-              jq -e --arg fingerprint "$fingerprint" '.fingerprint == $fingerprint' >/dev/null
-            curl -fsSI --proto '=https' "${url}/meta.conf" >/dev/null
-            curl -fsSI --proto '=https' "${url}/packagesite.pkg" >/dev/null
-            "${RUNNER_TEMP}/fsbuild" channel verify --component "$component" \
-              --fingerprint "$fingerprint" --private-key "${RUNNER_TEMP}/channel.key"
-          done
+        run: >-
+          bash scripts/verify-release.sh "${RUNNER_TEMP}/channel.pub"
+          "${RUNNER_TEMP}/channel.key" "${RUNNER_TEMP}/fsbuild"
       - name: Promote verified components after seven days
         if: github.event_name == 'schedule' || inputs.operation == 'promote'
         env: {R2_BUCKET: "${{ vars.R2_BUILD_BUCKET }}", FSBUILD_STORE_PREFIX: v1}
         run: |
           set -euo pipefail
+          soak_hours=$(jq -er '.stable_soak_hours | select(. > 0)' config/build-policy.json)
           promoted=0
           for component in system packages; do
-            output="${RUNNER_TEMP}/${component}.out"
+            output="${RUNNER_TEMP}/${component}.promote.out"
+            rm -f "$output"
             if ! python3 scripts/channel.py --public-key "${RUNNER_TEMP}/channel.pub" \
               --channel devel --component "$component" --github-output "$output"; then
               continue
             fi
             verified=$(sed -n 's/^verified=//p' "$output")
             published=$(sed -n 's/^published_at=//p' "$output")
-            ready=$(date -u --date="$published + 7 days" +%s)
+            ready=$(date -u --date="$published + ${soak_hours} hours" +%s)
             if [[ "$verified" == true && $(date -u +%s) -ge $ready ]]; then
-              "${RUNNER_TEMP}/fsbuild" channel promote --component "$component" --soak 168h \
+              "${RUNNER_TEMP}/fsbuild" channel promote --component "$component" --soak "${soak_hours}h" \
                 --private-key "${RUNNER_TEMP}/channel.key"
               promoted=$((promoted + 1))
             fi
@@ -94,8 +84,8 @@ jobs:
     environment: build-coordinator
     outputs:
       fingerprint: ${{ steps.plan.outputs.iso }}
-      system: ${{ steps.channel.outputs.fingerprint }}
-      generation: ${{ steps.channel.outputs.generation }}
+      system: ${{ steps.plan.outputs.system }}
+      generation: ${{ steps.plan.outputs.channel_generation }}
       platform: ${{ steps.plan.outputs.platform }}
       source_sha: ${{ steps.plan.outputs.source_sha }}
       system_sha: ${{ steps.plan.outputs.system_sha }}
@@ -107,17 +97,21 @@ jobs:
       jail_object: ${{ steps.plan.outputs.jail_object }}
       package_train: ${{ steps.plan.outputs.package_train }}
       public_base_url: ${{ steps.plan.outputs.public_base_url }}
+      channel: ${{ steps.plan.outputs.channel }}
+      channel_payload_sha256: ${{ steps.plan.outputs.channel_payload_sha256 }}
+      channel_payload_base64: ${{ steps.plan.outputs.channel_payload_base64 }}
+      channel_signature_base64: ${{ steps.plan.outputs.channel_signature_base64 }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       - name: Read signed selected channel
-        id: channel
         run: |
           python3 scripts/channel.py --public-key config/channel-signing-public.pem \
-            --channel "${{ inputs.channel }}" --component system --github-output "$GITHUB_OUTPUT"
+            --channel "${{ inputs.channel }}" --component system \
+            --json-output "${RUNNER_TEMP}/system.json"
       - id: plan
         run: >-
-          python3 scripts/plan.py iso --os-base-sha "${GITHUB_SHA}"
-          --system-id "${{ steps.channel.outputs.fingerprint }}" --github-output "${GITHUB_OUTPUT}"
+          python3 scripts/plan.py iso --system-closure "${RUNNER_TEMP}/system.json"
+          --github-output "${GITHUB_OUTPUT}"
 
   iso:
     needs: iso-plan
@@ -138,4 +132,8 @@ jobs:
       package_train: ${{ needs.iso-plan.outputs.package_train }}
       generation: ${{ needs.iso-plan.outputs.generation }}
       public_base_url: ${{ needs.iso-plan.outputs.public_base_url }}
+      channel: ${{ needs.iso-plan.outputs.channel }}
+      channel_payload_sha256: ${{ needs.iso-plan.outputs.channel_payload_sha256 }}
+      channel_payload_base64: ${{ needs.iso-plan.outputs.channel_payload_base64 }}
+      channel_signature_base64: ${{ needs.iso-plan.outputs.channel_signature_base64 }}
     secrets: inherit

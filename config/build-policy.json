@@ -8,7 +8,7 @@
   "store_prefix": "v1",
   "stable_soak_hours": 168,
   "runner": {
-    "vcpus": 16,
+    "vcpus": 12,
     "memory_mib": 32768,
     "disk_gib": 160
   },

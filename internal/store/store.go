@@ -123,6 +123,32 @@ type Backend interface {
 	DeleteIfMatch(ctx context.Context, key, expectedETag string) error
 }
 
+// ArtifactReader is implemented by backends that need different compatibility
+// handling for immutable build artifacts. Backend.Get and Backend.Head remain
+// strict because input and control objects rely on fsbuild-owned metadata.
+type ArtifactReader interface {
+	GetArtifact(ctx context.Context, key string) (Object, error)
+	HeadArtifact(ctx context.Context, key string) (ObjectInfo, error)
+}
+
+// GetArtifact reads an immutable build result. Backends without a distinct
+// artifact path retain their normal verified Get behavior.
+func GetArtifact(ctx context.Context, backend Backend, key string) (Object, error) {
+	if reader, ok := backend.(ArtifactReader); ok {
+		return reader.GetArtifact(ctx, key)
+	}
+	return backend.Get(ctx, key)
+}
+
+// HeadArtifact inspects an immutable build result. A remote artifact backend
+// may return an empty SHA256 when the uploader did not attach digest metadata.
+func HeadArtifact(ctx context.Context, backend Backend, key string) (ObjectInfo, error) {
+	if reader, ok := backend.(ArtifactReader); ok {
+		return reader.HeadArtifact(ctx, key)
+	}
+	return backend.Head(ctx, key)
+}
+
 func ValidateKey(key string) error {
 	if key == "" || strings.HasPrefix(key, "/") || strings.Contains(key, `\`) {
 		return fmt.Errorf("invalid object key %q", key)

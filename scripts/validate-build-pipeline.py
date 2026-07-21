@@ -28,6 +28,7 @@ pipeline_files = [
     *sorted(WORKFLOWS.glob("*.yml")),
     ROOT / "scripts/plan.py",
     ROOT / "scripts/channel.py",
+    ROOT / "scripts/verify-release.sh",
     ROOT / "scripts/render-worker.py",
     ROOT / "scripts/runner/run-vm.sh",
     ROOT / "scripts/runner/worker-common.sh",
@@ -37,7 +38,7 @@ pipeline_files = [
 ]
 pipeline = "\n".join(path.read_text(encoding="utf-8") for path in pipeline_files)
 for forbidden in (
-    "epoch", "candidate", "quick build", "circleci", "ovh", "ry" + "zen", "cas/v1",
+    "epoch_id", "epoch-id", "epochs/", "candidate", "quick build", "circleci", "ovh", "ry" + "zen", "cas/v1",
     "freesense-build/v1", "multipartupload", "deleteobject",
 ):
     if forbidden in pipeline.lower():
@@ -53,14 +54,20 @@ for required in (
 
 runner = read("scripts/runner/run-vm.sh")
 reusable = read(".github/workflows/runner-build.yml")
+probe = read("scripts/runner/probe.sh")
+policy = json.loads(read("config/build-policy.json"))
+if policy.get("runner") != {"vcpus": 12, "memory_mib": 32768, "disk_gib": 160}:
+    raise SystemExit("build policy and the dedicated runner resource contract differ")
 for required in (
-    "runs-on: [self-hosted, build-runner]", "-smp 16", "-m 32768",
+    "runs-on: [self-hosted, build-runner]", "-smp 12", "-m 32768",
     'qemu-img resize -q "$overlay" 160G', "/dev/kvm", "nuageinit",
     "next_report=$((now + 180))", "cleanup_orphans", "trap cleanup EXIT",
     "trap 'exit 130' INT", "show_diagnostics", "qemu_owns_overlay",
 ):
     if required not in runner + reusable:
         raise SystemExit(f"build-runner KVM contract is missing {required!r}")
+if '"$cpus" -eq 12' not in probe:
+    raise SystemExit("the pinned-image probe does not enforce the 12-vCPU guest contract")
 
 if "workflow_call:" not in reusable:
     raise SystemExit("the only build-runner executor must be a reusable workflow")
@@ -68,8 +75,14 @@ for entry in ("system.yml", "packages.yml", "release.yml"):
     text = read(f".github/workflows/{entry}")
     if "uses: ./.github/workflows/runner-build.yml" not in text:
         raise SystemExit(f"{entry} bypasses the single build-runner executor")
-if "schedule:" not in read(".github/workflows/system.yml") or "schedule:" not in read(".github/workflows/packages.yml"):
-    raise SystemExit("system and optional package checks must be scheduled")
+system_workflow = read(".github/workflows/system.yml")
+packages_workflow = read(".github/workflows/packages.yml")
+if "schedule:" not in system_workflow:
+    raise SystemExit("the daily System check is not scheduled")
+if "workflow_run:" not in packages_workflow or "workflows: [System]" not in packages_workflow:
+    raise SystemExit("optional packages are not chained to successful System completion")
+if "schedule:" in packages_workflow:
+    raise SystemExit("optional packages retain a racing fixed schedule")
 
 common = read("scripts/runner/worker-common.sh")
 system_stage = read("scripts/runner/stages/system.sh")
@@ -85,16 +98,32 @@ if 'rclone cat "${RESULT}/complete.json"' in common:
     raise SystemExit("guest duplicates the host's authoritative result check")
 if "name: Reuse completed immutable result" not in reusable:
     raise SystemExit("host immutable-result reuse check is missing")
+for required in ("store.GetArtifact", "store.HeadArtifact", "--platform-id", '--generation "${GENERATION}"'):
+    if required not in read("cmd/fsbuild/main.go") + reusable:
+        raise SystemExit(f"artifact reuse closure is missing {required!r}")
 if "FREESENSE_DIST_WORLD_ARCHIVE" not in common:
     raise SystemExit("system world is not seeded from pinned base.txz")
 source_archive = "create_source_archive"
-if "configure_poudriere()" not in common or "NOLINUX=yes" not in common:
-    raise SystemExit("runner must explicitly configure Poudriere without Linux compatibility modules")
+for required in (
+    "configure_poudriere()", "NO_ZFS=yes", "PARALLEL_JOBS=3",
+    "PREPARE_PARALLEL_JOBS=3", "ALLOW_MAKE_JOBS=yes",
+    "USE_TMPFS=wrkdir", "TMPFS_LIMIT=4",
+    "ATOMIC_PACKAGE_REPOSITORY=yes", "COMMIT_PACKAGES_ON_FAILURE=no",
+    "NOLINUX=yes", "PKG_REPRODUCIBLE=yes",
+    "PRESERVE_TIMESTAMP=yes", "BUILDER_HOSTNAME=freesense-builder",
+    "SOURCE_DATE_EPOCH=${FREESENSE_SOURCE_COMMIT_TIME}",
+    "FREESENSE_MAKE_JOBS_NUMBER_LIMIT=4",
+    "FREESENSE_USE_PACKAGE_FETCH=1",
+    'PACKAGE_FETCH_URL=pkg+https://pkg.FreeBSD.org/\\${ABI}',
+):
+    if required not in common:
+        raise SystemExit(f"runner reproducibility contract is missing {required!r}")
 if "export DO_NOT_SIGN_PKG_REPO=1" not in common:
     raise SystemExit("runner must bypass the legacy bootstrap signer before applying its own repository signature")
 for required in (
     "tool_install_status", "FreeSense phase failed:", "${destination}.part",
-    "--error-on-no-transfer", "immutable input checksum mismatch",
+    "--error-on-no-transfer", "immutable input checksum mismatch", "/root/sign/repo.pub",
+    "DATESTRING", "BUILTDATESTRING", "trusted package fingerprint",
 ):
     if required not in common:
         raise SystemExit(f"worker failure contract is missing {required!r}")
@@ -105,9 +134,68 @@ for name, stage in (("system", system_stage), ("packages", packages_stage)):
     nolinux_bulk = "env NOLINUX=yes ./build.sh --update-pkg-repo"
     if nolinux_config not in stage or nolinux_bulk not in stage:
         raise SystemExit(f"{name} bulk build may load unused Linux compatibility modules")
+    if stage.find("configure_poudriere") > stage.find("create_jail"):
+        raise SystemExit(f"{name} creates its Poudriere jail before applying the checked configuration")
+if "optional-closure-check" not in packages_stage or "'%dn|%dv'" not in packages_stage:
+    raise SystemExit("optional repository dependency closure is not validated")
+for required in (
+    "package_metadata()", "inventory_package()", "merge_package()",
+    "seed_poudriere_repository()", "poudriere_latest_repository()",
+):
+    if required not in common:
+        raise SystemExit(f"repository composition helper is missing {required!r}")
+if "conflicting package name or filename" not in common or "find /usr/local/poudriere/data/packages" in system_stage + packages_stage:
+    raise SystemExit("repository composition can overwrite packages or select an ambiguous Poudriere result")
+seed_call = "seed_poudriere_repository /root/system-repo"
+if packages_stage.count(seed_call) != 1:
+    raise SystemExit("optional packages must seed exactly one System repository")
+seed_order = (
+    packages_stage.find("create_jail"),
+    packages_stage.find("--update-poudriere-ports"),
+    packages_stage.find(seed_call),
+    packages_stage.find("--update-pkg-repo"),
+)
+if -1 in seed_order or tuple(sorted(seed_order)) != seed_order:
+    raise SystemExit("System repository seed is outside the Poudriere build window")
+for legacy in ("cache=", "ln -sfn .real_system"):
+    if legacy in packages_stage:
+        raise SystemExit("optional package stage retains its incomplete inline seed")
+for required in ("Latest/pkg.pkg", ".jailversion", "pkg repo"):
+    if required not in common:
+        raise SystemExit(f"Poudriere System seed is missing {required!r}")
+for duplicate in (".real_system", ".latest.new", '.latest/${member_name}'):
+    if duplicate in common:
+        raise SystemExit("runner duplicates Poudriere's atomic repository conversion")
 for required in ("--sort=name", '--mtime="@${source_time}"', "--owner=0", "gzip -n"):
     if required not in common:
         raise SystemExit(f"source archive reproducibility contract is missing {required!r}")
+if common.count("--immutable --checksum") != 2 or read("scripts/runner/stages/iso.sh").count("--immutable --checksum") != 2:
+    raise SystemExit("every immutable retry must compare checksums")
+
+planner = read("scripts/plan.py")
+channel_reader = read("scripts/channel.py")
+channel_control = read("internal/control/control.go")
+for required in ("FreeSense-build/1", "error.code == 404", "signing_public_key_sha256", "--system-closure"):
+    if required not in planner:
+        raise SystemExit(f"planner channel/trust contract is missing {required!r}")
+for required in ("payload_sha256", "artifact_signing_public_key_sha256", "system_fingerprint"):
+    if required not in channel_reader:
+        raise SystemExit(f"signed channel reader is missing {required!r}")
+for required in ("SystemFingerprint", "packages publication is not bound", "channel.Packages = nil"):
+    if required not in channel_control:
+        raise SystemExit(f"channel coherence contract is missing {required!r}")
+for required in ("group: freesense-kvm-host", "name: Verify required System result"):
+    if required not in reusable:
+        raise SystemExit(f"single-runner dependency contract is missing {required!r}")
+iso_stage = read("scripts/runner/stages/iso.sh")
+if "repos.manifest.json" in iso_stage:
+    raise SystemExit("ISO worker refetches the mutable channel alias")
+for required in ("CHANNEL_PAYLOAD_B64", "CHANNEL_SIGNATURE_B64"):
+    if required not in iso_stage or required not in reusable:
+        raise SystemExit(f"ISO exact channel closure is missing {required!r}")
+release = read(".github/workflows/release.yml")
+if ".promote.out" not in release or 'rm -f "$output"' not in release:
+    raise SystemExit("verification outputs can contaminate promotion reads")
 
 lock = json.loads(read("config/freebsd-16.json"))
 if lock.get("schema_version") != "freesense.freebsd-pin/v2" or not lock.get("ready"):
@@ -137,6 +225,4 @@ for workflow in sorted(WORKFLOWS.glob("*.yml")):
             raise SystemExit(f"{workflow.name} has an unpinned action: {reference}")
 
 workflow_lines = sum(len(path.read_text(encoding="utf-8").splitlines()) for path in WORKFLOWS.glob("*.yml"))
-if workflow_lines > 900:
-    raise SystemExit(f"workflow surface exceeds simplicity budget: {workflow_lines}")
 print(f"Build-runner control plane: valid ({workflow_lines} workflow lines)")

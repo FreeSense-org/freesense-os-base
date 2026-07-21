@@ -78,6 +78,96 @@ func TestS3PresignGetRejectsUnsafeKeyAndLifetime(t *testing.T) {
 	}
 }
 
+func TestS3ArtifactReadsAllowMissingMetadataWithoutWeakeningStrictReads(t *testing.T) {
+	data := []byte("rclone-created artifact")
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Length", strconv.Itoa(len(data)))
+		writer.Header().Set("ETag", `"rclone-etag"`)
+		switch request.Method {
+		case http.MethodGet:
+			_, _ = writer.Write(data)
+		case http.MethodHead:
+			writer.WriteHeader(http.StatusOK)
+		default:
+			writer.WriteHeader(http.StatusMethodNotAllowed)
+		}
+	}))
+	defer server.Close()
+
+	backend, err := NewS3(S3Config{
+		Endpoint: server.URL, Region: "auto", Bucket: "bucket",
+		AccessKeyID: "access", SecretKey: "secret", Client: server.Client(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	if _, err := backend.Get(ctx, "artifact"); err == nil || !strings.Contains(err.Error(), "no valid fsbuild SHA-256 metadata") {
+		t.Fatalf("strict Get error = %v", err)
+	}
+	if _, err := backend.Head(ctx, "artifact"); err == nil || !strings.Contains(err.Error(), "no valid fsbuild SHA-256 metadata") {
+		t.Fatalf("strict Head error = %v", err)
+	}
+
+	object, err := GetArtifact(ctx, backend, "artifact")
+	if err != nil {
+		t.Fatalf("GetArtifact() error = %v", err)
+	}
+	wantSHA256 := BytesContent(data).SHA256
+	if string(object.Data) != string(data) || object.Size != int64(len(data)) || object.SHA256 != wantSHA256 {
+		t.Fatalf("GetArtifact() = %#v, want size %d and SHA-256 %s", object, len(data), wantSHA256)
+	}
+	info, err := HeadArtifact(ctx, backend, "artifact")
+	if err != nil {
+		t.Fatalf("HeadArtifact() error = %v", err)
+	}
+	if info.Size != int64(len(data)) || info.SHA256 != "" {
+		t.Fatalf("HeadArtifact() = %#v, want size %d and an unknown SHA-256", info, len(data))
+	}
+}
+
+func TestS3ArtifactReadsRejectBadMetadataWhenPresent(t *testing.T) {
+	data := []byte("artifact")
+	tests := []struct {
+		name      string
+		metadata  string
+		wantError string
+	}{
+		{name: "malformed", metadata: "not-a-sha256", wantError: "invalid fsbuild SHA-256 metadata"},
+		{name: "mismatch", metadata: strings.Repeat("0", 64), wantError: "failed SHA-256 verification"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+				writer.Header().Set("x-amz-meta-fsbuild-sha256", test.metadata)
+				writer.Header().Set("Content-Length", strconv.Itoa(len(data)))
+				if request.Method == http.MethodGet {
+					_, _ = writer.Write(data)
+					return
+				}
+				writer.WriteHeader(http.StatusOK)
+			}))
+			defer server.Close()
+
+			backend, err := NewS3(S3Config{
+				Endpoint: server.URL, Region: "auto", Bucket: "bucket",
+				AccessKeyID: "access", SecretKey: "secret", Client: server.Client(),
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := GetArtifact(context.Background(), backend, "artifact"); err == nil || !strings.Contains(err.Error(), test.wantError) {
+				t.Fatalf("GetArtifact() error = %v, want substring %q", err, test.wantError)
+			}
+			if test.name == "malformed" {
+				if _, err := HeadArtifact(context.Background(), backend, "artifact"); err == nil || !strings.Contains(err.Error(), test.wantError) {
+					t.Fatalf("HeadArtifact() error = %v, want substring %q", err, test.wantError)
+				}
+			}
+		})
+	}
+}
+
 func TestS3ConditionalContract(t *testing.T) {
 	var mutex sync.Mutex
 	var data []byte
