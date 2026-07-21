@@ -26,7 +26,7 @@ for tool in qemu-system-x86_64 qemu-img cloud-localds curl sha256sum base64 awk;
   command -v "$tool" >/dev/null || { echo "missing host dependency: $tool" >&2; exit 1; }
 done
 [[ -r /dev/kvm && -w /dev/kvm ]] || { echo "/dev/kvm is not available to the runner" >&2; exit 1; }
-(( $(nproc) >= 16 )) || { echo "the Ryzen runner exposes fewer than 16 CPU threads" >&2; exit 1; }
+(( $(nproc) >= 16 )) || { echo "the build runner exposes fewer than 16 CPU threads" >&2; exit 1; }
 
 cache_dir=${HOME}/.cache/freesense-build/images
 base_image=${cache_dir}/${image_sha}.qcow2
@@ -53,16 +53,27 @@ fi
 verify_image || { echo "cached worker image verification failed" >&2; exit 1; }
 qemu-img check -q "$base_image"
 
-run_dir=$(mktemp -d "${RUNNER_TEMP}/freesense-ryzen.XXXXXX")
+cleanup_orphans() {
+  while IFS= read -r -d '' directory; do
+    orphan_pid=$(cat "${directory}/qemu.pid" 2>/dev/null || true)
+    if [[ $orphan_pid =~ ^[0-9]+$ ]] && kill -0 "$orphan_pid" 2>/dev/null; then
+      continue
+    fi
+    rm -rf -- "$directory"
+  done < <(find "$RUNNER_TEMP" -mindepth 1 -maxdepth 1 -type d -name 'freesense-runner.*' -print0)
+}
+cleanup_orphans
+
+run_dir=$(mktemp -d "${RUNNER_TEMP}/freesense-runner.XXXXXX")
 overlay=${run_dir}/worker.qcow2
 seed=${run_dir}/seed.img
 serial=${run_dir}/serial.log
 pidfile=${run_dir}/qemu.pid
 vars=${run_dir}/OVMF_VARS.fd
 nonce=$(printf '%s-%s-%s' "${GITHUB_RUN_ID:-local}" "${GITHUB_RUN_ATTEMPT:-1}" "$RANDOM" | sha256sum | awk '{print substr($1,1,24)}')
-begin_marker=FREESENSE_RYZEN_JOB_BEGIN_${nonce}
-ok_marker=FREESENSE_RYZEN_JOB_OK_${nonce}
-fail_marker=FREESENSE_RYZEN_JOB_FAILED_${nonce}
+begin_marker=FREESENSE_RUNNER_JOB_BEGIN_${nonce}
+ok_marker=FREESENSE_RUNNER_JOB_OK_${nonce}
+fail_marker=FREESENSE_RUNNER_JOB_FAILED_${nonce}
 
 cleanup() {
   if [[ -f $pidfile ]]; then
@@ -200,7 +211,7 @@ while true; do
     avail_kib=$(awk '/MemAvailable:/ {print $2}' /proc/meminfo)
     load=$(awk '{print $1, $2, $3}' /proc/loadavg)
     phase=$(grep -E '^(FreeSense|==>|---|FREESENSE_)' "$serial" | tail -n 1 || true)
-    printf 'Ryzen heartbeat: guest_started=%s qemu_cpu=%s%% qemu_rss=%sMiB host_available=%sMiB load=%s phase=%s\n' \
+    printf 'Build runner heartbeat: guest_started=%s qemu_cpu=%s%% qemu_rss=%sMiB host_available=%sMiB load=%s phase=%s\n' \
       "$seen_begin" "${cpu:-0}" "$(( ${rss_kib:-0} / 1024 ))" "$(( ${avail_kib:-0} / 1024 ))" "$load" "${phase:-booting}"
     next_report=$((now + 180))
   fi

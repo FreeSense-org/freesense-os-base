@@ -4,7 +4,7 @@ cd /root/freesense-src
 
 # World, kernel, boot, rc, and default configuration form the platform half of
 # the system repository. The system overlay is then built against that exact
-# world in the same VM.
+# world in the same isolated VM.
 ./build.sh --build-core
 core=$(find tmp -type d -path '*-core/.real_*/All' -print -quit)
 test -n "${core}"

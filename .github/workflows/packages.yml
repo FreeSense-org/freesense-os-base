@@ -60,7 +60,7 @@ jobs:
   build:
     needs: plan
     if: needs.plan.outputs.needed == 'true'
-    uses: ./.github/workflows/ryzen-build.yml
+    uses: ./.github/workflows/runner-build.yml
     with:
       stage: packages
       fingerprint: ${{ needs.plan.outputs.packages }}

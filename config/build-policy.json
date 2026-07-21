@@ -7,7 +7,7 @@
   "public_base_url": "https://pkg.freesense.org/v1",
   "store_prefix": "v1",
   "stable_soak_hours": 168,
-  "ryzen": {
+  "runner": {
     "vcpus": 16,
     "memory_mib": 32768,
     "disk_gib": 160

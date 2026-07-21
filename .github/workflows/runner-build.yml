@@ -1,4 +1,4 @@
-name: Reusable Ryzen build
+name: Reusable build runner
 
 on:
   workflow_call:
@@ -21,7 +21,7 @@ on:
 
 jobs:
   build:
-    runs-on: [self-hosted, ryzen]
+    runs-on: [self-hosted, build-runner]
     timeout-minutes: 345
     environment: build
     permissions:
@@ -96,12 +96,12 @@ jobs:
           GENERATION: ${{ inputs.generation }}
           PUBLIC_BASE_URL: ${{ inputs.public_base_url }}
         run: >-
-          python3 scripts/render-worker.py --common scripts/ryzen/worker-common.sh
-          --stages scripts/ryzen/stages --output "${RUNNER_TEMP}/worker.sh"
+          python3 scripts/render-worker.py --common scripts/runner/worker-common.sh
+          --stages scripts/runner/stages --output "${RUNNER_TEMP}/worker.sh"
       - name: Build in a fresh 16-vCPU, 32-GiB FreeBSD VM
         if: steps.reuse.outputs.complete != 'true'
         env:
           FSBUILD: ${{ runner.temp }}/fsbuild
         run: >-
-          scripts/ryzen/run-vm.sh --image-sha256 "${{ inputs.image_sha256 }}"
+          scripts/runner/run-vm.sh --image-sha256 "${{ inputs.image_sha256 }}"
           --script "${RUNNER_TEMP}/worker.sh" --timeout 19800

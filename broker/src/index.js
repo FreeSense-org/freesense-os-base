@@ -15,8 +15,8 @@ const SYSTEM_WORKFLOW =
   `${GITHUB_REPOSITORY}/.github/workflows/system.yml@${MAIN_REF}`;
 const PACKAGES_WORKFLOW =
   `${GITHUB_REPOSITORY}/.github/workflows/packages.yml@${MAIN_REF}`;
-const RYZEN_BUILD_WORKFLOW =
-  `${GITHUB_REPOSITORY}/.github/workflows/ryzen-build.yml@${MAIN_REF}`;
+const RUNNER_BUILD_WORKFLOW =
+  `${GITHUB_REPOSITORY}/.github/workflows/runner-build.yml@${MAIN_REF}`;
 const BUILD_ENTRY_WORKFLOWS = Object.freeze([
   SYSTEM_WORKFLOW,
   PACKAGES_WORKFLOW,
@@ -421,7 +421,7 @@ function entryWorkflow(claims) {
 function artifactWorkflow(claims) {
   return (
     BUILD_ENTRY_WORKFLOWS.includes(claims.workflow_ref) &&
-    claims.job_workflow_ref === RYZEN_BUILD_WORKFLOW &&
+    claims.job_workflow_ref === RUNNER_BUILD_WORKFLOW &&
     SHA_PATTERN.test(claims.job_workflow_sha ?? "") &&
     claims.job_workflow_sha === claims.workflow_sha &&
     ["workflow_dispatch", "schedule"].includes(claims.event_name)
@@ -770,7 +770,7 @@ export const protocol = Object.freeze({
   workflows: Object.freeze({
     system: SYSTEM_WORKFLOW,
     packages: PACKAGES_WORKFLOW,
-    ryzenBuild: RYZEN_BUILD_WORKFLOW,
+    runnerBuild: RUNNER_BUILD_WORKFLOW,
     pin: PIN_WORKFLOW,
     release: RELEASE_WORKFLOW,
     broker: BROKER_WORKFLOW,

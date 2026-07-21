@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Static invariants for the small Ryzen/R2 build control plane."""
+"""Static invariants for the small build-runner/R2 control plane."""
 
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ def read(relative: str) -> str:
 
 expected_workflows = {
     "broker.yml", "ci.yml", "packages.yml", "pin.yml", "release.yml",
-    "ryzen-build.yml", "system.yml",
+    "runner-build.yml", "system.yml",
 }
 actual_workflows = {path.name for path in WORKFLOWS.glob("*.yml")}
 if actual_workflows != expected_workflows:
@@ -29,15 +29,15 @@ pipeline_files = [
     ROOT / "scripts/plan.py",
     ROOT / "scripts/channel.py",
     ROOT / "scripts/render-worker.py",
-    ROOT / "scripts/ryzen/run-vm.sh",
-    ROOT / "scripts/ryzen/worker-common.sh",
-    *sorted((ROOT / "scripts/ryzen/stages").glob("*.sh")),
+    ROOT / "scripts/runner/run-vm.sh",
+    ROOT / "scripts/runner/worker-common.sh",
+    *sorted((ROOT / "scripts/runner/stages").glob("*.sh")),
     ROOT / "cmd/fsbuild/main.go",
     ROOT / "broker/src/index.js",
 ]
 pipeline = "\n".join(path.read_text(encoding="utf-8") for path in pipeline_files)
 for forbidden in (
-    "epoch", "candidate", "quick build", "circleci", "ovh", "cas/v1",
+    "epoch", "candidate", "quick build", "circleci", "ovh", "ryzen", "cas/v1",
     "freesense-build/v1", "multipartupload", "deleteobject",
 ):
     if forbidden in pipeline.lower():
@@ -51,31 +51,31 @@ for required in (
     if required not in pipeline:
         raise SystemExit(f"immutable storage contract is missing {required!r}")
 
-runner = read("scripts/ryzen/run-vm.sh")
-reusable = read(".github/workflows/ryzen-build.yml")
+runner = read("scripts/runner/run-vm.sh")
+reusable = read(".github/workflows/runner-build.yml")
 for required in (
-    "runs-on: [self-hosted, ryzen]", "-smp 16", "-m 32768",
+    "runs-on: [self-hosted, build-runner]", "-smp 16", "-m 32768",
     'qemu-img resize -q "$overlay" 160G', "/dev/kvm", "nuageinit",
-    "next_report=$((now + 180))",
+    "next_report=$((now + 180))", "cleanup_orphans", "trap cleanup EXIT INT TERM",
 ):
     if required not in runner + reusable:
-        raise SystemExit(f"Ryzen KVM contract is missing {required!r}")
+        raise SystemExit(f"build-runner KVM contract is missing {required!r}")
 
 if "workflow_call:" not in reusable:
-    raise SystemExit("the only Ryzen executor must be a reusable workflow")
+    raise SystemExit("the only build-runner executor must be a reusable workflow")
 for entry in ("system.yml", "packages.yml", "release.yml"):
     text = read(f".github/workflows/{entry}")
-    if "uses: ./.github/workflows/ryzen-build.yml" not in text:
-        raise SystemExit(f"{entry} bypasses the single Ryzen executor")
+    if "uses: ./.github/workflows/runner-build.yml" not in text:
+        raise SystemExit(f"{entry} bypasses the single build-runner executor")
 if "schedule:" not in read(".github/workflows/system.yml") or "schedule:" not in read(".github/workflows/packages.yml"):
     raise SystemExit("system and optional package checks must be scheduled")
 
-common = read("scripts/ryzen/worker-common.sh")
-system_stage = read("scripts/ryzen/stages/system.sh")
+common = read("scripts/runner/worker-common.sh")
+system_stage = read("scripts/runner/stages/system.sh")
 for stage in ("system", "packages", "iso"):
-    if not (ROOT / f"scripts/ryzen/stages/{stage}.sh").is_file():
+    if not (ROOT / f"scripts/runner/stages/{stage}.sh").is_file():
         raise SystemExit(f"missing stage {stage}")
-if any((ROOT / f"scripts/ryzen/stages/{old}.sh").exists() for old in ("base", "repository")):
+if any((ROOT / f"scripts/runner/stages/{old}.sh").exists() for old in ("base", "repository")):
     raise SystemExit("a removed intermediate stage still exists")
 if common.rfind('"${RESULT}/complete.json"') < common.rfind("--immutable"):
     raise SystemExit("completion marker is not the last immutable repository write")
@@ -116,4 +116,4 @@ for workflow in sorted(WORKFLOWS.glob("*.yml")):
 workflow_lines = sum(len(path.read_text(encoding="utf-8").splitlines()) for path in WORKFLOWS.glob("*.yml"))
 if workflow_lines > 900:
     raise SystemExit(f"workflow surface exceeds simplicity budget: {workflow_lines}")
-print(f"Ryzen build control plane: valid ({workflow_lines} workflow lines)")
+print(f"Build-runner control plane: valid ({workflow_lines} workflow lines)")

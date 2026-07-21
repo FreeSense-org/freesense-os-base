@@ -15,6 +15,7 @@ cp /root/system-repo/All/*.pkg "${cache}/All/"
 pkg repo "${cache}"
 ln -sfn .real_system "${cache%/.real_system}/.latest"
 
+mkdir -p /usr/ports/distfiles
 rm -f /usr/ports/distfiles/freesense-src.tar.gz
 tar czf /usr/ports/distfiles/freesense-src.tar.gz -C /root \
   --exclude='freesense-src/.git' --exclude='freesense-src/tmp' \

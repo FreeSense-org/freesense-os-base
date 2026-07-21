@@ -121,7 +121,7 @@ jobs:
 
   iso:
     needs: iso-plan
-    uses: ./.github/workflows/ryzen-build.yml
+    uses: ./.github/workflows/runner-build.yml
     with:
       stage: iso
       fingerprint: ${{ needs.iso-plan.outputs.fingerprint }}
