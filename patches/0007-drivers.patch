@@ -1,0 +1,1110 @@
+diff --git a/sys/dev/bxe/bxe.c b/sys/dev/bxe/bxe.c
+index 3e7120a42a9..5df216043e0 100644
+--- a/sys/dev/bxe/bxe.c
++++ b/sys/dev/bxe/bxe.c
+@@ -300,6 +300,10 @@ static int bxe_udp_rss = 0;
+ SYSCTL_INT(_hw_bxe, OID_AUTO, udp_rss, CTLFLAG_RDTUN,
+            &bxe_udp_rss, 0, "UDP RSS support");
+ 
++/* Mask SFP TX fault detection: 0 (disabled), 1 (enabled) */
++static int bxe_mask_tx_fault = 0;
++SYSCTL_INT(_hw_bxe, OID_AUTO, mask_tx_fault, CTLFLAG_RDTUN,
++           &bxe_mask_tx_fault, 0, "Mask SFP TX fault detection");
+ 
+ #define STAT_NAME_LEN 32 /* no stat names below can be longer than this */
+ 
+@@ -13789,6 +13793,11 @@ bxe_get_tunable_params(struct bxe_softc *sc)
+         bxe_udp_rss = 0;
+     }
+ 
++    if ((bxe_mask_tx_fault < 0) || (bxe_mask_tx_fault > 3)) {
++        BLOGW(sc, "invalid mask_tx_fault (%d)\n", bxe_mask_tx_fault);
++        bxe_mask_tx_fault = 0;
++    }
++
+     /* pull in user settings */
+ 
+     sc->interrupt_mode       = bxe_interrupt_mode;
+@@ -13799,6 +13808,7 @@ bxe_get_tunable_params(struct bxe_softc *sc)
+     sc->mrrs                 = bxe_mrrs;
+     sc->autogreeen           = bxe_autogreeen;
+     sc->udp_rss              = bxe_udp_rss;
++    sc->mask_tx_fault        = bxe_mask_tx_fault;
+ 
+     if (bxe_interrupt_mode == INTR_MODE_INTX) {
+         sc->num_queues = 1;
+diff --git a/sys/dev/bxe/bxe.h b/sys/dev/bxe/bxe.h
+index 79d2792f7d6..6d80baf609b 100644
+--- a/sys/dev/bxe/bxe.h
++++ b/sys/dev/bxe/bxe.h
+@@ -1525,6 +1525,7 @@ struct bxe_softc {
+ #define INTR_MODE_MSI  1
+ #define INTR_MODE_MSIX 2
+     int      udp_rss;
++    int      mask_tx_fault;
+ 
+     /* interrupt allocations */
+     struct bxe_intr intr[MAX_RSS_CHAINS+1];
+diff --git a/sys/dev/bxe/bxe_elink.c b/sys/dev/bxe/bxe_elink.c
+index b823d7a61a9..b390891f561 100644
+--- a/sys/dev/bxe/bxe_elink.c
++++ b/sys/dev/bxe/bxe_elink.c
+@@ -391,7 +391,8 @@ Theotherbitsarereservedandshouldbezero*/
+ #define MDIO_PMA_REG_8727_PCS_GP		0xc842
+ #define MDIO_PMA_REG_8727_OPT_CFG_REG		0xc8e4
+ 
+-#define MDIO_AN_REG_8727_MISC_CTRL		0x8309
++#define MDIO_AN_REG_8727_MISC_CTRL1		0x8308
++#define MDIO_AN_REG_8727_MISC_CTRL2		0x8309
+ #define	MDIO_PMA_REG_8073_CHIP_REV			0xc801
+ #define MDIO_PMA_REG_8073_SPEED_LINK_STATUS		0xc820
+ #define MDIO_PMA_REG_8073_XAUI_WA 			0xc841
+@@ -882,6 +883,7 @@ typedef elink_status_t (*read_sfp_module_eeprom_func_p)(struct elink_phy *phy,
+ 
+ #define ELINK_SFP_EEPROM_CON_TYPE_ADDR		0x2
+ 	#define ELINK_SFP_EEPROM_CON_TYPE_VAL_UNKNOWN	0x0
++	#define ELINK_SFP_EEPROM_CON_TYPE_VAL_SC    0x1
+ 	#define ELINK_SFP_EEPROM_CON_TYPE_VAL_LC	0x7
+ 	#define ELINK_SFP_EEPROM_CON_TYPE_VAL_COPPER	0x21
+ 	#define ELINK_SFP_EEPROM_CON_TYPE_VAL_RJ45	0x22
+@@ -5042,6 +5044,15 @@ static void elink_warpcore_set_sgmii_speed(struct elink_phy *phy,
+ 					 0x1000);
+ 		ELINK_DEBUG_P0(sc, "set SGMII AUTONEG\n");
+ 	} else {
++		if (fiber_mode && (phy->req_line_speed == ELINK_SPEED_2500) &&
++			(phy->speed_cap_mask &
++			 (PORT_HW_CFG_SPEED_CAPABILITY_D0_1G |
++			  PORT_HW_CFG_SPEED_CAPABILITY_D0_2_5G))) {
++			elink_cl45_write(sc, phy, MDIO_WC_DEVAD,
++				MDIO_WC_REG_SERDESDIGITAL_MISC1,
++				0x6010);
++		}
++
+ 		elink_cl45_read(sc, phy, MDIO_WC_DEVAD,
+ 				MDIO_WC_REG_COMBO_IEEE0_MIICTRL, &val16);
+ 		val16 &= 0xcebf;
+@@ -5052,6 +5063,7 @@ static void elink_warpcore_set_sgmii_speed(struct elink_phy *phy,
+ 			val16 |= 0x2000;
+ 			break;
+ 		case ELINK_SPEED_1000:
++		case ELINK_SPEED_2500:
+ 			val16 |= 0x0040;
+ 			break;
+ 		default:
+@@ -9069,6 +9081,7 @@ static elink_status_t elink_get_edc_mode(struct elink_phy *phy,
+ 		break;
+ 	}
+ 	case ELINK_SFP_EEPROM_CON_TYPE_VAL_UNKNOWN:
++	case ELINK_SFP_EEPROM_CON_TYPE_VAL_SC:
+ 	case ELINK_SFP_EEPROM_CON_TYPE_VAL_LC:
+ 	case ELINK_SFP_EEPROM_CON_TYPE_VAL_RJ45:
+ 		check_limiting_mode = 1;
+@@ -9082,7 +9095,8 @@ static elink_status_t elink_get_edc_mode(struct elink_phy *phy,
+ 		    (val[ELINK_SFP_EEPROM_1G_COMP_CODE_ADDR] != 0)) {
+ 			ELINK_DEBUG_P0(sc, "1G SFP module detected\n");
+ 			phy->media_type = ELINK_ETH_PHY_SFP_1G_FIBER;
+-			if (phy->req_line_speed != ELINK_SPEED_1000) {
++		if ((phy->req_line_speed != ELINK_SPEED_1000) &&
++			(phy->req_line_speed != ELINK_SPEED_2500)) {
+ 				uint8_t gport = params->port;
+ 				phy->req_line_speed = ELINK_SPEED_1000;
+ 				if (!CHIP_IS_E1x(sc)) {
+@@ -10146,7 +10160,8 @@ static void elink_8727_config_speed(struct elink_phy *phy,
+ 	uint16_t tmp1, val;
+ 	/* Set option 1G speed */
+ 	if ((phy->req_line_speed == ELINK_SPEED_1000) ||
+-	    (phy->media_type == ELINK_ETH_PHY_SFP_1G_FIBER)) {
++		(phy->req_line_speed == ELINK_SPEED_2500) ||
++		(phy->media_type == ELINK_ETH_PHY_SFP_1G_FIBER)) {
+ 		ELINK_DEBUG_P0(sc, "Setting 1G force\n");
+ 		elink_cl45_write(sc, phy,
+ 				 MDIO_PMA_DEVAD, MDIO_PMA_REG_CTRL, 0x40);
+@@ -10155,6 +10170,22 @@ static void elink_8727_config_speed(struct elink_phy *phy,
+ 		elink_cl45_read(sc, phy,
+ 				MDIO_PMA_DEVAD, MDIO_PMA_REG_10G_CTRL2, &tmp1);
+ 		ELINK_DEBUG_P1(sc, "1.7 = 0x%x\n", tmp1);
++		if ((phy->req_line_speed == ELINK_SPEED_2500) &&
++			(phy->speed_cap_mask &
++			 (PORT_HW_CFG_SPEED_CAPABILITY_D0_1G |
++			  PORT_HW_CFG_SPEED_CAPABILITY_D0_2_5G))) {
++			elink_cl45_read_and_write(sc, phy,
++					MDIO_AN_DEVAD,
++					MDIO_AN_REG_8727_MISC_CTRL2,
++					~(1<<5));
++			elink_cl45_write(sc, phy,
++				MDIO_AN_DEVAD,
++				MDIO_AN_REG_8727_MISC_CTRL1, 0x0010);
++		} else {
++			elink_cl45_write(sc, phy,
++					MDIO_AN_DEVAD,
++					MDIO_AN_REG_8727_MISC_CTRL1, 0x001C);
++		}
+ 		/* Power down the XAUI until link is up in case of dual-media
+ 		 * and 1G
+ 		 */
+@@ -10176,7 +10207,7 @@ static void elink_8727_config_speed(struct elink_phy *phy,
+ 
+ 		ELINK_DEBUG_P0(sc, "Setting 1G clause37\n");
+ 		elink_cl45_write(sc, phy,
+-				 MDIO_AN_DEVAD, MDIO_AN_REG_8727_MISC_CTRL, 0);
++				 MDIO_AN_DEVAD, MDIO_AN_REG_8727_MISC_CTRL2, 0);
+ 		elink_cl45_write(sc, phy,
+ 				 MDIO_AN_DEVAD, MDIO_AN_REG_CL37_AN, 0x1300);
+ 	} else {
+@@ -10184,8 +10215,11 @@ static void elink_8727_config_speed(struct elink_phy *phy,
+ 		 * registers although it is default
+ 		 */
+ 		elink_cl45_write(sc, phy,
+-				 MDIO_AN_DEVAD, MDIO_AN_REG_8727_MISC_CTRL,
++				 MDIO_AN_DEVAD, MDIO_AN_REG_8727_MISC_CTRL2,
+ 				 0x0020);
++		elink_cl45_write(sc, phy,
++				 MDIO_AN_DEVAD, MDIO_AN_REG_8727_MISC_CTRL1,
++				 0x001C);
+ 		elink_cl45_write(sc, phy,
+ 				 MDIO_AN_DEVAD, MDIO_AN_REG_CL37_AN, 0x0100);
+ 		elink_cl45_write(sc, phy,
+@@ -10477,6 +10511,11 @@ static uint8_t elink_8727_read_status(struct elink_phy *phy,
+ 		vars->line_speed = ELINK_SPEED_10000;
+ 		ELINK_DEBUG_P1(sc, "port %x: External link up in 10G\n",
+ 			   params->port);
++	} else if ((link_status & (1<<1)) && (!(link_status & (1<<14)))) {
++		link_up = 1;
++		vars->line_speed = ELINK_SPEED_2500;
++		ELINK_DEBUG_P1(sc, "port %x: External link up in 2.5G\n",
++			  params->port);
+ 	} else if ((link_status & (1<<0)) && (!(link_status & (1<<13)))) {
+ 		link_up = 1;
+ 		vars->line_speed = ELINK_SPEED_1000;
+@@ -10508,7 +10547,8 @@ static uint8_t elink_8727_read_status(struct elink_phy *phy,
+ 	}
+ 
+ 	if ((ELINK_DUAL_MEDIA(params)) &&
+-	    (phy->req_line_speed == ELINK_SPEED_1000)) {
++		((phy->req_line_speed == ELINK_SPEED_1000) ||
++		 (phy->req_line_speed == ELINK_SPEED_2500))) {
+ 		elink_cl45_read(sc, phy,
+ 				MDIO_PMA_DEVAD,
+ 				MDIO_PMA_REG_8727_PCS_GP, &val1);
+@@ -12530,6 +12570,7 @@ static const struct elink_phy phy_warpcore = {
+ 			   ELINK_SUPPORTED_100baseT_Full |
+ 			   ELINK_SUPPORTED_1000baseT_Full |
+ 			   ELINK_SUPPORTED_1000baseKX_Full |
++			   ELINK_SUPPORTED_2500baseX_Full |
+ 			   ELINK_SUPPORTED_10000baseT_Full |
+ 			   ELINK_SUPPORTED_10000baseKR_Full |
+ 			   ELINK_SUPPORTED_20000baseKR2_Full |
+@@ -12716,6 +12757,7 @@ static const struct elink_phy phy_8727 = {
+ 	.tx_preemphasis	= {0xffff, 0xffff, 0xffff, 0xffff},
+ 	.mdio_ctrl	= 0,
+ 	.supported	= (ELINK_SUPPORTED_10000baseT_Full |
++			   ELINK_SUPPORTED_2500baseX_Full |
+ 			   ELINK_SUPPORTED_1000baseT_Full |
+ 			   ELINK_SUPPORTED_FIBRE |
+ 			   ELINK_SUPPORTED_Pause |
+@@ -13067,6 +13109,7 @@ static elink_status_t elink_populate_int_phy(struct bxe_softc *sc, uint32_t shme
+ 			break;
+ 		case PORT_HW_CFG_NET_SERDES_IF_SFI:
+ 			phy->supported &= (ELINK_SUPPORTED_1000baseT_Full |
++					   ELINK_SUPPORTED_2500baseX_Full |
+ 					   ELINK_SUPPORTED_10000baseT_Full |
+ 					   ELINK_SUPPORTED_FIBRE |
+ 					   ELINK_SUPPORTED_Pause |
+@@ -14991,7 +15034,9 @@ void elink_period_func(struct elink_params *params, struct elink_vars *vars)
+ 		    & PORT_HW_CFG_NET_SERDES_IF_MASK) ==
+ 		    PORT_HW_CFG_NET_SERDES_IF_SFI) {
+ 			if (elink_is_sfp_module_plugged(phy, params)) {
+-				elink_sfp_tx_fault_detection(phy, params, vars);
++				if (!((params->port+1) & sc->mask_tx_fault))
++					elink_sfp_tx_fault_detection(phy,
++						params, vars);
+ 			} else if (vars->link_status &
+ 				LINK_STATUS_SFP_TX_FAULT) {
+ 				/* Clean trail, interrupt corrects the leds */
+diff --git a/sys/dev/ixgbe/ixgbe_phy.c b/sys/dev/ixgbe/ixgbe_phy.c
+index 2a735ead9a1..53c810767c5 100644
+--- a/sys/dev/ixgbe/ixgbe_phy.c
++++ b/sys/dev/ixgbe/ixgbe_phy.c
+@@ -2033,6 +2033,13 @@ static s32 ixgbe_read_i2c_byte_generic_int(struct ixgbe_hw *hw, u8 byte_offset,
+ 	if (ixgbe_is_sfp_probe(hw, byte_offset, dev_addr))
+ 		max_retry = IXGBE_SFP_DETECT_RETRIES;
+ 
++	/*
++	 * Only try once until we've identified an SFP. This should reduce the
++	 * delay in `ifconfig -v ix0` when no SFP is present.
++	 */
++	if (hw->phy.sfp_type == ixgbe_sfp_type_not_present || hw->phy.sfp_type == ixgbe_sfp_type_unknown)
++		max_retry = 0;
++
+ 	do {
+ 		if (lock && hw->mac.ops.acquire_swfw_sync(hw, swfw_mask))
+ 			return IXGBE_ERR_SWFW_SYNC;
+diff --git a/sys/dev/ixl/ixl_pf_main.c b/sys/dev/ixl/ixl_pf_main.c
+index 674e45823cc..42fd485cdfd 100644
+--- a/sys/dev/ixl/ixl_pf_main.c
++++ b/sys/dev/ixl/ixl_pf_main.c
+@@ -790,7 +790,6 @@ ixl_configure_intr0_msix(struct ixl_pf *pf)
+ 	    I40E_PFINT_ICR0_ENA_GRST_MASK |
+ 	    I40E_PFINT_ICR0_ENA_HMC_ERR_MASK |
+ 	    I40E_PFINT_ICR0_ENA_ADMINQ_MASK |
+-	    I40E_PFINT_ICR0_ENA_MAL_DETECT_MASK |
+ 	    I40E_PFINT_ICR0_ENA_VFLR_MASK |
+ 	    I40E_PFINT_ICR0_ENA_PE_CRITERR_MASK |
+ 	    I40E_PFINT_ICR0_ENA_PCI_EXCEPTION_MASK;
+diff --git a/sys/dev/netgate/netgate.c b/sys/dev/netgate/netgate.c
+new file mode 100644
+index 00000000000..dd78c95b22c
+--- /dev/null
++++ b/sys/dev/netgate/netgate.c
+@@ -0,0 +1,753 @@
++/*-
++ * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
++ *
++ * Copyright (c) 2022-2023 Rubicon Communications, LLC (Netgate).
++ * All rights reserved.
++ *
++ * Redistribution and use in source and binary forms, with or without
++ * modification, are permitted provided that the following conditions
++ * are met:
++ * 1. Redistributions of source code must retain the above copyright
++ *    notice, this list of conditions and the following disclaimer.
++ * 2. Redistributions in binary form must reproduce the above copyright
++ *    notice, this list of conditions and the following disclaimer in the
++ *    documentation and/or other materials provided with the distribution.
++ *
++ * THIS SOFTWARE IS PROVIDED BY THE AUTHOR ``AS IS'' AND ANY EXPRESS OR
++ * IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
++ * OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.
++ * IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY DIRECT, INDIRECT,
++ * INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT
++ * NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
++ * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
++ * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
++ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
++ * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
++ */
++
++#include <sys/cdefs.h>
++__FBSDID("$FreeBSD$");
++
++#include "opt_platform.h"
++
++#include <sys/types.h>
++#include <sys/bus.h>
++#include <sys/kernel.h>
++#include <sys/malloc.h>
++#include <sys/module.h>
++#include <sys/smp.h>
++#include <sys/sysctl.h>
++
++#ifdef FDT
++#include <dev/ofw/openfirm.h>
++#endif
++
++#include <dev/netgate/netgate.h>
++
++#define	NETGATE_BUFSZ		128
++
++struct netgate_ids {
++	int		id;
++	char		*model;
++	char		*desc;
++
++	int		cpu;
++	char		*bios;
++	char		*chassis;
++	char		*boardname;
++	char		*boardpn;
++	char		*fdt;
++	char		*hwmodel;
++	char		*maker;
++	char		*planar;
++	char		*prod;
++	char		*vm;
++};
++
++static struct netgate_ids ng_ids[] = {
++	/* Old devices. */
++	{ .id = NETGATE_APU1,	.prod = "apu1",				.model = "APU", .desc = "Netgate APU" },
++	{ .id = NETGATE_APU,	.prod = "APU",				.model = "APU", .desc = "Netgate APU" },
++	{ .id = NETGATE_SG2200,	.prod = "DFFv2",			.model = "SG-2220", .desc = "Netgate SG-2220" },
++	{ .id = NETGATE_RCCVE,	.prod = "RCC-VE",			.model = "RCC-VE", .desc = "Netgate RCC-VE" },
++	{ .id = NETGATE_SG4860, .prod = "RCC-VE", .hwmodel = "C2558",	.model = "RCC-VE", .desc = "Netgate SG-4860" },
++	{ .id = NETGATE_SG8860, .prod = "RCC-VE", .hwmodel = "C2758",	.model = "RCC-VE", .desc = "Netgate SG-8860" },
++	{ .id = NETGATE_XG2758, .prod = "RCC",				.model = "RCC", .desc = "Netgate XG-2758" },
++	{ .id = NETGATE_MBT4220, .prod = "Minnowboard Turbot D0 PLATFORM", .cpu = 4,	.model = "MBT-4220", .desc = "Netgate MBT-4220" },
++	{ .id = NETGATE_MBT4220_1, .prod = "Minnowboard Turbot D0/D1 PLATFORM", .cpu = 4, .model = "MBT-4220", .desc = "Netgate MBT-4220" },
++	{ .id = NETGATE_MBT2220, .prod = "Minnowboard Turbot D0 PLATFORM", .cpu = 2,	.model = "MBT-2220", .desc = "Netgate MBT-2220" },
++	{ .id = NETGATE_MBT2220_1, .prod = "Minnowboard Turbot D0/D1 PLATFORM", .cpu = 2, .model = "MBT-2220", .desc = "Netgate MBT-2220" },
++	{ .id = NETGATE_TURBOT,	.prod = "Minnowboard Turbot D0 PLATFORM",	.model = "Turbot", .desc = "Netgate Turbot Dual-E" },
++	{ .id = NETGATE_TURBOT_1, .prod = "Minnowboard Turbot D0/D1 PLATFORM", .model = "Turbot", .desc = "Netgate Turbot Dual-E" },
++	{ .id = NETGATE_C2558,	.prod = "SYS-5018A-FTN4", .hwmodel = "C2558", .model = "C2558", .desc = "Super Micro C2558" },
++	{ .id = NETGATE_C2558_1, .prod = "A1SAi", .hwmodel = "C2558",	.model = "C2558", .desc = "Super Micro C2558" },
++	{ .id = NETGATE_C2758,	.prod = "SYS-5018A-FTN4", .hwmodel = "C2758", .model = "C2758", .desc = "Super Micro C2758" },
++	{ .id = NETGATE_C2758_1, .prod = "A1SAi", .hwmodel = "C2758",	.model = "C2758", .desc = "Super Micro C2758" },
++	{ .id = NETGATE_APU2,	.prod = "apu2",				.model = "apu2", .desc = "PC Engines APU2" },
++	{ .id = NETGATE_APU2_1,	.prod = "APU2",				.model = "apu2", .desc = "PC Engines APU2" },
++
++	/* VMs */
++	{ .id = NETGATE_VM_GOOGLE, .maker = "Google",		.model = "Google", .desc = "Google Cloud Platform" },
++	{ .id = NETGATE_VM_GOOGLE_1, .bios = "Google",		.model = "Google", .desc = "Google Cloud Platform" },
++	{ .id = NETGATE_VM_AWS, .maker = "Amazon EC2",		.model = "AWS",	.desc = "Amazon Web Services" },
++	{ .id = NETGATE_VM_AWS_1, .bios = "4.11.amazon",	.model = "AWS",	.desc = "Amazon Web Services" },
++	{ .id = NETGATE_VM_ORACLE, .chassis = "OracleCloud.com",	.model = "Oracle",	.desc = "Oracle Cloud Infrastructure" },
++	{ .id = NETGATE_VM_VIRTUALBOX, .prod = "VirtualBox",	.model = "VirtualBox", .desc = "VirtualBox Virtual Machine" },
++	{ .id = NETGATE_VM_AZURE, .prod = "Virtual Machine", .maker = "Microsoft Corporation", .chassis = "7783-7084-3265-9085-8269-3286-77", .model = "Azure", .desc = "Microsoft Azure" },
++	{ .id = NETGATE_VM_HYPERV, .prod = "Virtual Machine", .maker = "Microsoft Corporation", .bios = "Hyper",	.model = "Hyper-V", .desc = "Hyper-V Virtual Machine" },
++	{ .id = NETGATE_VM_VMWARE, .prod = "VMware Virtual Platform", .maker = "VMware, Inc.", .model = "VMware", .desc = "VMware Virtual Machine" },
++	{ .id = NETGATE_VM_QEMU, .maker = "QEMU",		.model = "QEMU", .desc = "QEMU Guest" },
++	{ .id = NETGATE_VM_KVM, .vm = "kvm",			.model = "KVM", .desc = "KVM Guest" },
++
++	/* Netgate */
++#ifdef FDT
++	{ .id = NETGATE_1100, .prod = "mvebu_armada-37xx", .fdt = "Netgate SG-1100", .model = "1100", .desc = "Netgate 1100" },
++	{ .id = NETGATE_1100, .prod = "mvebu_armada-37xx", .fdt = "Netgate 1100", .model = "1100", .desc = "Netgate 1100" },
++	{ .id = NETGATE_2100, .prod = "mvebu_armada-37xx", .fdt = "Netgate SG-2100", .model = "2100", .desc = "Netgate 2100" },
++	{ .id = NETGATE_2100, .prod = "mvebu_armada-37xx", .fdt = "Netgate 2100", .model = "2100", .desc = "Netgate 2100" },
++	{ .id = NETGATE_2100, .prod = "SG-2100", .fdt = "Netgate SG-2100",	.model = "2100", .desc = "Netgate 2100" },
++	{ .id = NETGATE_2100, .prod = "SG-2100", .fdt = "Netgate 2100",		.model = "2100", .desc = "Netgate 2100" },
++	{ .id = NETGATE_2100, .prod = "80500-0205-G", .fdt = "Netgate SG-2100",	.model = "2100", .desc = "Netgate 2100" },
++	{ .id = NETGATE_2100, .prod = "80500-0205-G", .fdt = "Netgate 2100",	.model = "2100", .desc = "Netgate 2100" },
++#endif
++	{ .id = NETGATE_SG1000, .boardname = "A335uFW",				.model = "1000", .desc = "Netgate SG-1000" },
++	{ .id = NETGATE_3100, .hwmodel = "ARM Cortex-A9", .boardpn = "80500-0148", .model = "3100", .desc = "Netgate 3100" },
++	{ .id = NETGATE_1540, .prod = "SYS-5018D-FN4T", 			.model = "1540", .desc = "Super Micro XG-1540" },
++	{ .id = NETGATE_1541, .prod = "SYS-5018D-FN4T", .hwmodel = "D-1541",	.model = "1541", .desc = "Super Micro 1541" },
++	{ .id = NETGATE_4100, .prod = "4100", .maker = "Netgate",		.model = "4100", .desc = "Netgate 4100" },
++	{ .id = NETGATE_4200, .prod = "4200", .maker = "Netgate",		.model = "4200", .desc = "Netgate 4200" },
++	{ .id = NETGATE_5100, .prod = "SG-5100",				.model = "5100", .desc = "Netgate 5100" },
++	{ .id = NETGATE_5200, .prod = "80500-0240-", .cpu = 4,			.model = "5200", .desc = "Netgate 5200" },
++	{ .id = NETGATE_5200, .prod = "5200", .maker = "Netgate",		.model = "5200", .desc = "Netgate 5200" },
++	{ .id = NETGATE_6100, .prod = "6100", .maker = "Netgate",		.model = "6100", .desc = "Netgate 6100" },
++	{ .id = NETGATE_6200, .prod = "6200", .maker = "Netgate",		.model = "6200", .desc = "Netgate 6200" },
++	{ .id = NETGATE_8200, .prod = "8200", .maker = "Netgate",		.model = "8200", .desc = "Netgate 8200" },
++	{ .id = NETGATE_7541, .prod = "FW7541",					.model = "FW7541", .desc = "Netgate FW7541" },
++	{ .id = NETGATE_1537, .planar = "X10SDV-8C-TLN4F+",			.model = "1537", .desc = "Super Micro 1537" },
++	{ .id = NETGATE_7100, .planar = "80300-0134",				.model = "7100", .desc = "Netgate 7100" },
++	{ .id = NETGATE_7200, .prod = "80500-0240-", .cpu = 8,			.model = "7200", .desc = "Netgate 7200" },
++	{ .id = NETGATE_7200, .prod = "7200", .maker = "Netgate",		.model = "7200", .desc = "Netgate 7200" },
++};
++
++struct netgate_softc {
++	char		*sc_desc;
++	char		*sc_desc_str;
++	char		*sc_model_str;
++};
++
++static driver_t netgate_driver;
++static int netgate_model = NETGATE_UNKNOWN;
++
++char *
++netgate_get_device_desc(void)
++{
++	int i;
++
++	for (i = 0; i < nitems(ng_ids); i++) {
++		if (ng_ids[i].id == netgate_model)
++			return (ng_ids[i].desc);
++	}
++
++	return ("unknown hardware");
++}
++
++char *
++netgate_get_device_model(void)
++{
++	int i;
++
++	for (i = 0; i < nitems(ng_ids); i++) {
++		if (ng_ids[i].id == netgate_model)
++			return (ng_ids[i].model);
++	}
++
++	return ("unknown");
++}
++
++int
++netgate_get_device_id(void)
++{
++
++	return (netgate_model);
++}
++
++static void
++fdt_free(char *s)
++{
++#ifdef FDT
++	free(s, M_OFWPROP);
++#endif
++}
++
++static char *
++fdt_get_model(void)
++{
++#ifdef FDT
++	char *model;
++	phandle_t root;
++	ssize_t len;
++
++	root = OF_finddevice("/");
++	if (root == 0)
++		return (NULL);
++	if ((len = OF_getproplen(root, "model")) <= 0)
++		return (NULL);
++	if (len > 1024 ||
++	    OF_getprop_alloc(root, "model", (void **)&model) == -1)
++		return (NULL);
++
++	return (model);
++#else
++	return (NULL);
++#endif
++}
++
++static void
++netgate_identify(driver_t *driver, device_t parent)
++{
++
++	if (device_find_child(parent, netgate_driver.name, -1) == NULL)
++		BUS_ADD_CHILD(parent, 0, netgate_driver.name, -1);
++}
++
++static int
++netgate_maker(const char *maker)
++{
++	int i;
++
++	for (i = 0; i < nitems(ng_ids); i++) {
++		/* VM - Maker */
++		if (ng_ids[i].bios == NULL &&
++		    ng_ids[i].boardname == NULL &&
++		    ng_ids[i].boardpn == NULL &&
++		    ng_ids[i].chassis == NULL &&
++		    ng_ids[i].fdt == NULL && ng_ids[i].hwmodel == NULL &&
++		    ng_ids[i].maker != NULL && ng_ids[i].planar == NULL &&
++		    ng_ids[i].prod == NULL && ng_ids[i].vm == NULL &&
++		    ng_ids[i].cpu == 0 &&
++		    maker != NULL &&
++		    strncmp(maker, ng_ids[i].maker, strlen(ng_ids[i].maker)) == 0)
++			return (ng_ids[i].id);
++	}
++
++	return (NETGATE_UNKNOWN);
++}
++
++static int
++netgate_vm_guest(const char *vm)
++{
++	int i;
++
++	for (i = 0; i < nitems(ng_ids); i++) {
++		/* VM - kern.vm_guest */
++		if (ng_ids[i].bios == NULL &&
++		    ng_ids[i].boardname == NULL &&
++		    ng_ids[i].boardpn == NULL &&
++		    ng_ids[i].chassis == NULL &&
++		    ng_ids[i].fdt == NULL && ng_ids[i].hwmodel == NULL &&
++		    ng_ids[i].maker == NULL && ng_ids[i].planar == NULL &&
++		    ng_ids[i].prod == NULL && ng_ids[i].vm != NULL &&
++		    ng_ids[i].cpu == 0 &&
++		    vm != NULL &&
++		    strncmp(vm, ng_ids[i].vm, strlen(ng_ids[i].vm)) == 0)
++			return (ng_ids[i].id);
++	}
++
++	return (NETGATE_UNKNOWN);
++}
++
++static int
++netgate_vm_bios(const char *bios)
++{
++	int i;
++
++	for (i = 0; i < nitems(ng_ids); i++) {
++		/* VM - BIOS */
++		if (ng_ids[i].bios != NULL &&
++		    ng_ids[i].boardname == NULL &&
++		    ng_ids[i].boardpn == NULL &&
++		    ng_ids[i].chassis == NULL &&
++		    ng_ids[i].fdt == NULL && ng_ids[i].hwmodel == NULL &&
++		    ng_ids[i].maker == NULL && ng_ids[i].planar == NULL &&
++		    ng_ids[i].prod == NULL && ng_ids[i].vm == NULL &&
++		    ng_ids[i].cpu == 0 &&
++		    bios != NULL &&
++		    strstr(bios, ng_ids[i].bios) != NULL)
++			return (ng_ids[i].id);
++	}
++
++	return (NETGATE_UNKNOWN);
++}
++
++static int
++netgate_prod_maker_chassis(const char *prod, const char *maker,
++    const char *chassis)
++{
++	int i;
++
++	for (i = 0; i < nitems(ng_ids); i++) {
++		/* Product, Maker and Chassis Tag */
++		if (ng_ids[i].bios == NULL &&
++		    ng_ids[i].boardname == NULL &&
++		    ng_ids[i].boardpn == NULL &&
++		    ng_ids[i].chassis != NULL &&
++		    ng_ids[i].fdt == NULL && ng_ids[i].hwmodel == NULL &&
++		    ng_ids[i].maker != NULL && ng_ids[i].planar == NULL &&
++		    ng_ids[i].prod != NULL && ng_ids[i].vm == NULL &&
++		    ng_ids[i].cpu == 0 &&
++		    chassis != NULL && maker != NULL && prod != NULL &&
++		    strncmp(chassis, ng_ids[i].chassis, strlen(ng_ids[i].chassis)) == 0 &&
++		    strncmp(maker, ng_ids[i].maker, strlen(ng_ids[i].maker)) == 0 &&
++		    strncmp(prod, ng_ids[i].prod, strlen(ng_ids[i].prod)) == 0)
++			return (ng_ids[i].id);
++	}
++
++	return (NETGATE_UNKNOWN);
++}
++
++static int
++netgate_prod_maker_bios(const char *prod, const char *maker, const char *bios)
++{
++	int i;
++
++	for (i = 0; i < nitems(ng_ids); i++) {
++		/* Product, Maker and Bios */
++		if (ng_ids[i].bios != NULL &&
++		    ng_ids[i].boardname == NULL &&
++		    ng_ids[i].boardpn == NULL &&
++		    ng_ids[i].chassis == NULL &&
++		    ng_ids[i].fdt == NULL && ng_ids[i].hwmodel == NULL &&
++		    ng_ids[i].maker != NULL && ng_ids[i].planar == NULL &&
++		    ng_ids[i].prod != NULL && ng_ids[i].vm == NULL &&
++		    ng_ids[i].cpu == 0 &&
++		    bios != NULL && maker != NULL && prod != NULL &&
++		    strstr(bios, ng_ids[i].bios) != NULL &&
++		    strncmp(maker, ng_ids[i].maker, strlen(ng_ids[i].maker)) == 0 &&
++		    strncmp(prod, ng_ids[i].prod, strlen(ng_ids[i].prod)) == 0)
++			return (ng_ids[i].id);
++	}
++
++	return (NETGATE_UNKNOWN);
++}
++
++static int
++netgate_product_maker(const char *prod, const char *maker)
++{
++	int i;
++
++	for (i = 0; i < nitems(ng_ids); i++) {
++		/* Product and Maker */
++		if (ng_ids[i].bios == NULL &&
++		    ng_ids[i].boardname == NULL &&
++		    ng_ids[i].boardpn == NULL &&
++		    ng_ids[i].chassis == NULL &&
++		    ng_ids[i].fdt == NULL && ng_ids[i].hwmodel == NULL &&
++		    ng_ids[i].maker != NULL && ng_ids[i].planar == NULL &&
++		    ng_ids[i].prod != NULL && ng_ids[i].vm == NULL &&
++		    ng_ids[i].cpu == 0 &&
++		    maker != NULL && prod != NULL &&
++		    strncmp(maker, ng_ids[i].maker, strlen(ng_ids[i].maker)) == 0 &&
++		    strncmp(prod, ng_ids[i].prod, strlen(ng_ids[i].prod)) == 0)
++			return (ng_ids[i].id);
++	}
++
++	return (NETGATE_UNKNOWN);
++}
++
++static int
++netgate_planar_maker(const char *planar, const char *maker)
++{
++	int i;
++
++	for (i = 0; i < nitems(ng_ids); i++) {
++		/* Planar and Maker */
++		if (ng_ids[i].bios == NULL &&
++		    ng_ids[i].boardname == NULL &&
++		    ng_ids[i].boardpn == NULL &&
++		    ng_ids[i].chassis == NULL &&
++		    ng_ids[i].fdt == NULL && ng_ids[i].hwmodel == NULL &&
++		    ng_ids[i].maker != NULL && ng_ids[i].planar != NULL &&
++		    ng_ids[i].prod == NULL && ng_ids[i].vm == NULL &&
++		    ng_ids[i].cpu == 0 &&
++		    maker != NULL && planar != NULL &&
++		    strncmp(maker, ng_ids[i].maker, strlen(ng_ids[i].maker)) == 0 &&
++		    strncmp(planar, ng_ids[i].planar, strlen(ng_ids[i].planar)) == 0)
++			return (ng_ids[i].id);
++	}
++
++	return (NETGATE_UNKNOWN);
++}
++
++static int
++netgate_product_model(const char *prod, const char *model)
++{
++	int i;
++
++	for (i = 0; i < nitems(ng_ids); i++) {
++		/* Product and hw.model */
++		if (ng_ids[i].bios == NULL &&
++		    ng_ids[i].boardname == NULL &&
++		    ng_ids[i].boardpn == NULL &&
++		    ng_ids[i].chassis == NULL &&
++		    ng_ids[i].fdt == NULL && ng_ids[i].hwmodel != NULL &&
++		    ng_ids[i].maker == NULL && ng_ids[i].planar == NULL &&
++		    ng_ids[i].prod != NULL && ng_ids[i].vm == NULL &&
++		    ng_ids[i].cpu == 0 &&
++		    model != NULL && prod != NULL &&
++		    strstr(model, ng_ids[i].hwmodel) != NULL &&
++		    strncmp(prod, ng_ids[i].prod, strlen(ng_ids[i].prod)) == 0)
++			return (ng_ids[i].id);
++	}
++
++	return (NETGATE_UNKNOWN);
++}
++
++static int
++netgate_product_ncpu(const char *prod)
++{
++	int i;
++
++	for (i = 0; i < nitems(ng_ids); i++) {
++		/* Product and hw.ncpu */
++		if (ng_ids[i].bios == NULL &&
++		    ng_ids[i].boardname == NULL &&
++		    ng_ids[i].boardpn == NULL &&
++		    ng_ids[i].chassis == NULL &&
++		    ng_ids[i].fdt == NULL && ng_ids[i].hwmodel == NULL &&
++		    ng_ids[i].maker == NULL && ng_ids[i].planar == NULL &&
++		    ng_ids[i].prod != NULL && ng_ids[i].vm == NULL &&
++		    ng_ids[i].cpu > 0 &&
++		    prod != NULL &&
++		    ng_ids[i].cpu == mp_ncpus &&
++		    strncmp(prod, ng_ids[i].prod, strlen(ng_ids[i].prod)) == 0)
++			return (ng_ids[i].id);
++	}
++
++	return (NETGATE_UNKNOWN);
++}
++
++static int
++netgate_model_uboot_board(const char *model, const char *boardpn)
++{
++	int i;
++
++	for (i = 0; i < nitems(ng_ids); i++) {
++		/* hw.model and U-boot board PN */
++		if (ng_ids[i].bios == NULL &&
++		    ng_ids[i].boardname == NULL &&
++		    ng_ids[i].boardpn != NULL &&
++		    ng_ids[i].chassis == NULL &&
++		    ng_ids[i].fdt == NULL && ng_ids[i].hwmodel != NULL &&
++		    ng_ids[i].maker == NULL && ng_ids[i].planar == NULL &&
++		    ng_ids[i].prod == NULL && ng_ids[i].vm == NULL &&
++		    ng_ids[i].cpu == 0 &&
++		    boardpn != NULL && model != NULL &&
++		    strncmp(boardpn, ng_ids[i].boardpn, strlen(ng_ids[i].boardpn)) == 0 &&
++		    strncmp(model, ng_ids[i].hwmodel, strlen(ng_ids[i].hwmodel)) == 0)
++			return (ng_ids[i].id);
++	}
++
++	return (NETGATE_UNKNOWN);
++}
++
++static int
++netgate_uboot_boardname(const char *boardname)
++{
++	int i;
++
++	for (i = 0; i < nitems(ng_ids); i++) {
++		/* U-boot board Name */
++		if (ng_ids[i].bios == NULL &&
++		    ng_ids[i].boardname != NULL &&
++		    ng_ids[i].boardpn == NULL &&
++		    ng_ids[i].chassis == NULL &&
++		    ng_ids[i].fdt == NULL && ng_ids[i].hwmodel == NULL &&
++		    ng_ids[i].maker == NULL && ng_ids[i].planar == NULL &&
++		    ng_ids[i].prod == NULL && ng_ids[i].vm == NULL &&
++		    ng_ids[i].cpu == 0 &&
++		    boardname != NULL &&
++		    strncmp(boardname, ng_ids[i].boardname,
++		      strlen(ng_ids[i].boardname)) == 0)
++			return (ng_ids[i].id);
++	}
++
++	return (NETGATE_UNKNOWN);
++}
++
++#ifdef FDT
++static int
++netgate_prod_fdt_model(const char *prod, const char *fdt)
++{
++	int i;
++
++	for (i = 0; i < nitems(ng_ids); i++) {
++		/* Product and FDT model */
++		if (ng_ids[i].bios == NULL &&
++		    ng_ids[i].boardname == NULL &&
++		    ng_ids[i].boardpn == NULL &&
++		    ng_ids[i].chassis == NULL &&
++		    ng_ids[i].fdt != NULL && ng_ids[i].hwmodel == NULL &&
++		    ng_ids[i].maker == NULL && ng_ids[i].planar == NULL &&
++		    ng_ids[i].prod != NULL && ng_ids[i].vm == NULL &&
++		    ng_ids[i].cpu == 0 &&
++		    fdt != NULL && prod != NULL &&
++		    strncmp(fdt, ng_ids[i].fdt, strlen(ng_ids[i].fdt)) == 0 &&
++		    strncmp(prod, ng_ids[i].prod, strlen(ng_ids[i].prod)) == 0)
++			return (ng_ids[i].id);
++	}
++
++	return (NETGATE_UNKNOWN);
++}
++#endif
++
++static int
++netgate_product(const char *prod)
++{
++	int i;
++
++	for (i = 0; i < nitems(ng_ids); i++) {
++		/* Product */
++		if (ng_ids[i].bios == NULL &&
++		    ng_ids[i].boardname == NULL &&
++		    ng_ids[i].boardpn == NULL &&
++		    ng_ids[i].chassis == NULL &&
++		    ng_ids[i].fdt == NULL && ng_ids[i].hwmodel == NULL &&
++		    ng_ids[i].maker == NULL && ng_ids[i].planar == NULL &&
++		    ng_ids[i].prod != NULL && ng_ids[i].vm == NULL &&
++		    ng_ids[i].cpu == 0 &&
++		    prod != NULL &&
++		    strncmp(prod, ng_ids[i].prod, strlen(ng_ids[i].prod)) == 0)
++			return (ng_ids[i].id);
++	}
++
++	return (NETGATE_UNKNOWN);
++}
++
++static int
++netgate_planar(const char *planar)
++{
++	int i;
++
++	for (i = 0; i < nitems(ng_ids); i++) {
++		/* Planar */
++		if (ng_ids[i].bios == NULL &&
++		    ng_ids[i].boardname == NULL &&
++		    ng_ids[i].boardpn == NULL &&
++		    ng_ids[i].chassis == NULL &&
++		    ng_ids[i].fdt == NULL && ng_ids[i].hwmodel == NULL &&
++		    ng_ids[i].maker == NULL && ng_ids[i].planar != NULL &&
++		    ng_ids[i].prod == NULL && ng_ids[i].vm == NULL &&
++		    ng_ids[i].cpu == 0 &&
++		    planar != NULL &&
++		    strncmp(planar, ng_ids[i].planar, strlen(ng_ids[i].planar)) == 0)
++			return (ng_ids[i].id);
++	}
++
++	return (NETGATE_UNKNOWN);
++}
++
++static int
++netgate_chassis(const char *chassis)
++{
++	int i;
++
++	for (i = 0; i < nitems(ng_ids); i++) {
++		/* Chassis */
++		if (ng_ids[i].bios == NULL &&
++		    ng_ids[i].boardname == NULL &&
++		    ng_ids[i].boardpn == NULL &&
++		    ng_ids[i].chassis != NULL &&
++		    ng_ids[i].fdt == NULL && ng_ids[i].hwmodel == NULL &&
++		    ng_ids[i].maker == NULL && ng_ids[i].planar == NULL &&
++		    ng_ids[i].prod == NULL && ng_ids[i].vm == NULL &&
++		    ng_ids[i].cpu == 0 &&
++		    chassis != NULL &&
++		    strncmp(chassis, ng_ids[i].chassis, strlen(ng_ids[i].chassis)) == 0)
++			return (ng_ids[i].id);
++	}
++
++	return (NETGATE_UNKNOWN);
++}
++
++static int
++netgate_probe(device_t dev)
++{
++	size_t len;
++	char *bios, *boardname, *boardpn, *chassis, *fdt, *maker;
++	char *model, *planar, *prod, *vm;
++	struct netgate_softc *sc;
++
++	sc = device_get_softc(dev);
++
++	/* hw.model */
++	len = NETGATE_BUFSZ;
++	model = malloc(len, M_DEVBUF, M_WAITOK);
++	memset(model, 0, len);
++	if (kernel_sysctlbyname(curthread, "hw.model", model, &len, NULL,
++	    0, NULL, 0) != 0) {
++		free(model, M_DEVBUF);
++		model = NULL;
++	}
++	/* kern.vm_guest */
++	len = NETGATE_BUFSZ;
++	vm = malloc(len, M_DEVBUF, M_WAITOK);
++	memset(vm, 0, len);
++	if (kernel_sysctlbyname(curthread, "kern.vm_guest", vm, &len, NULL,
++	    0, NULL, 0) != 0) {
++		free(vm, M_DEVBUF);
++		vm = NULL;
++	}
++	fdt = fdt_get_model();
++	bios = kern_getenv("smbios.bios.version");
++	chassis = kern_getenv("smbios.chassis.tag");
++	maker = kern_getenv("smbios.system.maker");
++	planar = kern_getenv("smbios.planar.product");
++	prod = kern_getenv("smbios.system.product");
++	boardpn = kern_getenv("uboot.boardpn");
++	boardname = kern_getenv("uboot.board_name");
++
++	/* VM - Maker */
++	if (maker != NULL)
++		netgate_model = netgate_maker(maker);
++	/* VM - kern.vm_guest */
++	if (netgate_model == NETGATE_UNKNOWN &&
++	    vm != NULL)
++		netgate_model = netgate_vm_guest(vm);
++	/* VM - BIOS */
++	if (netgate_model == NETGATE_UNKNOWN &&
++	    bios != NULL)
++		netgate_model = netgate_vm_bios(bios);
++	/* Product, Maker and Chassis Tag */
++	if (netgate_model == NETGATE_UNKNOWN &&
++	    chassis != NULL && maker != NULL && prod != NULL)
++		netgate_model = netgate_prod_maker_chassis(prod, maker, chassis);
++	/* Product, Maker and Bios */
++	if (netgate_model == NETGATE_UNKNOWN &&
++	    bios != NULL && maker != NULL && prod != NULL)
++		netgate_model = netgate_prod_maker_bios(prod, maker, bios);
++	/* Product and Maker */
++	if (netgate_model == NETGATE_UNKNOWN &&
++	    maker != NULL && prod != NULL)
++		netgate_model = netgate_product_maker(prod, maker);
++	/* Planar and Maker */
++	if (netgate_model == NETGATE_UNKNOWN &&
++	    maker != NULL && planar != NULL)
++		netgate_model = netgate_planar_maker(planar, maker);
++	/* Product and hw.model */
++	if (netgate_model == NETGATE_UNKNOWN &&
++	    model != NULL && prod != NULL)
++		netgate_model = netgate_product_model(prod, model);
++	/* Product and hw.ncpu */
++	if (netgate_model == NETGATE_UNKNOWN &&
++	    prod != NULL)
++		netgate_model = netgate_product_ncpu(prod);
++	/* hw.model and U-boot board PN */
++	if (netgate_model == NETGATE_UNKNOWN &&
++	    boardpn != NULL && model != NULL)
++		netgate_model = netgate_model_uboot_board(model, boardpn);
++	/* U-boot board Name */
++	if (netgate_model == NETGATE_UNKNOWN &&
++	    boardname != NULL)
++		netgate_model = netgate_uboot_boardname(boardname);
++#ifdef FDT
++	/* Product and FDT model */
++	if (netgate_model == NETGATE_UNKNOWN &&
++	    fdt != NULL && prod != NULL)
++		netgate_model = netgate_prod_fdt_model(prod, fdt);
++#endif
++	/* Product */
++	if (netgate_model == NETGATE_UNKNOWN &&
++	    prod != NULL)
++		netgate_model = netgate_product(prod);
++	/* Planar */
++	if (netgate_model == NETGATE_UNKNOWN &&
++	    planar != NULL)
++		netgate_model = netgate_planar(planar);
++	/* Chassis */
++	if (netgate_model == NETGATE_UNKNOWN &&
++	    chassis != NULL)
++		netgate_model = netgate_chassis(chassis);
++	/* QEMU with Chassis */
++	if (netgate_model == NETGATE_VM_QEMU &&
++	    chassis != NULL)
++		netgate_model = netgate_chassis(chassis);	
++
++	if (bios != NULL)
++		freeenv(bios);
++	if (boardname != NULL)
++		freeenv(boardname);
++	if (boardpn != NULL)
++		freeenv(boardpn);
++	if (chassis != NULL)
++		freeenv(chassis);
++	if (fdt != NULL)
++		fdt_free(fdt);
++	if (maker != NULL)
++		freeenv(maker);
++	if (model != NULL)
++		free(model, M_DEVBUF);
++	if (planar != NULL)
++		freeenv(planar);
++	if (prod != NULL)
++		freeenv(prod);
++	if (vm != NULL)
++		free(vm, M_DEVBUF);
++
++	/* Set the device description. */
++	sc->sc_desc = netgate_get_device_desc();
++	device_set_desc(dev, sc->sc_desc);
++
++	return (BUS_PROBE_DEFAULT);
++}
++
++static int
++netgate_attach(device_t dev)
++{
++	struct netgate_softc *sc;
++	struct sysctl_ctx_list *ctx;
++	struct sysctl_oid_list *child;
++
++	sc = device_get_softc(dev);
++	sc->sc_model_str = malloc(NETGATE_BUFSZ, M_DEVBUF, M_WAITOK);
++	sc->sc_desc_str = malloc(NETGATE_BUFSZ, M_DEVBUF, M_WAITOK);
++	snprintf(sc->sc_model_str, NETGATE_BUFSZ, "%s", netgate_get_device_model());
++	snprintf(sc->sc_desc_str, NETGATE_BUFSZ, "%s", netgate_get_device_desc());
++	ctx = device_get_sysctl_ctx(dev);
++	child = SYSCTL_CHILDREN(SYSCTL_PARENT(device_get_sysctl_tree(dev)));
++	SYSCTL_ADD_STRING(ctx, child, OID_AUTO, "model", CTLFLAG_RD,
++	    sc->sc_model_str, 0, "Device model");
++	SYSCTL_ADD_STRING(ctx, child, OID_AUTO, "desc", CTLFLAG_RD,
++	    sc->sc_desc_str, 0, "Device description");
++
++	device_printf(dev, "version: %s\n", NETGATE_MOD_VER);
++
++	return (0);
++}
++
++static int
++netgate_detach(device_t dev)
++{
++
++	return (EINVAL);
++}
++
++static device_method_t netgate_methods[] = {
++	/* Device interface */
++	DEVMETHOD(device_identify,	netgate_identify),
++	DEVMETHOD(device_probe,		netgate_probe),
++	DEVMETHOD(device_attach,	netgate_attach),
++	DEVMETHOD(device_detach,	netgate_detach),
++
++	DEVMETHOD_END
++};
++
++static driver_t netgate_driver = {
++	"netgate",
++	netgate_methods,
++	sizeof(struct netgate_softc),
++};
++
++EARLY_DRIVER_MODULE(netgate, nexus, netgate_driver, 0, 0, BUS_PASS_RESOURCE);
++MODULE_DEPEND(netgate, nexus, 1, 1, 1);
++
++MODULE_VERSION(netgate, 1);
+diff --git a/sys/dev/netgate/netgate.h b/sys/dev/netgate/netgate.h
+new file mode 100644
+index 00000000000..d2599e74c00
+--- /dev/null
++++ b/sys/dev/netgate/netgate.h
+@@ -0,0 +1,92 @@
++/*-
++ * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
++ *
++ * Copyright (c) 2022-2023 Rubicon Communications, LLC (Netgate).
++ * All rights reserved.
++ *
++ * Redistribution and use in source and binary forms, with or without
++ * modification, are permitted provided that the following conditions
++ * are met:
++ * 1. Redistributions of source code must retain the above copyright
++ *    notice, this list of conditions and the following disclaimer.
++ * 2. Redistributions in binary form must reproduce the above copyright
++ *    notice, this list of conditions and the following disclaimer in the
++ *    documentation and/or other materials provided with the distribution.
++ *
++ * THIS SOFTWARE IS PROVIDED BY THE AUTHOR ``AS IS'' AND ANY EXPRESS OR
++ * IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
++ * OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.
++ * IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY DIRECT, INDIRECT,
++ * INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT
++ * NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
++ * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
++ * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
++ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
++ * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
++ */
++
++#ifndef __NETGATE_H__
++#define __NETGATE_H__
++
++#define	NETGATE_MOD_VER		"0.2"
++
++#define	NETGATE_UNKNOWN		0
++
++/* Old devices. */
++#define	NETGATE_APU1		10
++#define	NETGATE_APU		11
++#define	NETGATE_SG2200		12
++#define	NETGATE_RCCVE		13
++#define	NETGATE_SG4860		14
++#define	NETGATE_SG8860		15
++#define	NETGATE_XG2758		16
++#define	NETGATE_MBT4220		17
++#define	NETGATE_MBT4220_1	18
++#define	NETGATE_MBT2220		19
++#define	NETGATE_MBT2220_1	20
++#define	NETGATE_TURBOT		21
++#define	NETGATE_TURBOT_1	22
++#define	NETGATE_C2558		23
++#define	NETGATE_C2558_1		24
++#define	NETGATE_C2758		25
++#define	NETGATE_C2758_1		26
++#define	NETGATE_APU2		27
++#define	NETGATE_APU2_1		28
++
++/* VMs */
++#define	NETGATE_VM_QEMU		50
++#define	NETGATE_VM_GOOGLE	51
++#define	NETGATE_VM_KVM		52
++#define	NETGATE_VM_AWS		53
++#define	NETGATE_VM_GOOGLE_1	54
++#define	NETGATE_VM_VIRTUALBOX	55
++#define	NETGATE_VM_HYPERV	56
++#define	NETGATE_VM_AZURE	57
++#define	NETGATE_VM_VMWARE	58
++#define	NETGATE_VM_AWS_1    59
++#define	NETGATE_VM_ORACLE   60
++
++/* Netgate */
++#define	NETGATE_SG1000		1000
++#define	NETGATE_1100		1100
++#define	NETGATE_2100		2100
++#define	NETGATE_1537		1537
++#define	NETGATE_1540		1540
++#define	NETGATE_1541		1541
++#define	NETGATE_3100		3100
++#define	NETGATE_4100		4100
++#define	NETGATE_4200		4200
++#define	NETGATE_5100		5100
++#define	NETGATE_5200		5200
++#define	NETGATE_6100		6100
++#define	NETGATE_6200		6200
++#define	NETGATE_7100		7100
++#define	NETGATE_7200		7200
++#define	NETGATE_7541		7541
++#define	NETGATE_8200		8200
++
++char *netgate_get_device_desc(void);
++char *netgate_get_device_model(void);
++int netgate_get_device_id(void);
++
++#endif	/* __NETGATE_H__ */

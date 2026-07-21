@@ -1,0 +1,114 @@
+diff --git a/libexec/getty/gettytab b/libexec/getty/gettytab
+index c2a8d9dc5fa..3d47e91ef70 100644
+--- a/libexec/getty/gettytab
++++ b/libexec/getty/gettytab
+@@ -234,3 +234,7 @@ al.Pc:\
+ 	:np:nc:sp#115200:
+ 3wire.230400|230400-3wire:\
+ 	:np:nc:sp#230400:
++
++# autologin for 3wire serial terminals.
++al.3wire:\
++	:al=root:tc=3wire
+diff --git a/libexec/rc/rc b/libexec/rc/rc
+index db3c3e20ab4..15cd8c47463 100644
+--- a/libexec/rc/rc
++++ b/libexec/rc/rc
+@@ -24,6 +24,12 @@
+ # OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+ # SUCH DAMAGE.
+ 
++# Call pfSense version of this script when it's available
++if [ -f /etc/pfSense-rc ]; then
++	. /etc/pfSense-rc
++	exit 0
++fi
++
+ # System startup script run by init on autoboot
+ # or after single-user.
+ # Output and error are redirected to console by init,
+diff --git a/libexec/rc/rc.shutdown b/libexec/rc/rc.shutdown
+index 3dfd7a7e093..6f5d8da742d 100644
+--- a/libexec/rc/rc.shutdown
++++ b/libexec/rc/rc.shutdown
+@@ -26,6 +26,12 @@
+ #
+ #
+ 
++# Call pfSense version of this script when it's available
++if [ -f /etc/pfSense-rc.shutdown ]; then
++	. /etc/pfSense-rc.shutdown
++	exit 0
++fi
++
+ # Site-specific closing actions for daemons run by init on shutdown,
+ # or before going single-user from multi-user.
+ # Output and errors are directed to console by init, and the
+diff --git a/usr.bin/resizewin/resizewin.c b/usr.bin/resizewin/resizewin.c
+index 89b91c219de..6b668dfe701 100644
+--- a/usr.bin/resizewin/resizewin.c
++++ b/usr.bin/resizewin/resizewin.c
+@@ -142,7 +142,7 @@ main(int argc, char **argv)
+ 	}
+ 
+ 	/* Parse */
+-	if (sscanf(data, "\033[%hu;%huR", &w.ws_row, &w.ws_col) != 2) {
++	if (sscanf(data, " \033[%hu;%huR", &w.ws_row, &w.ws_col) != 2) {
+ 		error = 1;
+ 		warnx("unable to parse response");
+ 		goto out;
+diff --git a/usr.sbin/ppp/main.c b/usr.sbin/ppp/main.c
+index 76a145b2e55..9554a219948 100644
+--- a/usr.sbin/ppp/main.c
++++ b/usr.sbin/ppp/main.c
+@@ -356,8 +356,13 @@ main(int argc, char **argv)
+   ID0init();
+   if (ID0realuid() != 0) {
+     char conf[200], *ptr;
++    char *confdir;
+ 
+-    snprintf(conf, sizeof conf, "%s/%s", PPP_CONFDIR, CONFFILE);
++    confdir = getenv("PPP_CONFDIR");
++    if (confdir == NULL)
++      confdir = PPP_CONFDIR;
++
++    snprintf(conf, sizeof conf, "%s/%s", confdir, CONFFILE);
+     do {
+       struct stat sb;
+ 
+diff --git a/usr.sbin/ppp/systems.c b/usr.sbin/ppp/systems.c
+index b10072d093d..a81ba4189d5 100644
+--- a/usr.sbin/ppp/systems.c
++++ b/usr.sbin/ppp/systems.c
+@@ -50,8 +50,13 @@ OpenSecret(const char *file)
+ {
+   FILE *fp;
+   char line[100];
++  char *confdir;
+ 
+-  snprintf(line, sizeof line, "%s/%s", PPP_CONFDIR, file);
++  confdir = getenv("PPP_CONFDIR");
++  if (confdir == NULL)
++    confdir = PPP_CONFDIR;
++
++  snprintf(line, sizeof line, "%s/%s", confdir, file);
+   fp = ID0fopen(line, "r");
+   if (fp == NULL)
+     log_Printf(LogWARN, "OpenSecret: Can't open %s.\n", line);
+@@ -328,11 +333,15 @@ ReadSystem(struct bundle *bundle, const char *name, const char *file,
+   int indent;
+   char arg[LINE_LEN];
+   struct prompt *op;
++  char *confdir;
+ 
++  confdir = getenv("PPP_CONFDIR");
++  if (confdir == NULL)
++    confdir = PPP_CONFDIR;
+   if (*file == '/')
+     snprintf(filename, sizeof filename, "%s", file);
+   else
+-    snprintf(filename, sizeof filename, "%s/%s", PPP_CONFDIR, file);
++    snprintf(filename, sizeof filename, "%s/%s", confdir, file);
+   fp = ID0fopen(filename, "r");
+   if (fp == NULL) {
+     log_Printf(LogDEBUG, "ReadSystem: Can't open %s.\n", filename);

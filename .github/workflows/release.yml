@@ -1,0 +1,141 @@
+name: Verify, promote, or build ISO
+
+on:
+  workflow_dispatch:
+    inputs:
+      operation:
+        type: choice
+        options: [verify, promote, iso]
+        default: verify
+        required: true
+      channel:
+        type: choice
+        options: [devel, stable]
+        default: devel
+        required: true
+  schedule:
+    - cron: "17 5 * * *"
+
+permissions: {contents: read, id-token: write}
+concurrency: {group: release-control, cancel-in-progress: false}
+
+jobs:
+  control:
+    if: github.event_name == 'schedule' || inputs.operation == 'verify' || inputs.operation == 'promote'
+    runs-on: ubuntu-24.04
+    environment: channel-publisher
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with: {go-version-file: go.mod, cache: false}
+      - run: go build -trimpath -o "${RUNNER_TEMP}/fsbuild" ./cmd/fsbuild
+      - name: Prepare channel signing key
+        env: {SIGNING_KEY: "${{ secrets.FREESENSE_PKG_SIGNING_KEY }}"}
+        run: |
+          umask 077
+          printf '%s' "${SIGNING_KEY}" >"${RUNNER_TEMP}/channel.key"
+          openssl pkey -in "${RUNNER_TEMP}/channel.key" -pubout -out "${RUNNER_TEMP}/channel.pub"
+      - name: Acquire channel writer
+        env:
+          R2_CREDENTIAL_BROKER_URL: ${{ vars.R2_CREDENTIAL_BROKER_URL }}
+          R2_CREDENTIAL_BROKER_AUDIENCE: ${{ vars.R2_CREDENTIAL_BROKER_AUDIENCE }}
+          R2_BUCKET: ${{ vars.R2_BUILD_BUCKET }}
+          R2_ENDPOINT: ${{ vars.R2_ENDPOINT }}
+          FSBUILD_STORE_PREFIX: v1
+        run: >-
+          "${RUNNER_TEMP}/fsbuild" credentials acquire --broker-url "${R2_CREDENTIAL_BROKER_URL}"
+          --audience "${R2_CREDENTIAL_BROKER_AUDIENCE}" --role channel-writer
+          --expected-bucket "${R2_BUCKET}" --expected-prefix v1 --expected-endpoint "${R2_ENDPOINT}"
+          --github-env "${GITHUB_ENV}"
+      - name: Verify current development repositories
+        if: inputs.operation == 'verify'
+        env: {R2_BUCKET: "${{ vars.R2_BUILD_BUCKET }}", FSBUILD_STORE_PREFIX: v1}
+        run: |
+          set -euo pipefail
+          for component in system packages; do
+            output="${RUNNER_TEMP}/${component}.out"
+            python3 scripts/channel.py --public-key "${RUNNER_TEMP}/channel.pub" \
+              --channel devel --component "$component" --github-output "$output"
+            fingerprint=$(sed -n 's/^fingerprint=//p' "$output")
+            url=$(sed -n 's/^url=//p' "$output")
+            curl -fsS --proto '=https' "${url%/amd64}/complete.json" | \
+              jq -e --arg fingerprint "$fingerprint" '.fingerprint == $fingerprint' >/dev/null
+            curl -fsSI --proto '=https' "${url}/meta.conf" >/dev/null
+            curl -fsSI --proto '=https' "${url}/packagesite.pkg" >/dev/null
+            "${RUNNER_TEMP}/fsbuild" channel verify --component "$component" \
+              --fingerprint "$fingerprint" --private-key "${RUNNER_TEMP}/channel.key"
+          done
+      - name: Promote verified components after seven days
+        if: github.event_name == 'schedule' || inputs.operation == 'promote'
+        env: {R2_BUCKET: "${{ vars.R2_BUILD_BUCKET }}", FSBUILD_STORE_PREFIX: v1}
+        run: |
+          set -euo pipefail
+          promoted=0
+          for component in system packages; do
+            output="${RUNNER_TEMP}/${component}.out"
+            if ! python3 scripts/channel.py --public-key "${RUNNER_TEMP}/channel.pub" \
+              --channel devel --component "$component" --github-output "$output"; then
+              continue
+            fi
+            verified=$(sed -n 's/^verified=//p' "$output")
+            published=$(sed -n 's/^published_at=//p' "$output")
+            ready=$(date -u --date="$published + 7 days" +%s)
+            if [[ "$verified" == true && $(date -u +%s) -ge $ready ]]; then
+              "${RUNNER_TEMP}/fsbuild" channel promote --component "$component" --soak 168h \
+                --private-key "${RUNNER_TEMP}/channel.key"
+              promoted=$((promoted + 1))
+            fi
+          done
+          echo "Promoted ${promoted} component(s)."
+
+  iso-plan:
+    if: inputs.operation == 'iso'
+    runs-on: ubuntu-24.04
+    environment: build-coordinator
+    outputs:
+      fingerprint: ${{ steps.plan.outputs.iso }}
+      system: ${{ steps.channel.outputs.fingerprint }}
+      generation: ${{ steps.channel.outputs.generation }}
+      platform: ${{ steps.plan.outputs.platform }}
+      source_sha: ${{ steps.plan.outputs.source_sha }}
+      system_sha: ${{ steps.plan.outputs.system_sha }}
+      packages_sha: ${{ steps.plan.outputs.packages_sha }}
+      os_base_sha: ${{ steps.plan.outputs.os_base_sha }}
+      freebsd_sha: ${{ steps.plan.outputs.freebsd_sha }}
+      ports_sha: ${{ steps.plan.outputs.ports_sha }}
+      image_sha256: ${{ steps.plan.outputs.image_sha256 }}
+      jail_object: ${{ steps.plan.outputs.jail_object }}
+      package_train: ${{ steps.plan.outputs.package_train }}
+      public_base_url: ${{ steps.plan.outputs.public_base_url }}
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - name: Read signed selected channel
+        id: channel
+        run: |
+          python3 scripts/channel.py --public-key config/channel-signing-public.pem \
+            --channel "${{ inputs.channel }}" --component system --github-output "$GITHUB_OUTPUT"
+      - id: plan
+        run: >-
+          python3 scripts/plan.py iso --os-base-sha "${GITHUB_SHA}"
+          --system-id "${{ steps.channel.outputs.fingerprint }}" --github-output "${GITHUB_OUTPUT}"
+
+  iso:
+    needs: iso-plan
+    uses: ./.github/workflows/ryzen-build.yml
+    with:
+      stage: iso
+      fingerprint: ${{ needs.iso-plan.outputs.fingerprint }}
+      platform_id: ${{ needs.iso-plan.outputs.platform }}
+      system_id: ${{ needs.iso-plan.outputs.system }}
+      source_sha: ${{ needs.iso-plan.outputs.source_sha }}
+      system_sha: ${{ needs.iso-plan.outputs.system_sha }}
+      packages_sha: ${{ needs.iso-plan.outputs.packages_sha }}
+      os_base_sha: ${{ needs.iso-plan.outputs.os_base_sha }}
+      freebsd_sha: ${{ needs.iso-plan.outputs.freebsd_sha }}
+      ports_sha: ${{ needs.iso-plan.outputs.ports_sha }}
+      image_sha256: ${{ needs.iso-plan.outputs.image_sha256 }}
+      jail_object: ${{ needs.iso-plan.outputs.jail_object }}
+      package_train: ${{ needs.iso-plan.outputs.package_train }}
+      generation: ${{ needs.iso-plan.outputs.generation }}
+      public_base_url: ${{ needs.iso-plan.outputs.public_base_url }}
+    secrets: inherit

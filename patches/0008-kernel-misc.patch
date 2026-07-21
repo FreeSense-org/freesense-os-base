@@ -1,0 +1,260 @@
+diff --git a/sys/contrib/openzfs/module/os/freebsd/zfs/zfs_vnops_os.c b/sys/contrib/openzfs/module/os/freebsd/zfs/zfs_vnops_os.c
+index 1b3eeb4353f..0be11ce8e99 100644
+--- a/sys/contrib/openzfs/module/os/freebsd/zfs/zfs_vnops_os.c
++++ b/sys/contrib/openzfs/module/os/freebsd/zfs/zfs_vnops_os.c
+@@ -6922,10 +6922,21 @@ zfs_freebsd_copy_file_range(struct vop_copy_file_range_args *ap)
+ 	int error;
+ 	uint64_t len = *ap->a_lenp;
+ 
++	/*
++	 * XXXMJG: block cloning came with numerous bugs and it is unclear if
++	 * they are sorted out now. Since said bugs can result in data
++	 * corruption and this is purely optional, make sure we don't end up
++	 * using this code.
++	 */
++#if 0
+ 	if (!zfs_bclone_enabled) {
+ 		mp = NULL;
+ 		goto bad_write_fallback;
+ 	}
++#else
++	mp = NULL;
++	goto bad_write_fallback;
++#endif
+ 
+ 	/*
+ 	 * TODO: If offset/length is not aligned to recordsize, use
+diff --git a/sys/contrib/openzfs/module/zfs/dmu.c b/sys/contrib/openzfs/module/zfs/dmu.c
+index 5cb02831a25..96c0137f1d2 100644
+--- a/sys/contrib/openzfs/module/zfs/dmu.c
++++ b/sys/contrib/openzfs/module/zfs/dmu.c
+@@ -85,6 +85,16 @@ static uint_t zfs_per_txg_dirty_frees_percent = 30;
+  */
+ static int zfs_dmu_offset_next_sync = 1;
+ 
++/*
++ * XXXNETGATE
++ *
++ * Hole reporting resulted in quite a few data corruption issues.
++ *
++ * Reporting is purely optional (at cost of wasted space), so err on safety
++ * instead.
++ */
++static int zfs_dmu_report_holes = 0;
++
+ /*
+  * Limit the amount we can prefetch with one call to this amount.  This
+  * helps to limit the amount of memory that can be used by prefetching.
+@@ -2545,6 +2555,12 @@ restart:
+ 
+ 	rw_enter(&dn->dn_struct_rwlock, RW_READER);
+ 
++	if (!zfs_dmu_report_holes) {
++		rw_exit(&dn->dn_struct_rwlock);
++		dnode_rele(dn, FTAG);
++		return (SET_ERROR(EBUSY));
++	}
++
+ 	if (dnode_is_dirty(dn)) {
+ 		/*
+ 		 * If the zfs_dmu_offset_next_sync module option is enabled
+@@ -2986,6 +3002,9 @@ ZFS_MODULE_PARAM(zfs, zfs_, per_txg_dirty_frees_percent, UINT, ZMOD_RW,
+ ZFS_MODULE_PARAM(zfs, zfs_, dmu_offset_next_sync, INT, ZMOD_RW,
+ 	"Enable forcing txg sync to find holes");
+ 
++ZFS_MODULE_PARAM(zfs, zfs_, dmu_report_holes, INT, ZMOD_RW,
++	"Report holes to lseek et al");
++
+ ZFS_MODULE_PARAM(zfs, , dmu_prefetch_max, UINT, ZMOD_RW,
+ 	"Limit one prefetch call to this size");
+ 
+diff --git a/sys/fs/cd9660/cd9660_vfsops.c b/sys/fs/cd9660/cd9660_vfsops.c
+index ce6d03b7329..22f553234cf 100644
+--- a/sys/fs/cd9660/cd9660_vfsops.c
++++ b/sys/fs/cd9660/cd9660_vfsops.c
+@@ -185,9 +185,17 @@ cd9660_mount(struct mount *mp)
+ 	}
+ 
+ 	if ((mp->mnt_flag & MNT_UPDATE) == 0) {
++		if (atomic_cmpset_acq_ptr((uintptr_t *)&devvp->v_rdev->si_mountpt, 0,
++		    (uintptr_t)mp) == 0) {
++			vput(devvp);
++			return (EBUSY);
++		}
++
+ 		error = iso_mountfs(devvp, mp);
+-		if (error)
++		if (error) {
++			atomic_store_rel_ptr((uintptr_t *)&devvp->v_rdev->si_mountpt, 0);
+ 			vrele(devvp);
++		}
+ 	} else {
+ 		if (devvp != imp->im_devvp)
+ 			error = EINVAL;	/* needs translation */
+@@ -545,6 +553,7 @@ cd9660_unmount(struct mount *mp, int mntflags)
+ 	g_vfs_close(isomp->im_cp);
+ 	g_topology_unlock();
+ 	vrele(isomp->im_devvp);
++	atomic_store_rel_ptr((uintptr_t *)&isomp->im_dev->si_mountpt, 0);
+ 	dev_rel(isomp->im_dev);
+ 	free(isomp, M_ISOFSMNT);
+ 	mp->mnt_data = NULL;
+diff --git a/sys/fs/udf/udf_vfsops.c b/sys/fs/udf/udf_vfsops.c
+index c1627285a17..34a7ac91d4a 100644
+--- a/sys/fs/udf/udf_vfsops.c
++++ b/sys/fs/udf/udf_vfsops.c
+@@ -235,28 +235,41 @@ udf_mount(struct mount *mp)
+ 		return (error);
+ 	}
+ 
++	if (atomic_cmpset_acq_ptr((uintptr_t *)&devvp->v_rdev->si_mountpt, 0,
++		(uintptr_t)mp) == 0) {
++		vput(devvp);
++		return (EBUSY);
++	}
++
+ 	if ((error = udf_mountfs(devvp, mp))) {
++		atomic_store_rel_ptr((uintptr_t *)&devvp->v_rdev->si_mountpt, 0);
+ 		vrele(devvp);
+-		return (error);
++		goto out_err;
+ 	}
+ 
+ 	imp = VFSTOUDFFS(mp);
+ 
+ 	udf_flags = NULL;
+ 	error = vfs_getopt(opts, "flags", (void **)&udf_flags, &len);
+-	if (error || len != sizeof(int))
+-		return (EINVAL);
++	if (error || len != sizeof(int)) {
++		error = EINVAL;
++		goto out_err;
++	}
+ 	imp->im_flags = *udf_flags;
+ 
+ 	if (imp->im_flags & UDFMNT_KICONV && udf_iconv) {
+ 		cs_disk = NULL;
+ 		error = vfs_getopt(opts, "cs_disk", (void **)&cs_disk, &len);
+-		if (!error && cs_disk[len - 1] != '\0')
+-			return (EINVAL);
++		if (!error && cs_disk[len - 1] != '\0') {
++			error = EINVAL;
++			goto out_err;
++		}
+ 		cs_local = NULL;
+ 		error = vfs_getopt(opts, "cs_local", (void **)&cs_local, &len);
+-		if (!error && cs_local[len - 1] != '\0')
+-			return (EINVAL);
++		if (!error && cs_local[len - 1] != '\0') {
++			error = EINVAL;
++			goto out_err;
++		}
+ 		udf_iconv->open(cs_local, cs_disk, &imp->im_d2l);
+ #if 0
+ 		udf_iconv->open(cs_disk, cs_local, &imp->im_l2d);
+@@ -265,7 +278,12 @@ udf_mount(struct mount *mp)
+ 
+ 	vfs_mountedfrom(mp, fspec);
+ 	return 0;
+-};
++out_err:
++	/*
++	 * XXXMJG: this was always incorrectly returning the error.
++	 */
++	return error;
++}
+ 
+ /*
+  * Check the descriptor tag for both the correct id and correct checksum.
+@@ -532,6 +550,8 @@ udf_unmount(struct mount *mp, int mntflags)
+ 	g_vfs_close(udfmp->im_cp);
+ 	g_topology_unlock();
+ 	vrele(udfmp->im_devvp);
++
++	atomic_store_rel_ptr((uintptr_t *)&udfmp->im_dev->si_mountpt, 0);
+ 	dev_rel(udfmp->im_dev);
+ 
+ 	if (udfmp->s_table != NULL)
+diff --git a/sys/kern/kern_jail.c b/sys/kern/kern_jail.c
+index 369b6aca926..a07c4c2256a 100644
+--- a/sys/kern/kern_jail.c
++++ b/sys/kern/kern_jail.c
+@@ -4357,6 +4357,7 @@ prison_priv_check(struct ucred *cred, int priv)
+ 		 */
+ 	case PRIV_NET_BRIDGE:
+ 	case PRIV_NET_GRE:
++	case PRIV_NET_PPP:
+ 	case PRIV_NET_BPF:
+ 	case PRIV_NET_RAW:		/* Dup, cond. in legacy jail case. */
+ 	case PRIV_NET_ROUTE:
+diff --git a/sys/kern/kern_rwlock.c b/sys/kern/kern_rwlock.c
+index 84a3a890be6..53b68e80818 100644
+--- a/sys/kern/kern_rwlock.c
++++ b/sys/kern/kern_rwlock.c
+@@ -1227,6 +1227,14 @@ __rw_wunlock_hard(volatile uintptr_t *c, uintptr_t v LOCK_FILE_LINE_ARG_DEF)
+ 		return;
+ 
+ 	rw = rwlock2rw(c);
++	if (__predict_false(v == RW_UNLOCKED)) {
++		v = RW_READ_VALUE(rw);
++		if (v == RW_UNLOCKED) {
++			panic("unlocking an unlocked rwlock %p\n", rw);
++		}
++		printf("%s: had to re-read rwlock %p\n", __func__, rw);
++	}
++
+ 	if (__predict_false(v == tid))
+ 		v = RW_READ_VALUE(rw);
+ 
+diff --git a/sys/kern/subr_bus.c b/sys/kern/subr_bus.c
+index b5c1c5b61f6..ccd5cae36c5 100644
+--- a/sys/kern/subr_bus.c
++++ b/sys/kern/subr_bus.c
+@@ -1216,6 +1216,7 @@ devclass_get_sysctl_tree(devclass_t dc)
+ static int
+ devclass_alloc_unit(devclass_t dc, device_t dev, int *unitp)
+ {
++	device_t *devices;
+ 	const char *s;
+ 	int unit = *unitp;
+ 
+@@ -1272,8 +1273,11 @@ devclass_alloc_unit(devclass_t dc, device_t dev, int *unitp)
+ 		int newsize;
+ 
+ 		newsize = unit + 1;
+-		dc->devices = reallocf(dc->devices,
+-		    newsize * sizeof(*dc->devices), M_BUS, M_WAITOK);
++		devices = reallocf(dc->devices,
++		    newsize * sizeof(*dc->devices), M_BUS, M_NOWAIT);
++		if (devices == NULL)
++			return (ENOMEM);
++		dc->devices = devices;
+ 		memset(dc->devices + dc->maxunit, 0,
+ 		    sizeof(device_t) * (newsize - dc->maxunit));
+ 		dc->maxunit = newsize;
+diff --git a/sys/sys/nv_namespace.h b/sys/sys/nv_namespace.h
+index ccc55edcdb9..a4027d2427c 100644
+--- a/sys/sys/nv_namespace.h
++++ b/sys/sys/nv_namespace.h
+@@ -1,7 +1,7 @@
+ /*-
+  * SPDX-License-Identifier: BSD-2-Clause
+  *
+- * Copyright (c) 2022 Rubicon Communications, LLC (Netgate)
++ * Copyright (c) 2022-2023 Rubicon Communications, LLC (Netgate)
+  * All rights reserved.
+  *
+  * Redistribution and use in source and binary forms, with or without
+diff --git a/sys/sys/priv.h b/sys/sys/priv.h
+index e302d9487e6..388216a05c3 100644
+--- a/sys/sys/priv.h
++++ b/sys/sys/priv.h
+@@ -321,7 +321,7 @@
+  */
+ #define	PRIV_NET_BRIDGE		390	/* Administer bridge. */
+ #define	PRIV_NET_GRE		391	/* Administer GRE. */
+-#define	_PRIV_NET_PPP		392	/* Removed. */
++#define	PRIV_NET_PPP		392	/* PPP */
+ #define	_PRIV_NET_SLIP		393	/* Removed. */
+ #define	PRIV_NET_BPF		394	/* Monitor BPF. */
+ #define	PRIV_NET_RAW		395	/* Open raw socket. */

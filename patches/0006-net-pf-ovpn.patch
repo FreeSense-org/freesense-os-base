@@ -1,0 +1,472 @@
+diff --git a/share/man/man4/ovpn.4 b/share/man/man4/ovpn.4
+index 3481dd0d0bd..40c7e376ef4 100644
+--- a/share/man/man4/ovpn.4
++++ b/share/man/man4/ovpn.4
+@@ -1,4 +1,4 @@
+-.\" Copyright (c) 2022 Rubicon Communications, LLC ("Netgate")
++.\" Copyright (c) 2022-2023 Rubicon Communications, LLC ("Netgate")
+ .\"
+ .\" Redistribution and use in source and binary forms, with or without
+ .\" modification, are permitted provided that the following conditions
+diff --git a/sys/net/if.c b/sys/net/if.c
+index 41084ecf051..07103edc9ba 100644
+--- a/sys/net/if.c
++++ b/sys/net/if.c
+@@ -302,6 +302,9 @@ int	ifqmaxlen = IFQ_MAXLEN;
+ VNET_DEFINE(struct ifnethead, ifnet);	/* depend on static init XXX */
+ VNET_DEFINE(struct ifgrouphead, ifg_head);
+ 
++#define V_allow_carp_src	VNET(allow_carp_src)
++VNET_DECLARE(bool, allow_carp_src);
++
+ /* Table of ifnet by index. */
+ static int if_index;
+ static int if_indexlim = 8;
+@@ -1893,6 +1896,9 @@ ifaof_ifpforaddr(const struct sockaddr *addr, struct ifnet *ifp)
+ 	CK_STAILQ_FOREACH(ifa, &ifp->if_addrhead, ifa_link) {
+ 		if (ifa->ifa_addr->sa_family != af)
+ 			continue;
++		if (!V_allow_carp_src && ifa_maybe != NULL &&
++		    !ifa_preferred(ifa_maybe, ifa))
++			continue;
+ 		if (ifa_maybe == NULL)
+ 			ifa_maybe = ifa;
+ 		if (ifa->ifa_netmask == 0) {
+@@ -4734,6 +4740,36 @@ if_sendq_prepend(if_t ifp, struct mbuf *m)
+ 	return (0);
+ }
+ 
++int
++if_sendq_enqueue(if_t ifp, struct mbuf *m)
++{
++	struct ifaltq *ifq = &ifp->if_snd;
++	int err;
++
++	IF_LOCK(ifq);\
++	if (ALTQ_IS_ENABLED(ifq)) {
++		ALTQ_ENQUEUE(ifq, m, NULL, err);
++		/*
++		 * ALTQ returns ENOBUFS if it discards a packet. This confuses users into
++		 * thinking something is wrong, (rather than ALTQ working as expected), so hide
++		 * this error.
++		*/
++		if (err == ENOBUFS)
++			err = 0;
++	} else {
++		if (_IF_QFULL(ifq)) {
++			m_freem(m);
++			err = ENOBUFS;
++		} else {
++			_IF_ENQUEUE(ifq, m);
++			err = 0;
++		}
++	}
++	IF_UNLOCK(ifq);
++
++	return (err);
++}
++
+ int
+ if_setifheaderlen(if_t ifp, int len)
+ {
+diff --git a/sys/net/if_ethersubr.c b/sys/net/if_ethersubr.c
+index 812a31595df..18eb03e3dd1 100644
+--- a/sys/net/if_ethersubr.c
++++ b/sys/net/if_ethersubr.c
+@@ -93,6 +93,7 @@
+ #include <crypto/sha1.h>
+ 
+ VNET_DEFINE(pfil_head_t, link_pfil_head);	/* Packet filter hooks */
++VNET_DEFINE(pppoe_input_t *, pppoe_input_ptr);
+ 
+ /* netgraph node hooks for ng_ether(4) */
+ void	(*ng_ether_input_p)(struct ifnet *ifp, struct mbuf **mp);
+@@ -926,6 +927,13 @@ ether_demux(struct ifnet *ifp, struct mbuf *m)
+ 		isr = NETISR_IPV6;
+ 		break;
+ #endif
++	case ETHERTYPE_PPPOEDISC:
++	case ETHERTYPE_PPPOE:
++		if (V_pppoe_input_ptr != NULL) {
++			V_pppoe_input_ptr(ether_type, m);
++			return;
++		}
++	/* fallthrough */
+ 	default:
+ 		goto discard;
+ 	}
+diff --git a/sys/net/if_ovpn.c b/sys/net/if_ovpn.c
+index 7c416055e93..ab2d41d200b 100644
+--- a/sys/net/if_ovpn.c
++++ b/sys/net/if_ovpn.c
+@@ -1,7 +1,7 @@
+ /*-
+  * SPDX-License-Identifier: BSD-2-Clause
+  *
+- * Copyright (c) 2021-2022 Rubicon Communications, LLC (Netgate)
++ * Copyright (c) 2021-2023 Rubicon Communications, LLC (Netgate)
+  *
+  * Redistribution and use in source and binary forms, with or without
+  * modification, are permitted provided that the following conditions
+diff --git a/sys/net/if_ovpn.h b/sys/net/if_ovpn.h
+index 2a24c35788a..c7d7973eed7 100644
+--- a/sys/net/if_ovpn.h
++++ b/sys/net/if_ovpn.h
+@@ -1,7 +1,7 @@
+ /*-
+  * SPDX-License-Identifier: BSD-2-Clause
+  *
+- * Copyright (c) 2021-2022 Rubicon Communications, LLC (Netgate)
++ * Copyright (c) 2021-2023 Rubicon Communications, LLC (Netgate)
+  *
+  * Redistribution and use in source and binary forms, with or without
+  * modification, are permitted provided that the following conditions
+diff --git a/sys/net/if_var.h b/sys/net/if_var.h
+index 3c65b2b4d2d..eae5cda4a81 100644
+--- a/sys/net/if_var.h
++++ b/sys/net/if_var.h
+@@ -655,6 +655,7 @@ void if_setnetmapadapter(if_t ifp, struct netmap_adapter *na);
+ struct netmap_adapter *if_getnetmapadapter(if_t ifp);
+ void if_input(if_t ifp, struct mbuf* sendmp);
+ int if_sendq_prepend(if_t ifp, struct mbuf *m);
++int if_sendq_enqueue(if_t ifp, struct mbuf *m);
+ struct mbuf *if_dequeue(if_t ifp);
+ int if_setifheaderlen(if_t ifp, int len);
+ void if_setrcvif(struct mbuf *m, if_t ifp);
+diff --git a/sys/net/ppp_defs.h b/sys/net/ppp_defs.h
+index 76a33e2402a..7b64773a21d 100644
+--- a/sys/net/ppp_defs.h
++++ b/sys/net/ppp_defs.h
+@@ -60,10 +60,12 @@
+ #define PPP_IPX		0x2b	/* IPX Datagram (RFC1552) */
+ #define	PPP_VJC_COMP	0x2d	/* VJ compressed TCP */
+ #define	PPP_VJC_UNCOMP	0x2f	/* VJ uncompressed TCP */
++#define	PPP_IPV6	0x57	/* Internet Protocol Version 6 */
+ #define PPP_COMP	0xfd	/* compressed packet */
+ #define PPP_IPCP	0x8021	/* IP Control Protocol */
+ #define PPP_ATCP	0x8029	/* AppleTalk Control Protocol */
+ #define PPP_IPXCP	0x802b	/* IPX Control Protocol (RFC1552) */
++#define PPP_IPV6CP	0x8057	/* IPv6 Control Protocol */
+ #define PPP_CCP		0x80fd	/* Compression Control Protocol */
+ #define PPP_LCP		0xc021	/* Link Control Protocol */
+ #define PPP_PAP		0xc023	/* Password Authentication Protocol */
+diff --git a/sys/net/route/route_ctl.c b/sys/net/route/route_ctl.c
+index d629fd1625c..80884dacb81 100644
+--- a/sys/net/route/route_ctl.c
++++ b/sys/net/route/route_ctl.c
+@@ -142,6 +142,12 @@ SYSCTL_UINT(_net_route, OID_AUTO, ipv6_nexthop, CTLFLAG_RW | CTLFLAG_VNET,
+     &VNET_NAME(rib_route_ipv6_nexthop), 0, "Enable IPv4 route via IPv6 Next Hop address");
+ #endif
+ 
++#define V_allow_carp_src	VNET(allow_carp_src)
++VNET_DEFINE(bool, allow_carp_src) = true;
++SYSCTL_BOOL(_net_route, OID_AUTO, allow_carp_src, CTLFLAG_RDTUN | CTLFLAG_VNET,
++    &VNET_NAME(allow_carp_src), true, "Allow CARP vhid source addresses");
++
++
+ /* Debug bits */
+ SYSCTL_NODE(_net_route, OID_AUTO, debug, CTLFLAG_RD | CTLFLAG_MPSAFE, 0, "");
+ 
+diff --git a/sys/netinet/if_ether.h b/sys/netinet/if_ether.h
+index 96879d82a4f..8c58e518274 100644
+--- a/sys/netinet/if_ether.h
++++ b/sys/netinet/if_ether.h
+@@ -121,6 +121,11 @@ void	arprequest(struct ifnet *, const struct in_addr *,
+ 	    const struct in_addr *, u_char *);
+ void	arp_ifinit(struct ifnet *, struct ifaddr *);
+ void	arp_announce_ifaddr(struct ifnet *, struct in_addr addr, u_char *);
++
++typedef void pppoe_input_t(int, struct mbuf *);
++VNET_DECLARE(pppoe_input_t *, pppoe_input_ptr);
++#define	V_pppoe_input_ptr	VNET(pppoe_input_ptr)
++
+ #endif
+ 
+ #endif
+diff --git a/sys/netinet6/in6_fib.c b/sys/netinet6/in6_fib.c
+index 95094a1ace7..8b9617f42ef 100644
+--- a/sys/netinet6/in6_fib.c
++++ b/sys/netinet6/in6_fib.c
+@@ -126,6 +126,13 @@ fib6_lookup(uint32_t fibnum, const struct in6_addr *dst6,
+ 	nh = dp->f(dp->arg, key, scopeid);
+ 	if (nh != NULL) {
+ 		nh = nhop_select(nh, flowid);
+ 		/* Ensure route & ifp is UP */
+ 		if (NH_IS_VALID(nh)) {
++			/* KP Work around pfSense redmine 14431
++			 * For unclear reasons we can end up with a route using an
++			 * interface that doesn't have IPv6 afdata. This is assumed
++			 * to be a race with interface cleanup, but as long as that's
++			 * not fixed this should at least prevent a panic here. */
++			if (if_getinet6(nh->nh_ifp) == NULL)
++				goto out;
+ 			if (flags & NHR_REF)
+@@ -133,6 +140,7 @@ fib6_lookup(uint32_t fibnum, const struct in6_addr *dst6,
+ 			return (nh);
+ 		}
+ 	}
++out:
+ 	RTSTAT_INC(rts_unreach);
+ 	return (NULL);
+ }
+diff --git a/sys/netinet6/nd6.c b/sys/netinet6/nd6.c
+index 88f159a6af4..51d5a97aeca 100644
+--- a/sys/netinet6/nd6.c
++++ b/sys/netinet6/nd6.c
+@@ -310,7 +310,9 @@ nd6_ifattach(struct ifnet *ifp)
+ 
+ 	/* Set IPv6 disabled on all interfaces but loopback by default. */
+ 	if ((ifp->if_flags & IFF_LOOPBACK) == 0) {
++	/* Netgate: retain the stable/12 default behaviour of having IPv6 be enabled on interfaces.
+ 		nd->nd_flags |= ND6_IFF_IFDISABLED;
++	*/
+ 		if (V_ip6_no_radr)
+ 			nd->nd_flags |= ND6_IFF_NO_RADR;
+ 		if (V_ip6_use_stableaddr)
+@@ -2367,7 +2369,6 @@ nd6_get_llentry(struct ifnet *ifp, const struct in6_addr *addr, int family)
+ 		} else {
+ 			/* child lle already exists, free newly-created one */
+ 			lltable_free_entry(LLTABLE6(ifp), child_lle);
+-			LLE_WLOCK(lle_tmp);
+ 			child_lle = lle_tmp;
+ 		}
+ 		LLE_WUNLOCK(lle);
+diff --git a/sys/netpfil/pf/pf.c b/sys/netpfil/pf/pf.c
+index 90342f04576..cbdb00a04eb 100644
+--- a/sys/netpfil/pf/pf.c
++++ b/sys/netpfil/pf/pf.c
+@@ -46,6 +46,7 @@
+ 
+ #include <sys/param.h>
+ #include <sys/bus.h>
++#include <sys/ck.h>
+ #include <sys/endian.h>
+ #include <sys/gsb_crc32.h>
+ #include <sys/hash.h>
+@@ -9841,6 +9842,12 @@ pf_route(struct pf_krule *r, struct ifnet *oifp,
+ 
+ 	ip = mtod(m0, struct ip *);
+ 
++	if (IN_MULTICAST(ntohl(ip->ip_dst.s_addr))) {
++		if (s)
++			PF_STATE_UNLOCK(s);
++		return (action);
++	}
++
+ 	bzero(&ro, sizeof(ro));
+ 	dst = (union sockaddr_union *)&ro.ro_dst;
+ 	dst->sin.sin_family = AF_INET;
+@@ -9913,7 +9920,49 @@ pf_route(struct pf_krule *r, struct ifnet *oifp,
+ 		action = PF_DROP;
+ 		SDT_PROBE1(pf, ip, route_to, drop, __LINE__);
+ 		goto bad;
++	} else if ((pd->af == pd->naf) &&
++	    (r->rt == PF_REPLYTO || (r->rt == PF_ROUTETO && ifp->if_type == IFT_ENC))) {
++		/* XXX: Copied from ifaof_ifpforaddr() since it mostly will not return NULL! */
++		struct sockaddr_in inaddr;
++		struct sockaddr *addr;
++		struct ifaddr *ifa;
++		char *cp, *cp2, *cp3;
++		char *cplim;
++
++		inaddr.sin_addr = ip->ip_dst;
++		inaddr.sin_family = AF_INET;
++		inaddr.sin_len = sizeof(inaddr);
++		inaddr.sin_port = 0;
++		addr = (struct sockaddr *)&inaddr;
++
++		CK_STAILQ_FOREACH(ifa, &ifp->if_addrhead, ifa_link) {
++			if (ifa->ifa_addr->sa_family != AF_INET)
++				continue;
++			if (ifa->ifa_netmask == 0) {
++				if ((bcmp(addr, ifa->ifa_addr, addr->sa_len) == 0) ||
++				    (ifa->ifa_dstaddr &&
++				    (bcmp(addr, ifa->ifa_dstaddr, addr->sa_len) == 0)))
++					return (action);
++				continue;
++			}
++			if (ifp->if_flags & IFF_POINTOPOINT) {
++				if (bcmp(addr, ifa->ifa_dstaddr, addr->sa_len) == 0)
++					return (action);
++			} else {
++				cp = addr->sa_data;
++				cp2 = ifa->ifa_addr->sa_data;
++				cp3 = ifa->ifa_netmask->sa_data;
++				cplim = ifa->ifa_netmask->sa_len + (char *)ifa->ifa_netmask;
++				for (; cp3 < cplim; cp3++)
++					if ((*cp++ ^ *cp2++) & *cp3)
++						break;
++				if (cp3 == cplim)
++					return (action);
++			}
++		}
+ 	}
++	else if ((pd->af == pd->naf) && r->rt == PF_ROUTETO && r->direction == pd->dir && in_localip(ip->ip_dst))
++		return (action);
+ 
+ 	/*
+ 	 * Bind to the correct interface if we're if-bound. We don't know which
+@@ -10192,6 +10241,12 @@ pf_route6(struct pf_krule *r, struct ifnet *oifp,
+ 
+ 	ip6 = mtod(m0, struct ip6_hdr *);
+ 
++	if (IN6_IS_ADDR_MULTICAST(&ip6->ip6_src)) {
++		if (s)
++			PF_STATE_UNLOCK(s);
++		return (action);
++	}
++
+ 	bzero(&dst, sizeof(dst));
+ 	dst.sin6_family = AF_INET6;
+ 	dst.sin6_len = sizeof(dst);
+@@ -10244,7 +10299,48 @@ pf_route6(struct pf_krule *r, struct ifnet *oifp,
+ 		action = PF_DROP;
+ 		SDT_PROBE1(pf, ip6, route_to, drop, __LINE__);
+ 		goto bad;
+-	}
++	} else if ((pd->af == pd->naf) && r->rt == PF_REPLYTO) {
++		/* XXX: Copied from ifaof_ifpforaddr() since it mostly will not return NULL! */
++		struct sockaddr_in6 inaddr6;
++		struct sockaddr *addr;
++		struct ifaddr *ifa;
++		char *cp, *cp2, *cp3;
++		char *cplim;
++
++		inaddr6.sin6_addr = ip6->ip6_dst;
++		inaddr6.sin6_family = AF_INET6;
++		inaddr6.sin6_len = sizeof(inaddr6);
++		inaddr6.sin6_port = 0;
++		inaddr6.sin6_flowinfo = 0;
++		addr = (struct sockaddr *)&inaddr6;
++
++		CK_STAILQ_FOREACH(ifa, &ifp->if_addrhead, ifa_link) {
++			if (ifa->ifa_addr->sa_family != AF_INET6)
++				continue;
++			if (ifa->ifa_netmask == 0) {
++				if ((bcmp(addr, ifa->ifa_addr, addr->sa_len) == 0) ||
++				    (ifa->ifa_dstaddr &&
++				     (bcmp(addr, ifa->ifa_dstaddr, addr->sa_len) == 0)))
++					return (action);
++				continue;
++			}
++			if (ifp->if_flags & IFF_POINTOPOINT) {
++				if (bcmp(addr, ifa->ifa_dstaddr, addr->sa_len) == 0)
++					return (action);
++			} else {
++				cp = addr->sa_data;
++				cp2 = ifa->ifa_addr->sa_data;
++				cp3 = ifa->ifa_netmask->sa_data;
++				cplim = ifa->ifa_netmask->sa_len + (char *)ifa->ifa_netmask;
++				for (; cp3 < cplim; cp3++)
++					if ((*cp++ ^ *cp2++) & *cp3)
++						break;
++				if (cp3 == cplim)
++					return (action);
++			}
++		}
++	} else if ((pd->af == pd->naf) && r->rt == PF_ROUTETO && (r->direction == pd->dir) && in6_localaddr(&ip6->ip6_dst))
++		return (action);
+ 
+ 	/*
+ 	 * Bind to the correct interface if we're if-bound. We don't know which
+diff --git a/tests/sys/net/if_ovpn/if_ovpn.sh b/tests/sys/net/if_ovpn/if_ovpn.sh
+index 5260ac344b9..0e2193a3da7 100644
+--- a/tests/sys/net/if_ovpn/if_ovpn.sh
++++ b/tests/sys/net/if_ovpn/if_ovpn.sh
+@@ -1,7 +1,7 @@
+ ##
+ # SPDX-License-Identifier: BSD-2-Clause
+ #
+-# Copyright (c) 2022 Rubicon Communications, LLC ("Netgate")
++# Copyright (c) 2022-2023 Rubicon Communications, LLC ("Netgate")
+ #
+ # Redistribution and use in source and binary forms, with or without
+ # modification, are permitted provided that the following conditions
+diff --git a/tests/sys/net/if_ovpn/utils.subr b/tests/sys/net/if_ovpn/utils.subr
+index fbe7dc98630..fc990a21197 100644
+--- a/tests/sys/net/if_ovpn/utils.subr
++++ b/tests/sys/net/if_ovpn/utils.subr
+@@ -1,7 +1,7 @@
+ ##
+ # SPDX-License-Identifier: BSD-2-Clause
+ #
+-# Copyright (c) 2022 Rubicon Communications, LLC ("Netgate")
++# Copyright (c) 2022-2023 Rubicon Communications, LLC ("Netgate")
+ #
+ # Redistribution and use in source and binary forms, with or without
+ # modification, are permitted provided that the following conditions
+diff --git a/tests/sys/netpfil/pf/pfsync.sh b/tests/sys/netpfil/pf/pfsync.sh
+index 9843c470c06..0979d0e4ca2 100644
+--- a/tests/sys/netpfil/pf/pfsync.sh
++++ b/tests/sys/netpfil/pf/pfsync.sh
+@@ -1558,6 +1558,9 @@ rt_af_head()
+ 
+ rt_af_body()
+ {
++	# In pfSense route-to/reply-to doesn't apply to the local subnet
++	atf_skip "pfSense behaves differently. See 4433f39e07aa98dad64308385ec7f214b56298dd"
++
+ 	route_to_common_head 1500
+ 
+ 	jexec one pfctl -e
+diff --git a/tests/sys/netpfil/pf/route_to.sh b/tests/sys/netpfil/pf/route_to.sh
+index 13b60c8f80b..29729efca6a 100644
+--- a/tests/sys/netpfil/pf/route_to.sh
++++ b/tests/sys/netpfil/pf/route_to.sh
+@@ -493,6 +493,48 @@ dummynet_in_cleanup()
+ 	pft_cleanup
+ }
+ 
++atf_test_case "reply_to_local" "cleanup"
++reply_to_local_head()
++{
++	atf_set descr 'Test reply-to for traffic from the local subnet'
++	atf_set require.user root
++}
++
++reply_to_local_body()
++{
++	pft_init
++
++	epair_one=$(vnet_mkepair)
++	epair_two=$(vnet_mkepair)
++
++	ifconfig ${epair_one}a 192.0.2.2/24 up
++	ifconfig ${epair_two}a 198.51.100.2/24 up
++
++	vnet_mkjail alcatraz ${epair_one}b ${epair_two}b
++	jexec alcatraz ifconfig ${epair_one}b 192.0.2.1/24 up
++	jexec alcatraz ifconfig ${epair_two}b 198.51.100.1/24 up
++
++	# Sanity check
++	atf_check -s exit:0 -o ignore \
++	    ping -c 3 192.0.2.1
++
++	jexec alcatraz pfctl -e
++	pft_set_rules alcatraz \
++	    "block" \
++	    "pass in on ${epair_one}b reply-to (${epair_one}b 192.0.2.3) inet from any to any"
++
++	# We ping from 192.0.2.2 to 192.0.2.1. Normall we'd expect this to fail,
++	# because pf will redirect to 192.0.2.3, but because this is subnet-local
++	# the ping will succeed.
++	atf_check -s exit:0 -o ignore \
++	    ping -c 3 192.0.2.1
++}
++
++reply_to_local_cleanup()
++{
++	pft_cleanup
++}
++
+ atf_test_case "ifbound" "cleanup"
+ ifbound_head()
+ {
+@@ -1656,6 +1698,7 @@ atf_init_test_cases()
+ 	atf_add_test_case "icmp_nat"
+ 	atf_add_test_case "dummynet"
+ 	atf_add_test_case "dummynet_in"
++	atf_add_test_case "reply_to_local"
+ 	atf_add_test_case "ifbound"
+ 	atf_add_test_case "ifbound_v6"
+ 	atf_add_test_case "ifbound_reply_to"

@@ -1,0 +1,218 @@
+diff --git a/release/amd64/make-memstick.sh b/release/amd64/make-memstick.sh
+index 770b128fd9f..96ea4ed1828 100755
+--- a/release/amd64/make-memstick.sh
++++ b/release/amd64/make-memstick.sh
+@@ -20,8 +20,8 @@ if [ "$(uname -s)" = "FreeBSD" ]; then
+ 	export PATH
+ fi
+ 
+-if [ $# -ne 2 ]; then
+-	echo "make-memstick.sh /path/to/directory/or/manifest /path/to/image/file"
++if [ $# -ne 2 -a $# -ne 3 ]; then
++	echo "make-memstick.sh /path/to/directory /path/to/image/file [FAT32 partition]"
+ 	exit 1
+ fi
+ 
+@@ -43,6 +43,11 @@ if [ -e ${2} ]; then
+ 	exit 1
+ fi
+ 
++unset fat32_partition
++if [ -n "${3}" -a -f "${3}" ]; then
++	fat32_partition="-p fat32:=${3}"
++fi
++
+ echo '/dev/ufs/FreeBSD_Install / ufs ro,noatime 1 1' > ${BASEBITSDIR}/etc/fstab
+ echo 'root_rw_mount="NO"' > ${BASEBITSDIR}/etc/rc.conf.local
+ if [ -n "${METALOG}" ]; then
+@@ -70,6 +75,7 @@ ${MKIMG} -s mbr \
+     -b ${BASEBITSDIR}/boot/mbr \
+     -p efi:=${espfilename} \
+     -p freebsd:-"${MKIMG} -s bsd -b ${BASEBITSDIR}/boot/boot -p freebsd-ufs:=${2}.part" \
++    ${fat32_partition} \
+     -a 2 \
+     -o ${2}
+ rm ${espfilename}
+diff --git a/release/conf/pfSense_build_src.conf b/release/conf/pfSense_build_src.conf
+new file mode 100644
+index 00000000000..333712c4416
+--- /dev/null
++++ b/release/conf/pfSense_build_src.conf
+@@ -0,0 +1,46 @@
++WITH_LLVM_LINK_STATIC_LIBRARIES=y
++WITHOUT_AMD=YES
++WITHOUT_ASSERT_DEBUG=YES
++WITHOUT_ATM=YES
++WITHOUT_AUDIT=YES
++WITHOUT_AUTHPF=YES
++WITHOUT_BLACKLIST=YES
++WITHOUT_BLUETOOTH=YES
++WITHOUT_CALENDAR=YES
++WITHOUT_CCD=YES
++WITHOUT_CTM=YES
++WITHOUT_CUSE=YES
++WITHOUT_DICT=YES
++WITHOUT_EXAMPLES=YES
++WITHOUT_FINGER=YES
++WITHOUT_FLOPPY=YES
++WITHOUT_FREEBSD_UPDATE=YES
++WITHOUT_GAMES=YES
++WITHOUT_GCOV=YES
++WITHOUT_GROFF=YES
++WITHOUT_HAST=YES
++WITHOUT_HTML=YES
++WITHOUT_INETD=YES
++WITHOUT_IPFILTER=YES
++WITHOUT_JAIL=YES
++WITHOUT_LIB32=YES
++WITHOUT_LOCATE=YES
++WITHOUT_LPR=YES
++WITHOUT_MAN=YES
++WITHOUT_NIS=YES
++WITHOUT_NLS=YES
++WITHOUT_NLS_CATALOGS=YES
++WITHOUT_NS_CACHING=YES
++WITHOUT_NTP=YES
++WITHOUT_PC_SYSINSTALL=yes
++WITHOUT_PORTSNAP=yes
++WITHOUT_PROFILE=YES
++WITHOUT_QUOTAS=YES
++WITHOUT_RCMDS=YES
++WITHOUT_RCS=YES
++WITHOUT_SETUID_LOGIN=YES
++WITHOUT_SHAREDOCS=YES
++WITHOUT_SVNLITE=YES
++WITHOUT_TALK=YES
++WITHOUT_TESTS=yes
++WITHOUT_UNBOUND=YES
+diff --git a/release/conf/pfSense_install_src.conf b/release/conf/pfSense_install_src.conf
+new file mode 100644
+index 00000000000..bc88f43b2d5
+--- /dev/null
++++ b/release/conf/pfSense_install_src.conf
+@@ -0,0 +1,3 @@
++WITHOUT_MAIL=YES
++WITHOUT_TOOLCHAIN=YES
++WITHOUT_DEBUG_FILES=YES
+diff --git a/release/conf/pfSense_installer_make.conf b/release/conf/pfSense_installer_make.conf
+new file mode 100644
+index 00000000000..2a9e2373079
+--- /dev/null
++++ b/release/conf/pfSense_installer_make.conf
+@@ -0,0 +1,3 @@
++# Default serial console speed
++BOOT_COMCONSOLE_SPEED=115200
++BOOT_BOOT0_COMCONSOLE_SPEED=0
+diff --git a/release/conf/pfSense_installer_src.conf b/release/conf/pfSense_installer_src.conf
+new file mode 100644
+index 00000000000..8a5397f3389
+--- /dev/null
++++ b/release/conf/pfSense_installer_src.conf
+@@ -0,0 +1,86 @@
++OSNAME=pfSense
++WITHOUT_ACCT=YES
++WITHOUT_AMD=YES
++WITHOUT_APM=YES
++WITHOUT_ASSERT_DEBUG=YES
++WITHOUT_AT=YES
++WITHOUT_ATM=YES
++WITHOUT_AUDIT=YES
++WITHOUT_AUTHPF=YES
++WITHOUT_AUTOFS=YES
++WITHOUT_BHYVE=YES
++WITHOUT_BLACKLIST=YES
++WITHOUT_BLUETOOTH=YES
++WITHOUT_BSNMP=YES
++WITHOUT_CALENDAR=YES
++WITHOUT_CCD=YES
++WITHOUT_CPP=YES
++WITHOUT_CTM=YES
++WITHOUT_CUSE=YES
++WITHOUT_DEBUG_FILES=YES
++WITHOUT_DICT=YES
++WITHOUT_EE=YES
++WITHOUT_EXAMPLES=YES
++WITHOUT_FILE=YES
++WITHOUT_FINGER=YES
++WITHOUT_FLOPPY=YES
++WITHOUT_FMTREE=YES
++WITHOUT_FREEBSD_UPDATE=YES
++WITHOUT_FTP=YES
++WITHOUT_GAMES=YES
++WITHOUT_GCOV=YES
++WITHOUT_GROFF=YES
++WITHOUT_HAST=YES
++WITHOUT_HESIOD=YES
++WITHOUT_HTML=YES
++WITHOUT_HYPERV=YES
++WITHOUT_ICONV=YES
++WITHOUT_IPFILTER=YES
++WITHOUT_IPFW=YES
++WITHOUT_ISCSI=YES
++WITHOUT_JAIL=YES
++WITHOUT_KDUMP=YES
++WITHOUT_KERNEL_SYMBOLS=YES
++WITHOUT_LANG=YES
++WITHOUT_LDNS_UTILS=YES
++WITHOUT_LIB32=YES
++WITHOUT_LOCATE=YES
++WITHOUT_LPR=YES
++WITHOUT_LS_COLORS=YES
++WITHOUT_MAIL=YES
++WITHOUT_MAKE=YES
++WITHOUT_MAN=YES
++WITHOUT_NDIS=YES
++WITHOUT_NETGRAPH=YES
++WITHOUT_NIS=YES
++WITHOUT_NLS=YES
++WITHOUT_NLS_CATALOGS=YES
++WITHOUT_NS_CACHING=YES
++WITHOUT_NTP=YES
++WITHOUT_PC_SYSINSTALL=yes
++WITHOUT_PF=YES
++WITHOUT_PMC=YES
++WITHOUT_PORTSNAP=yes
++WITHOUT_PPP=YES
++WITHOUT_PROFILE=YES
++WITHOUT_QUOTAS=YES
++WITHOUT_RADIUS_SUPPORT=YES
++WITHOUT_RCMDS=YES
++WITHOUT_RCS=YES
++WITHOUT_RESCUE=YES
++WITHOUT_ROUTED=YES
++WITHOUT_SETUID_LOGIN=YES
++WITHOUT_SHAREDOCS=YES
++WITHOUT_SVNLITE=YES
++WITHOUT_TALK=YES
++WITHOUT_TCP_WRAPPERS=YES
++WITHOUT_TCSH=YES
++WITHOUT_TELNET=YES
++WITHOUT_TESTS=yes
++WITHOUT_TEXTPROC=YES
++WITHOUT_TIMED=YES
++WITHOUT_TOOLCHAIN=YES
++WITHOUT_UNBOUND=YES
++WITHOUT_USB_GADGET_EXAMPLES=YES
++WITHOUT_WIRELESS=YES
++WITHOUT_WPA_SUPPLICANT_EAPOL=YES
+diff --git a/release/conf/pfSense_make.conf b/release/conf/pfSense_make.conf
+new file mode 100644
+index 00000000000..02cbb6bb449
+--- /dev/null
++++ b/release/conf/pfSense_make.conf
+@@ -0,0 +1,7 @@
++HOSTAPD_CFLAGS+=-DEAP_PAX -DEAP_SAKE -DCONFIG_RSN_PREAUTH -DCONFIG_IEEE80211N
++HOSTAPD_CFLAGS+=-DEAP_SERVER -DEAP_GTC -DEAP_AKA -DEAP_SIM -DEAP_GPSK
++WPA_SUPPLICANT_CFLAGS+=-DCONFIG_IEEE80211N
++
++# Default serial console speed
++BOOT_COMCONSOLE_SPEED=115200
++BOOT_BOOT0_COMCONSOLE_SPEED=0
+diff --git a/release/conf/pfSense_src-env.conf b/release/conf/pfSense_src-env.conf
+new file mode 100644
+index 00000000000..90c70e74fa7
+--- /dev/null
++++ b/release/conf/pfSense_src-env.conf
+@@ -0,0 +1,2 @@
++WITH_META_MODE=YES
++WITHOUT_SYSTEM_COMPILER=YES

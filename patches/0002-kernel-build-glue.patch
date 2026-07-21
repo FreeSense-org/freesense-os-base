@@ -1,0 +1,34 @@
+diff --git a/sys/conf/files b/sys/conf/files
+index 269f9387ec0..4b0d987086a 100644
+--- a/sys/conf/files
++++ b/sys/conf/files
+@@ -2551,6 +2551,7 @@ dev/mxge/mxge_ethp_z8e.c	optional mxge pci
+ dev/mxge/mxge_rss_eth_z8e.c	optional mxge pci
+ dev/mxge/mxge_rss_ethp_z8e.c	optional mxge pci
+ dev/my/if_my.c			optional my
++dev/netgate/netgate.c		standard
+ dev/netmap/if_ptnet.c		optional netmap inet
+ dev/netmap/netmap.c		optional netmap
+ dev/netmap/netmap_bdg.c		optional netmap
+@@ -4350,6 +4351,8 @@ netgraph/ng_deflate.c		optional netgraph_deflate
+ netgraph/ng_device.c		optional netgraph_device
+ netgraph/ng_echo.c		optional netgraph_echo
+ netgraph/ng_eiface.c		optional netgraph_eiface
++# netgate: keep for in-kernel ng_etf(4) build support
++netgraph/ng_etf.c		optional netgraph_etf
+ netgraph/ng_ether.c		optional netgraph_ether
+ netgraph/ng_ether_echo.c	optional netgraph_ether_echo
+ netgraph/ng_frame_relay.c	optional netgraph_frame_relay
+diff --git a/sys/conf/options b/sys/conf/options
+index 53b1f61a6e0..b3099e08e09 100644
+--- a/sys/conf/options
++++ b/sys/conf/options
+@@ -534,6 +534,8 @@ NETGRAPH_DEFLATE	opt_netgraph.h
+ NETGRAPH_DEVICE		opt_netgraph.h
+ NETGRAPH_ECHO		opt_netgraph.h
+ NETGRAPH_EIFACE		opt_netgraph.h
++# netgate: keep for in-kernel ng_etf(4) build support
++NETGRAPH_ETF		opt_netgraph.h
+ NETGRAPH_ETHER		opt_netgraph.h
+ NETGRAPH_ETHER_ECHO	opt_netgraph.h
+ NETGRAPH_FEC		opt_netgraph.h

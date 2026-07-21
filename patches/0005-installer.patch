@@ -1,0 +1,706 @@
+diff --git a/usr.sbin/bsdinstall/scripts/Makefile b/usr.sbin/bsdinstall/scripts/Makefile
+index 92a455d..ae9dcf9 100644
+--- a/usr.sbin/bsdinstall/scripts/Makefile
++++ b/usr.sbin/bsdinstall/scripts/Makefile
+@@ -31,6 +31,9 @@ SCRIPTS=auto \
+ 
+ BINDIR= ${LIBEXECDIR}/bsdinstall
+ 
++SCRIPTS+=	copy_configxml_from_usb \
++		fix_fstab
++
+ MAN=
+ 
+ pkgbase: pkgbase.in
+diff --git a/usr.sbin/bsdinstall/scripts/auto b/usr.sbin/bsdinstall/scripts/auto
+index ca0561d..281e8e0 100644
+--- a/usr.sbin/bsdinstall/scripts/auto
++++ b/usr.sbin/bsdinstall/scripts/auto
+@@ -207,13 +207,21 @@ fi
+ 
+ if [ ! -f $BSDINSTALL_DISTDIR/MANIFEST ]; then
+ 	PKGBASE=yes
+-else
++elif [ -z "${BSDINSTALL_SKIP_PKGBASE}" ]; then
+ 	bsddialog --backtitle "$OSNAME Installer" --title "Select Installation Type" \
+ 		--yes-label "Distribution Sets" --no-label "Packages" --yesno \
+ 		$PKGBASE_DEFAULT_BUTTON \
+ 		"Would you like to install the base system using legacy distribution sets or packages?" 0 0
+ 	if [ $? -eq 1 ]; then
+ 		PKGBASE=yes
++	else
++		bsddialog --backtitle "$OSNAME Installer" --title "Select Installation Type" \
++			--yes-label "Traditional" --no-label "Packages (Experimental)" --yesno \
++			$PKGBASE_DEFAULT_BUTTON \
++			"Would you like to install the base system using traditional distribution sets or packages (experimental)?" 0 0
++		if [ $? -eq 1 ]; then
++			PKGBASE=yes
++		fi
+ 	fi
+ fi
+ 
+@@ -399,6 +407,7 @@ case "$PARTMODE" in
+ 	;;
+ "$msg_auto_ufs")	# Guided UFS
+ 	bsdinstall autopart || error "Partitioning error"
++	bsdinstall fix_fstab || error "Failed to set partition labels"
+ 	bsdinstall mount || error "Failed to mount filesystem"
+ 	;;
+ "$msg_shell")		# Shell
+@@ -464,6 +473,46 @@ fi
+ 
+ trap error SIGINT	# SIGINT is bad again
+ bsdinstall config  || error "Failed to save config"
++bsdinstall copy_configxml_from_usb
++
++# If the user recovered a config.xml from an existing disk or provided one on
++# a USB disk, then copy this config.xml to the chroot
++if [ -r /tmp/recovered_config/config.xml ] ; then
++	/bin/cp -r /tmp/recovered_config/config.xml ${BSDINSTALL_CHROOT}/cf/conf/
++	# Set a flag to let the installed system know this may need extra processing
++	/usr/bin/touch ${BSDINSTALL_CHROOT}/cf/conf/installer_copied_config
++	echo "applied recovered config.xml" > ${BSDINSTALL_CHROOT}/cf/conf/installer_config_source 2>/dev/null || true
++	# Only set the package sync flag if the restored config.xml contains active packages
++	if [ `/usr/bin/grep -c '<package>' ${BSDINSTALL_CHROOT}/cf/conf/config.xml` -gt 0 ]; then
++		/usr/bin/touch ${BSDINSTALL_CHROOT}/cf/conf/needs_package_sync
++	fi
++	# If there is an existing configuration, then there is no need to run the wizard.
++	if [ -r ${BSDINSTALL_CHROOT}/cf/conf/trigger_initial_wizard ]; then
++		rm -f ${BSDINSTALL_CHROOT}/cf/conf/trigger_initial_wizard
++	fi
++	# create a trigger file if extra data is found
++	EXTRA_DATA="rrddata captiveportaldata dhcpddata dhcpdv6data voucherdata sshdata"
++	for extradata in $EXTRA_DATA; do
++		if [ `/usr/bin/grep -c "<$extradata>" ${BSDINSTALL_CHROOT}/cf/conf/config.xml` -gt 0 ]; then
++			/usr/bin/touch ${BSDINSTALL_CHROOT}/cf/conf/restore_config_data
++			break
++		fi
++	done
++else
++	echo "no config.xml staged -> default config" > ${BSDINSTALL_CHROOT}/cf/conf/installer_config_source 2>/dev/null || true
++fi
++
++# If the user recovered SSH keys from an existing disk, copy them to /etc/ssh in the chroot
++for keytype in rsa ed25519; do
++	if [ -s /tmp/recovered_config/ssh_host_${keytype}_key -a -s /tmp/recovered_config/ssh_host_${keytype}_key.pub ]; then
++		/bin/cp /tmp/recovered_config/ssh_host_${keytype}_key ${BSDINSTALL_CHROOT}/etc/ssh/ssh_host_${keytype}_key
++		/bin/cp /tmp/recovered_config/ssh_host_${keytype}_key.pub ${BSDINSTALL_CHROOT}/etc/ssh/ssh_host_${keytype}_key.pub
++	fi
++done
++
++if [ -n "$DISTDIR_IS_UNIONFS" ]; then
++	umount -f $BSDINSTALL_DISTDIR
++fi
+ 
+ if [ ! -z "$BSDINSTALL_FETCHDEST" ]; then
+ 	rm -rf "$BSDINSTALL_FETCHDEST"
+diff --git a/usr.sbin/bsdinstall/scripts/config b/usr.sbin/bsdinstall/scripts/config
+index ba39b8b..bc8444e 100644
+--- a/usr.sbin/bsdinstall/scripts/config
++++ b/usr.sbin/bsdinstall/scripts/config
+@@ -28,11 +28,11 @@
+ #
+ ############################################################ MAIN
+ 
+-cat $BSDINSTALL_TMPETC/rc.conf.* >> $BSDINSTALL_TMPETC/rc.conf
+-rm $BSDINSTALL_TMPETC/rc.conf.*
++#cat $BSDINSTALL_TMPETC/rc.conf.* >> $BSDINSTALL_TMPETC/rc.conf
++#rm $BSDINSTALL_TMPETC/rc.conf.*
+ 
+ cat $BSDINSTALL_CHROOT/etc/sysctl.conf $BSDINSTALL_TMPETC/sysctl.conf.* >> $BSDINSTALL_TMPETC/sysctl.conf
+-rm $BSDINSTALL_TMPETC/sysctl.conf.*
++rm $BSDINSTALL_TMPETC/sysctl.conf*
+ 
+ if [ -f $BSDINSTALL_TMPETC/ttys.hardening ]; then
+ 	cat $BSDINSTALL_TMPETC/ttys.hardening > $BSDINSTALL_TMPETC/ttys
+@@ -41,16 +41,55 @@ fi
+ 
+ cp $BSDINSTALL_TMPETC/* $BSDINSTALL_CHROOT/etc
+ 
++# Copy pfSense loader.conf
++if [ -f /boot/loader.conf ]; then
++	cp /boot/loader.conf $BSDINSTALL_TMPBOOT/loader.conf.pfSense
++fi
++
+ cat $BSDINSTALL_TMPBOOT/loader.conf.* >> $BSDINSTALL_TMPBOOT/loader.conf
+ rm $BSDINSTALL_TMPBOOT/loader.conf.*
+ df -t zfs $BSDINSTALL_CHROOT > /dev/null && echo "zfs_load=\"YES\"" >> $BSDINSTALL_TMPBOOT/loader.conf
+ 
++# Detect MBT-* and populate loader.conf.local
++product=$(/bin/kenv -q smbios.system.product 2>/dev/null)
++
++if [ "${product}" = "Minnowboard Turbot D0 PLATFORM" ] || [ "${product}" = "Minnowboard Turbot D0/D1 PLATFORM" ]; then
++	echo "i915kms_load=YES" >> $BSDINSTALL_TMPBOOT/loader.conf.local
++	echo "drm.i915.enable_unsupported=1" >> $BSDINSTALL_TMPBOOT/loader.conf.local
++	echo "kern.vt.fb.modes.VGA-1=d" >> $BSDINSTALL_TMPBOOT/loader.conf.local
++	echo "kern.vt.fb.default_mode=\"1024x768\"" >> $BSDINSTALL_TMPBOOT/loader.conf.local
++fi
++
++# Add default values for hn devices to work with ALTQ
++# See https://redmine.pfsense.org/issues/8954
++echo 'hw.hn.vf_transparent="0"' >> $BSDINSTALL_TMPBOOT/loader.conf
++echo 'hw.hn.use_if_start="1"' >> $BSDINSTALL_TMPBOOT/loader.conf
++
++if [ -f /tmp/loader.conf.pfSense ]; then
++	cat /tmp/loader.conf.pfSense $BSDINSTALL_TMPBOOT/loader.conf \
++	    | sort -u > $BSDINSTALL_TMPBOOT/loader.conf.tmp
++	mv $BSDINSTALL_TMPBOOT/loader.conf.tmp $BSDINSTALL_TMPBOOT/loader.conf
++fi
++
++sort -u < $BSDINSTALL_TMPBOOT/loader.conf > $BSDINSTALL_TMPBOOT/loader.conf.tmp
++mv $BSDINSTALL_TMPBOOT/loader.conf.tmp $BSDINSTALL_TMPBOOT/loader.conf
++
++if [ -f /tmp/loader.conf.local.pfSense ]; then
++	cat /tmp/loader.conf.local.pfSense $BSDINSTALL_TMPBOOT/loader.conf.local \
++	    | sort -u > $BSDINSTALL_TMPBOOT/loader.conf.local.tmp
++	mv $BSDINSTALL_TMPBOOT/loader.conf.local.tmp $BSDINSTALL_TMPBOOT/loader.conf.local
++fi
++
+ cp $BSDINSTALL_TMPBOOT/* $BSDINSTALL_CHROOT/boot
+ 
++if [ -f /tmp/boot.config ]; then
++	cp /tmp/boot.conf $BSDINSTALL_CHROOT
++fi
++
+ [ "${debugFile#+}" ] && cp "${debugFile#+}" $BSDINSTALL_CHROOT/var/log/
+ 
+ # Set up other things from installed config
+-chroot $BSDINSTALL_CHROOT /usr/bin/newaliases > /dev/null 2>&1
++#chroot $BSDINSTALL_CHROOT /usr/bin/newaliases > /dev/null 2>&1
+ 
+ exit 0
+ 
+diff --git a/usr.sbin/bsdinstall/scripts/copy_configxml_from_usb b/usr.sbin/bsdinstall/scripts/copy_configxml_from_usb
+new file mode 100644
+index 0000000..a41a861
+--- /dev/null
++++ b/usr.sbin/bsdinstall/scripts/copy_configxml_from_usb
+@@ -0,0 +1,118 @@
++#!/bin/sh
++#-
++# Copyright (c) 2017-2023 Rubicon Communications, LLC
++# All rights reserved.
++#
++# Redistribution and use in source and binary forms, with or without
++# modification, are permitted provided that the following conditions
++# are met:
++# 1. Redistributions of source code must retain the above copyright
++#    notice, this list of conditions and the following disclaimer.
++# 2. Redistributions in binary form must reproduce the above copyright
++#    notice, this list of conditions and the following disclaimer in the
++#    documentation and/or other materials provided with the distribution.
++#
++# THIS SOFTWARE IS PROVIDED BY THE AUTHOR AND CONTRIBUTORS ``AS IS'' AND
++# ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
++# IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
++# ARE DISCLAIMED.  IN NO EVENT SHALL THE AUTHOR OR CONTRIBUTORS BE LIABLE
++# FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
++# DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
++# OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
++# HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
++# LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
++# OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
++# SUCH DAMAGE.
++#
++# $FreeBSD$
++recovery_mount=/tmp/mnt_recovery
++recovery_dir=/tmp/recovered_config
++encrypted_xml=/tmp/config_enc.xml
++decrypted_xml=/tmp/config_dec.xml
++mkdir -p ${recovery_mount}
++mkdir -p ${recovery_dir}
++
++CONFIG_XML_PATH=""
++
++look_for_config_xml_config_msdos() {
++	mkdir -p ${recovery_mount}
++	echo -n "Looking for config.xml on "
++	for try_device in `/sbin/gpart show -p | /usr/bin/egrep '(fat32|\!11|\!12|\!14)' | /usr/bin/awk '{print $3;}'`; do
++		if [ ! -e /dev/${try_device} ]; then
++			continue
++		fi
++		echo -n "${try_device}: "
++		if /sbin/mount -t msdosfs /dev/${try_device} ${recovery_mount} 2>/dev/null ; then
++			echo -n "[found msdos] "
++			# look for config.xml
++			if [ -r ${recovery_mount}/conf/config.xml  ]; then
++				echo -n "[config.xml on ${try_device}] "
++				CONFIG_XML_PATH="${recovery_mount}/conf/config.xml"
++				return 0
++			elif [ -r ${recovery_mount}/config.xml  ]; then
++				echo -n "[config.xml on ${try_device}] "
++				CONFIG_XML_PATH="${recovery_mount}/config.xml"
++				return 0
++			else
++				echo -n "[no config.xml on ${try_device}, unmounting] "
++				/sbin/umount ${recovery_mount}
++			fi
++		fi
++	done
++	return 1
++}
++
++# Try to locate an existing config.xml file
++if look_for_config_xml_config_msdos; then
++	if [ `/usr/bin/grep -c "BEGIN config.xml" ${CONFIG_XML_PATH}` -gt 0 ]; then
++		echo "config.xml is encrypted."
++		/usr/bin/grep -v "config.xml" ${CONFIG_XML_PATH} > ${encrypted_xml}
++
++		exec 3>&1
++		confpass=`/usr/bin/dialog --stdout --passwordbox \
++			"Enter the password to decrypt config.xml" 0 0`
++		exec 3>&-
++
++		if [ -z ${confpass} ]; then
++			echo -p "[Empty password given. Cancelling config.xml recover]"
++		else
++			/usr/bin/openssl enc -d -aes-256-cbc -in ${encrypted_xml} -out ${decrypted_xml} -pass pass:${confpass} -salt -md sha256 -pbkdf2 -base64 -iter 500000 2>/dev/null
++			if [ $? -eq 0 ]; then
++				/bin/cp ${decrypted_xml} ${recovery_dir}/config.xml
++				echo -n "[Copied decrypted config.xml file to recovery area] "
++			else
++				# Operation failed, try with old lower iteration default
++				/usr/bin/openssl enc -d -aes-256-cbc -in ${encrypted_xml} -out ${decrypted_xml} -pass pass:${confpass} -salt -md sha256 -pbkdf2 -base64 -iter 10000 2>/dev/null
++				if [ $? -eq 0 ]; then
++					/bin/cp ${decrypted_xml} ${recovery_dir}/config.xml
++					echo -n "[Copied decrypted config.xml file to recovery area] "
++				else
++					# Operation failed without new options, try old.
++					/usr/bin/openssl enc -d -aes-256-cbc -in ${encrypted_xml} -out ${decrypted_xml} -pass pass:${confpass} -salt -md md5 -base64 2>/dev/null
++					if [ $? -eq 0 ]; then
++						/bin/cp ${decrypted_xml} ${recovery_dir}/config.xml
++						echo -n "[Copied decrypted config.xml file to recovery area] "
++					else
++						echo -n "[Failed to decrypt config.xml. Cannot recover.] "
++					fi
++				fi
++			fi
++		fi
++		/bin/rm ${encrypted_xml}
++	else
++		# FreeSense: only accept a FreeSense config here. A raw pfSense/OPNsense
++		# config.xml must go through the installer's "Import config" menu (which
++		# stages an already-converted <freesense> config); never copy a foreign
++		# config over it, and never auto-apply one (it would fail to validate).
++		if /usr/bin/grep -q "<freesense>" ${CONFIG_XML_PATH}; then
++			/bin/cp -r ${CONFIG_XML_PATH} ${recovery_dir}
++			echo -n "[Copied config.xml file to recovery area] "
++		else
++			echo -n "[config.xml on USB is not a FreeSense config - use the Import menu for pfSense/OPNsense; ignoring] "
++		fi
++	fi
++	/sbin/umount ${recovery_mount} 2>&1
++else
++	echo -n "[Could not locate an existing config.xml file!] "
++fi
++echo "Done."
+diff --git a/usr.sbin/bsdinstall/scripts/fix_fstab b/usr.sbin/bsdinstall/scripts/fix_fstab
+new file mode 100644
+index 0000000..ef8ff8c
+--- /dev/null
++++ b/usr.sbin/bsdinstall/scripts/fix_fstab
+@@ -0,0 +1,123 @@
++#!/bin/sh
++#-
++# Copyright (c) 2016 Rubicon Communications, LLC
++# All rights reserved.
++#
++# Redistribution and use in source and binary forms, with or without
++# modification, are permitted provided that the following conditions
++# are met:
++# 1. Redistributions of source code must retain the above copyright
++#    notice, this list of conditions and the following disclaimer.
++# 2. Redistributions in binary form must reproduce the above copyright
++#    notice, this list of conditions and the following disclaimer in the
++#    documentation and/or other materials provided with the distribution.
++#
++# THIS SOFTWARE IS PROVIDED BY THE AUTHOR AND CONTRIBUTORS ``AS IS'' AND
++# ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
++# IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
++# ARE DISCLAIMED.  IN NO EVENT SHALL THE AUTHOR OR CONTRIBUTORS BE LIABLE
++# FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
++# DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
++# OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
++# HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
++# LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
++# OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
++# SUCH DAMAGE.
++#
++# $FreeBSD$
++
++dev_label() {
++	if [ -z "${1}" -o -z "${2}" ]; then
++		return
++	fi
++
++	local _fstype="${1}"
++	local _device="${2}"
++
++	case "${_fstype}" in
++		ufs|swap)
++			;;
++		*)
++			echo ${_device}
++			return
++	esac
++
++	# Detect if device is already a label and return
++	local _prefix=${_device%/*}
++	case "${_prefix#/dev/}" in
++		mirror|ufsid|label|geom|gpt|gptid)
++			echo ${_device}
++			return
++			;;
++	esac
++
++	local _devname=${_device#/dev/}
++	if [ -z "${_devname}" ]; then
++		echo ${_device}
++		return
++	fi
++
++	# Get already defined labels if exist
++	local _label=""
++	for lt in mirror label gpt ufsid gptid; do
++		_label=$(glabel list ${_devname} 2>/dev/null \
++		    | grep "Name: *${lt}/" \
++		    | sed 's,^.*Name: *,,')
++
++		if [ -n "${_label}" -a -e "/dev/${_label}" ]; then
++			echo "/dev/${_label}"
++			return
++		fi
++	done
++
++	# No label found, lets create one. It should be swap
++	if [ "${_fstype}" != "swap" ]; then
++		echo ${_device}
++		return
++	fi
++
++	glabel label swap${SWAPNUM} ${_device}
++	# Error, don't use label
++	if [ $? -ne 0 ]; then
++		echo ${_device}
++		return
++	fi
++
++	echo "/dev/label/swap${SWAPNUM}"
++	SWAPNUM=$((SWAPNUM+1))
++}
++
++FSTAB=${BSDINSTALL_TMPETC}/fstab
++
++if [ -z "${FSTAB}" -o ! -f "${FSTAB}" ]; then
++	dialog --backtitle "pfSense Installer" --title "Error" \
++	    --msgbox "Error creating device labels" 0 0
++	exit 1
++fi
++
++TMP="${FSTAB}.tmp"
++
++[ -f "${TMP}" ] \
++    && rm -f ${TMP}
++
++SWAPNUM=0
++while read device mountpoint fstype options dump pass; do
++	if ! echo "${device}" | egrep -q '^/dev/'; then
++		continue
++	fi
++
++	label=$(dev_label ${fstype} ${device})
++
++	# If label is blank, use device name
++	label=${label:-${device}}
++
++	if [ "${fstype}" = "ufs" ] && \
++	    ! echo "${options}" | grep -q noatime; then
++		options="${options},noatime"
++	fi
++
++	printf "%s\t%s\t%s\t%s\t%s\t%s\n" ${label} ${mountpoint} ${fstype} \
++	    ${options} ${dump} ${pass} >> ${TMP}
++done < ${FSTAB}
++
++mv ${TMP} ${FSTAB}
+diff --git a/usr.sbin/bsdinstall/scripts/zfsboot b/usr.sbin/bsdinstall/scripts/zfsboot
+index dbf7e19..a81b7d6 100644
+--- a/usr.sbin/bsdinstall/scripts/zfsboot
++++ b/usr.sbin/bsdinstall/scripts/zfsboot
+@@ -105,6 +105,11 @@ f_include $BSDCFG_SHARE/variable.subr
+ #
+ : ${ZFSBOOT_BOOT_POOL_SIZE:=2g}
+ 
++#
++# Default offset for the boot pool when enabled (e.g., geli(8) or MBR)
++#
++: ${ZFSBOOT_BOOT_POOL_OFFSET:=2048}
++
+ #
+ # Default disks to use (always empty unless being scripted)
+ #
+@@ -1606,7 +1611,7 @@ while :; do
+ 		# Make sure each disk will have room for ZFS
+ 		if f_expand_number "$ZFSBOOT_SWAP_SIZE" swapsize &&
+ 		   f_expand_number "$ZFSBOOT_BOOT_POOL_SIZE" bootsize &&
+-		   f_expand_number "1g" zpoolmin
++		   f_expand_number "4g" zpoolmin
+ 		then
+ 			minsize=$swapsize teeny_disks=
+ 			if [ "$ZFSBOOT_POOL_SIZE" ]; then
+diff --git a/usr.sbin/bsdinstall/startbsdinstall b/usr.sbin/bsdinstall/startbsdinstall
+index ab78c29..7336d73 100644
+--- a/usr.sbin/bsdinstall/startbsdinstall
++++ b/usr.sbin/bsdinstall/startbsdinstall
+@@ -10,6 +10,32 @@ BSDCFG_SHARE="/usr/share/bsdconfig"
+ : ${BSDDIALOG_ESC=5}
+ : ${BSDDIALOG_ERROR=255}
+ 
++if ! mdconfig -l | grep -q md3; then
++	mdconfig -a -u 3 -s 8m
++	newfs /dev/md3
++	mount /dev/md3 /mnt
++	tar -C /etc -cf - . | tar -C /mnt -xf -
++	sync; sync; sync
++	umount /mnt
++	mount /dev/md3 /etc
++fi
++
++# Mount /dev/ufs/FreeSense_Install on factory to prevent USB stick disk used
++# to boot to be shown as an option to install
++if [ -e /dev/ufs/FreeSense_Install -a ! -d /tmp/usb_install_media ]; then
++	mkdir -p /tmp/usb_install_media
++	mount /dev/ufs/FreeSense_Install /tmp/usb_install_media
++fi
++
++if [ -f /root/factory-pre.sh ]; then
++	sh -x /root/factory-pre.sh >/tmp/factory-pre.debug 2>&1
++	unset CE_message
++else
++	CE_message=1
++fi
++
++MACHINE=`uname -m`
++
+ kbdcontrol -d >/dev/null 2>&1
+ if [ $? -eq 0 ]; then
+ 	# Syscons: use xterm, start interesting things on other VTYs
+@@ -60,10 +86,107 @@ if [ -f /etc/installerconfig ]; then
+ 	exit 
+ fi
+ 
+-bsddialog --backtitle "${OSNAME} Installer" --title "Welcome" --extra-button --extra-label "Shell" --ok-label "Install" --cancel-label "Live System" --yesno "Welcome to ${OSNAME}! Would you like to begin an installation or use the live system?" 0 0
++msg=$(cat <<EOD
++\ZbCopyright and Trademark Notices.\ZB
++
++Copyright 2004-2016. Electric Sheep Fencing, LLC ("ESF").
++All Rights Reserved.
++
++Copyright 2014-2023. Rubicon Communications, LLC d/b/a Netgate ("Netgate").
++All Rights Reserved.
++
++All logos, text, and content of ESF and/or Netgate, including underlying
++HTML code, designs, and graphics used and/or depicted herein are
++protected under United States and international copyright and trademark
++laws and treaties, and may not be used or reproduced without the prior
++express written permission of ESF and/or Netgate.
++
++"pfSense" is a registered trademark of ESF, exclusively licensed to
++Netgate, and may not be used without the prior express written
++permission of ESF and/or Netgate. All other trademarks shown herein are
++owned by the respective companies or persons indicated.
++
++pfSense(R) software is open source and distributed under the Apache 2.0
++license.  However, no commercial distribution of ESF and/or Netgate
++software is allowed without the prior written consent of ESF and/or
++Netgate.
++
++ESF and/or Netgate make no warranty of any kind, including but not
++limited to the implied warranties of merchantability and fitness for a
++particular purpose.  ESF and/or Netgate shall not be liable for errors
++contained herein or for any direct, indirect, special, incidental or
++consequential damages in connection with the furnishing, performance, or
++use of any software, information, or material.
++
++\ZbRestricted Rights Legend.\ZB
++
++No part of ESF and/or Netgate's information or materials may be
++published, distributed, reproduced, publicly displayed, used to create
++derivative works, or translated to another language, without the prior
++written consent of ESF and/or Netgate. The information contained herein
++is subject to change without notice.
++
++Use, duplication or disclosure by the U.S. Government may be subject to
++restrictions as set forth in subparagraph (c) (1) (ii) of the Rights in
++Technical Data and Computer Software clause at DFARS 252.227-7013 for
++DOD agencies, and subparagraphs (c) (1) and (c) (2) of the Commercial
++Computer Software Restricted Rights clause at FAR 52.227-19 for other
++agencies.
++
++\ZbRegulatory/Export Compliance.\ZB
++
++The export and re-export of software is controlled for export purposes
++by the U.S. Government. By accepting this software and/or documentation,
++Licensee agrees to comply with all U.S. and foreign export laws and
++regulations as they relate to software and related documentation.
++Licensee will not export or re-export outside the United States software
++or documentation, whether directly or indirectly, to any Prohibited
++Party and will not cause, approve or otherwise intentionally facilitate
++others in so doing. A Prohibited Party includes: a party in a U.S.
++embargoed country or country the United States has named as a supporter
++of international terrorism; a party involved in proliferation; a party
++identified by the U.S. Government as a Denied Party; a party named on
++the U.S. Government's Enemies List; a party prohibited from
++participation in export or re-export transactions by a U.S. Government
++General Order; a party listed by the U.S. Government's Office of Foreign
++Assets Control as ineligible to participate in transactions subject to
++U.S. jurisdiction; or any party that Licensee knows or has reason to
++know has violated or plans to violate U.S. or foreign export laws or
++regulations. Licensee shall ensure that each of its software users
++complies with U.S. and foreign export laws and regulations as they
++relate to software and related documentation.
++EOD
++)
+ 
+-case $? in
+-$BSDDIALOG_OK)	# Install
++if [ ! -f /tmp/buildroom ]; then
++	exec 3>&1
++	bsddialog --backtitle "pfSense Installer" \
++		--title "Copyright and distribution notice" \
++		--ok-label "Accept" \
++		--colors \
++		--msgbox "${msg}" 0 0 2>&1 1>&3
++	exec 3>&-
++fi
++
++IOPTS='"Install" "Install pfSense" "Rescue Shell" "Launch a shell for rescue operations"'
++
++if [ -x /root/recover_configxml.sh ] ; then
++	IOPTS="${IOPTS} \"Recover config.xml\" \"Recover config.xml from a previous install\""
++fi
++
++if [ -x /root/import_foreign_config.sh ] ; then
++	IOPTS="${IOPTS} \"Import config\" \"Import basic config from pfSense or OPNsense\""
++fi
++
++exec 3>&1
++IMODE=`eval bsddialog --backtitle \"pfSense Installer\" \
++	--title "Welcome" \
++	--menu \"Welcome to pfSense!\" \
++	0 0 0 ${IOPTS} 2>&1 1>&3` || exit 1
++exec 3>&-
++
++case "$IMODE" in
++"Install")	# Install
+ 	# If not netbooting, have the installer configure the network
+ 	dlv=`/sbin/sysctl -n vfs.nfs.diskless_valid 2> /dev/null`
+ 	if [ ${dlv:=0} -eq 0 -a ! -f /etc/diskless ]; then
+@@ -71,44 +194,76 @@ $BSDDIALOG_OK)	# Install
+ 	fi
+ 
+ 	trap true SIGINT	# Ignore cntrl-C here
+-	bsdinstall
++	ZFSBOOT_BEROOT_NAME=ROOT
++	ZFSBOOT_BOOTFS_NAME=default
++	env \
++		BSDINSTALL_SKIP_FINALCONFIG=y \
++		BSDINSTALL_SKIP_HARDENING=y \
++		BSDINSTALL_SKIP_HOSTNAME=y \
++		BSDINSTALL_SKIP_KEYMAP=y \
++		BSDINSTALL_SKIP_MANUAL=y \
++		BSDINSTALL_SKIP_SERVICES=y \
++		BSDINSTALL_SKIP_TIME=y \
++		BSDINSTALL_SKIP_USERS=y \
++		BSDINSTALL_SKIP_PKGBASE=y \
++		DISTRIBUTIONS="base.txz" \
++		NETCONFIG_DONE=yes \
++		OSNAME=pfSense \
++		ROOTPASS_PLAIN=freesense \
++		ZFSBOOT_DATASETS="
++/$ZFSBOOT_BEROOT_NAME	mountpoint=none
++/$ZFSBOOT_BEROOT_NAME/$ZFSBOOT_BOOTFS_NAME	mountpoint=/
++/$ZFSBOOT_BEROOT_NAME/$ZFSBOOT_BOOTFS_NAME/cf	mountpoint=/cf,setuid=off,exec=off
++
++# /tmp, allow exec but not setuid
++/tmp		mountpoint=/tmp,exec=on,setuid=off
++/home		mountpoint=/home
++# Create /var and friends
++/var		mountpoint=/var
++/var/cache	mountpoint=/var/cache,setuid=off,exec=off,compression=off
++/var/db		mountpoint=/var/db,setuid=off,exec=off
++/var/empty	mountpoint=/var/empty
++/var/log	mountpoint=/var/log,setuid=off,exec=off
++/var/tmp	mountpoint=/var/tmp,setuid=off
++
++# Needs to be below var/db so it does not get covered up when the var/db dataset is created
++/$ZFSBOOT_BEROOT_NAME/$ZFSBOOT_BOOTFS_NAME/var_cache_pkg	mountpoint=/var/cache/pkg,setuid=off,exec=off
++/$ZFSBOOT_BEROOT_NAME/$ZFSBOOT_BOOTFS_NAME/var_db_pkg		mountpoint=/var/db/pkg,setuid=off,exec=off
++" \
++		ZFSBOOT_POOL_NAME=FreeSense \
++		ZFSBOOT_SWAP_SIZE=1g \
++		bsdinstall
+ 	if [ $? -eq 0 ]; then
+-		bsddialog --backtitle "${OSNAME} Installer" --title "Complete" --ok-label "Reboot" --extra-button --extra-label "Shutdown" --cancel-label "Live System" --yesno "Installation of ${OSNAME} complete! Would you like to reboot into the installed system now?" 0 0
+-
+-		case $? in
+-		$BSDDIALOG_OK)		# Reboot
+-			reboot
+-			;;
+-		$BSDDIALOG_EXTRA)	# Shutdown
+-			shutdown -p now
+-			# shutdown(8) daemonizes, with the actual signal to
+-			# init(8) happening in the child, but if we exit the
+-			# script then runconsoles will clean up its children
+-			# thinking we're trying to go multiuser (and if the
+-			# user has disabled multiple console support we'll
+-			# still start trying to go multi-user, which gives
+-			# confusing output on the console if the daemon is slow
+-			# to run). Thus we spin while the daemon runs.
+-			while true; do
+-				sleep 1
+-			done
+-			;;
+-		$BSDDIALOG_CANCEL)	# Live System
+-			exit 0
+-			;;
+-		esac
++		bsddialog --backtitle "pfSense Installer" --title "Complete" --yes-label "Reboot" --no-label "Shell" --yesno "Installation of pfSense complete! Would you like to reboot into the installed system now?" 0 0 && reboot
++		clear
++		echo "When finished, type 'exit' to reboot."
++		/bin/sh
++		reboot
+ 	else
+-		. "$0"
++		. /etc/rc.local
+ 	fi
+ 	;;
+-$BSDDIALOG_CANCEL)	# Live System
+-	exit 0
+-	;;
+-$BSDDIALOG_EXTRA)	# Shell
++"Rescue Shell")	# Rescue Shell
+ 	clear
+ 	echo "When finished, type 'exit' to return to the installer."
+ 	/bin/sh
+-	. "$0"
++	. /etc/rc.local
++	;;
++"Recover config.xml") # Recover config.xml from a target drive
++	/root/recover_configxml.sh
++	if [ -r /tmp/recovered_config/config.xml ]; then
++		bsddialog --backtitle "pfSense Installer" --title "Recover config.xml" --msgbox "config.xml recovered and staged for install.\n\nChoose \"Install\" on the next menu to install FreeSense using this configuration." 0 0
++	else
++		bsddialog --backtitle "pfSense Installer" --title "Recover config.xml" --msgbox "No config.xml was recovered.\n\nInstalling now would use a default configuration." 0 0
++	fi
++	. /etc/rc.local
++	;;
++"Import config") # Import basic config from another firewall (pfSense/OPNsense)
++	/root/import_foreign_config.sh
++	if [ -r /tmp/recovered_config/config.xml ]; then
++		bsddialog --backtitle "pfSense Installer" --title "Import config" --msgbox "Configuration imported and staged for install.\n\nChoose \"Install\" on the next menu to install FreeSense using the imported configuration." 0 0
++	fi
++	. /etc/rc.local
+ 	;;
+ esac
+ 

@@ -1,0 +1,74 @@
+name: Credential broker
+
+on:
+  push:
+    branches: [main]
+    paths: ["broker/**", ".github/workflows/broker.yml"]
+  workflow_dispatch:
+
+permissions: {contents: read}
+concurrency: {group: credential-broker, cancel-in-progress: false}
+
+jobs:
+  deploy:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    environment: broker
+    permissions: {contents: read, id-token: write}
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with: {ref: "${{ github.sha }}", persist-credentials: false}
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with: {go-version-file: go.mod, cache: false}
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with: {node-version: "24", cache: npm, cache-dependency-path: broker/package-lock.json}
+      - run: npm --prefix broker ci
+      - run: npm --prefix broker test
+      - run: npm --prefix broker run deploy:dry
+      - run: go build -trimpath -o "${RUNNER_TEMP}/fsbuild" ./cmd/fsbuild
+      - name: Validate dedicated deployment secrets
+        env:
+          API_TOKEN: ${{ secrets.CLOUDFLARE_BROKER_API_TOKEN }}
+          ACCESS_KEY: ${{ secrets.R2_BROKER_PARENT_ACCESS_KEY_ID }}
+          SECRET_KEY: ${{ secrets.R2_BROKER_PARENT_SECRET_ACCESS_KEY }}
+        run: |
+          [[ -n "${API_TOKEN}" ]]
+          [[ "${ACCESS_KEY}" =~ ^[0-9a-f]{32}$ ]]
+          [[ "${SECRET_KEY}" =~ ^[0-9a-f]{64}$ ]]
+      - name: Deploy exact broker revision
+        working-directory: broker
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.R2_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_BROKER_API_TOKEN }}
+          ACCESS_KEY: ${{ secrets.R2_BROKER_PARENT_ACCESS_KEY_ID }}
+          SECRET_KEY: ${{ secrets.R2_BROKER_PARENT_SECRET_ACCESS_KEY }}
+          DEPLOYMENT: ${{ github.sha }}.${{ github.run_id }}.${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          secrets=$(mktemp); trap 'rm -f "$secrets"' EXIT; chmod 600 "$secrets"
+          jq -n '{R2_PARENT_ACCESS_KEY_ID:env.ACCESS_KEY,R2_PARENT_SECRET_ACCESS_KEY:env.SECRET_KEY}' >"$secrets"
+          npm exec -- wrangler deploy --secrets-file "$secrets" --var "BROKER_DEPLOYMENT_ID:${DEPLOYMENT}"
+      - name: Wait for this deployment
+        env: {DEPLOYMENT: "${{ github.sha }}.${{ github.run_id }}.${{ github.run_attempt }}"}
+        run: |
+          for attempt in {1..36}; do
+            response=$(curl -fsS --get --data-urlencode "deployment_id=${DEPLOYMENT}" \
+              https://r2-credentials.freesense.org/healthz 2>/dev/null || true)
+            jq -e --arg id "$DEPLOYMENT" '. == {status:"ok",deployment_id:$id}' <<<"$response" >/dev/null && exit 0
+            sleep 5
+          done
+          exit 1
+      - name: Acquire and exercise the narrow smoke credential
+        env:
+          R2_CREDENTIAL_BROKER_URL: ${{ vars.R2_CREDENTIAL_BROKER_URL }}
+          R2_CREDENTIAL_BROKER_AUDIENCE: ${{ vars.R2_CREDENTIAL_BROKER_AUDIENCE }}
+          R2_BUCKET: ${{ vars.R2_BUILD_BUCKET }}
+          R2_ENDPOINT: ${{ vars.R2_ENDPOINT }}
+          FSBUILD_STORE_PREFIX: v1
+        run: |
+          "${RUNNER_TEMP}/fsbuild" credentials acquire --broker-url "${R2_CREDENTIAL_BROKER_URL}" \
+            --audience "${R2_CREDENTIAL_BROKER_AUDIENCE}" --role broker-smoke \
+            --expected-bucket "${R2_BUCKET}" --expected-prefix v1 --expected-endpoint "${R2_ENDPOINT}" \
+            --github-env "${GITHUB_ENV}"
+          "${RUNNER_TEMP}/fsbuild" credentials smoke --deployment-sha "${GITHUB_SHA}"

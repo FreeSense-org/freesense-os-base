@@ -1,0 +1,95 @@
+diff --git a/stand/defaults/loader.conf b/stand/defaults/loader.conf
+index a10c65f28ea..2b46568b167 100644
+--- a/stand/defaults/loader.conf
++++ b/stand/defaults/loader.conf
+@@ -197,3 +197,12 @@ iwm3168fw_type="firmware"
+ iwm7265Dfw_type="firmware"
+ iwm8000Cfw_type="firmware"
+ iwm9000fw_type="firmware"
++
++### FreeSense specific default values #######################
++loader_color="NO"
++loader_logo="FreeSense"
++loader_brand="FreeSense"
++hw.usb.no_pf="1"
++net.isr.maxthreads="-1"
++loader_menu_title="Welcome to FreeSense"
++net.pf.request_maxcount="400000"
+diff --git a/stand/lua/Makefile b/stand/lua/Makefile
+index d319261e18b..e1cbe9f95b5 100644
+--- a/stand/lua/Makefile
++++ b/stand/lua/Makefile
+@@ -31,4 +31,8 @@ FILES=	cli.lua \
+ 	password.lua \
+ 	screen.lua
+ 
++# FreeSense
++FILES+=	logo-FreeSense.lua \
++	brand-FreeSense.lua
++
+ .include <bsd.prog.mk>
+diff --git a/stand/lua/brand-FreeSense.lua b/stand/lua/brand-FreeSense.lua
+new file mode 100644
+index 0000000000000000000000000000000000000000..e449bb862eaaaea0929f702aae271bea0461263a
+--- /dev/null
++++ b/stand/lua/brand-FreeSense.lua
+@@ -0,0 +1,21 @@
++--
++-- FreeSense boot-menu branding.
++-- SPDX-License-Identifier: Apache-2.0
++-- Part of the FreeSense project (https://freesense.org).
++--
++
++local drawer = require("drawer")
++
++local freesense_brand = {
++"    ______              _____                    ",
++"   / ____/_______  ___ / ___/___  ____  ________ ",
++"  / /_  / ___/ _ \\/ _ \\\\__ \\/ _ \\/ __ \\/ ___/ _ \\",
++" / __/ / /  /  __/  __/__/ /  __/ / / (__  )  __/",
++"/_/   /_/   \\___/\\___/____/\\___/_/ /_/____/\\___/ ",
++}
++
++drawer.addBrand("FreeSense", {
++	graphic = freesense_brand,
++})
++
++return true
+diff --git a/stand/lua/logo-FreeSense.lua b/stand/lua/logo-FreeSense.lua
+new file mode 100644
+index 0000000000000000000000000000000000000000..943596f7b71684c1e3f0cc0ca944535d3b42483e
+--- /dev/null
++++ b/stand/lua/logo-FreeSense.lua
+@@ -0,0 +1,32 @@
++--
++-- FreeSense boot-menu branding.
++-- SPDX-License-Identifier: Apache-2.0
++-- Part of the FreeSense project (https://freesense.org).
++--
++
++local drawer = require("drawer")
++
++local freesense_logo = {
++" ____________________________ ",
++"/                            \\",
++"|                            |",
++"|     ########  ######       |",
++"|     ##       ##    ##      |",
++"|     ##       ##            |",
++"|     ######    ######       |",
++"|     ##             ##      |",
++"|     ##       ##    ##      |",
++"|     ##        ######       |",
++"|                            |",
++"|     F R E E S E N S E      |",
++"|____________________________|",
++"\\                            /",
++" \\__________________________/ ",
++}
++
++drawer.addLogo("FreeSense", {
++	graphic = freesense_logo,
++	shift = {x = 2, y = -2},
++})
++
++return true

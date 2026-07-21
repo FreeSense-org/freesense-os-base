@@ -1,0 +1,16 @@
+{
+  "name": "@freesense/r2-credential-broker",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test",
+    "deploy:dry": "wrangler deploy --dry-run"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "devDependencies": {
+    "wrangler": "4.112.0"
+  }
+}

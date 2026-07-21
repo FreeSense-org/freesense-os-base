@@ -1,0 +1,27 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "freesense-r2-credential-broker",
+  "main": "src/index.js",
+  "compatibility_date": "2026-07-17",
+  "workers_dev": false,
+  "preview_urls": false,
+  "routes": [
+    {
+      "pattern": "r2-credentials.freesense.org",
+      "custom_domain": true
+    }
+  ],
+  "vars": {
+    "GITHUB_OIDC_AUDIENCE": "https://r2-credentials.freesense.org",
+    "R2_ACCOUNT_ID": "b82cfe18700f7455daff39e87a6a323b",
+    "R2_ENDPOINT": "https://b82cfe18700f7455daff39e87a6a323b.r2.cloudflarestorage.com",
+    "R2_BUCKET": "freesense-pkg",
+    "BROKER_DEPLOYMENT_ID": "0000000000000000000000000000000000000000.1.1"
+  },
+  "secrets": {
+    "required": [
+      "R2_PARENT_ACCESS_KEY_ID",
+      "R2_PARENT_SECRET_ACCESS_KEY"
+    ]
+  }
+}

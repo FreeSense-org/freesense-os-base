@@ -1,0 +1,31 @@
+{
+  "schema_version": "fsbuild.credential-broker-contract/v1",
+  "request_schema": "fsbuild.credential-request/v1",
+  "request_fields": [
+    "role",
+    "schema_version"
+  ],
+  "response_schema": "fsbuild.temporary-r2-credentials/v1",
+  "response_fields": [
+    "access_key_id",
+    "bucket",
+    "endpoint",
+    "expires_at",
+    "prefix",
+    "region",
+    "schema_version",
+    "secret_access_key",
+    "session_token"
+  ],
+  "prefix": "v1",
+  "region": "auto",
+  "default_minimum_validity_seconds": 300,
+  "maximum_validity_seconds": 21600,
+  "roles": [
+    "artifact-writer",
+    "broker-smoke",
+    "channel-writer",
+    "coordinator",
+    "pin-writer"
+  ]
+}

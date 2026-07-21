@@ -1,0 +1,124 @@
+name: System
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 1 * * *"
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: system-planner
+  cancel-in-progress: false
+
+jobs:
+  plan:
+    runs-on: ubuntu-24.04
+    environment: build-coordinator
+    outputs:
+      needed: ${{ steps.plan.outputs.needed }}
+      generation: ${{ steps.reserve.outputs.generation }}
+      platform: ${{ steps.plan.outputs.platform }}
+      system: ${{ steps.plan.outputs.system }}
+      source_sha: ${{ steps.plan.outputs.source_sha }}
+      system_sha: ${{ steps.plan.outputs.system_sha }}
+      packages_sha: ${{ steps.plan.outputs.packages_sha }}
+      os_base_sha: ${{ steps.plan.outputs.os_base_sha }}
+      freebsd_sha: ${{ steps.plan.outputs.freebsd_sha }}
+      ports_sha: ${{ steps.plan.outputs.ports_sha }}
+      image_sha256: ${{ steps.plan.outputs.image_sha256 }}
+      jail_object: ${{ steps.plan.outputs.jail_object }}
+      package_train: ${{ steps.plan.outputs.package_train }}
+      abi: ${{ steps.plan.outputs.abi }}
+      altabi: ${{ steps.plan.outputs.altabi }}
+      public_base_url: ${{ steps.plan.outputs.public_base_url }}
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with: {go-version-file: go.mod, cache: false}
+      - id: plan
+        run: python3 scripts/plan.py system --os-base-sha "${GITHUB_SHA}" --github-output "${GITHUB_OUTPUT}"
+      - if: steps.plan.outputs.needed == 'true'
+        run: go build -trimpath -o "${RUNNER_TEMP}/fsbuild" ./cmd/fsbuild
+      - if: steps.plan.outputs.needed == 'true'
+        env:
+          R2_CREDENTIAL_BROKER_URL: ${{ vars.R2_CREDENTIAL_BROKER_URL }}
+          R2_CREDENTIAL_BROKER_AUDIENCE: ${{ vars.R2_CREDENTIAL_BROKER_AUDIENCE }}
+          R2_BUCKET: ${{ vars.R2_BUILD_BUCKET }}
+          R2_ENDPOINT: ${{ vars.R2_ENDPOINT }}
+          FSBUILD_STORE_PREFIX: v1
+        run: >-
+          "${RUNNER_TEMP}/fsbuild" credentials acquire --broker-url "${R2_CREDENTIAL_BROKER_URL}"
+          --audience "${R2_CREDENTIAL_BROKER_AUDIENCE}" --role coordinator
+          --expected-bucket "${R2_BUCKET}" --expected-prefix v1 --expected-endpoint "${R2_ENDPOINT}"
+          --github-env "${GITHUB_ENV}"
+      - id: reserve
+        if: steps.plan.outputs.needed == 'true'
+        env:
+          R2_BUCKET: ${{ vars.R2_BUILD_BUCKET }}
+          FSBUILD_STORE_PREFIX: v1
+        run: |
+          "${RUNNER_TEMP}/fsbuild" state reserve-generation \
+            --fingerprint "${{ steps.plan.outputs.system }}" --proposed "${GITHUB_RUN_NUMBER}" \
+            --output "${RUNNER_TEMP}/generation.json"
+          echo "generation=$(jq -r .generation "${RUNNER_TEMP}/generation.json")" >>"${GITHUB_OUTPUT}"
+
+  build:
+    needs: plan
+    if: needs.plan.outputs.needed == 'true'
+    uses: ./.github/workflows/ryzen-build.yml
+    with:
+      stage: system
+      fingerprint: ${{ needs.plan.outputs.system }}
+      platform_id: ${{ needs.plan.outputs.platform }}
+      system_id: ${{ needs.plan.outputs.system }}
+      source_sha: ${{ needs.plan.outputs.source_sha }}
+      system_sha: ${{ needs.plan.outputs.system_sha }}
+      packages_sha: ${{ needs.plan.outputs.packages_sha }}
+      os_base_sha: ${{ needs.plan.outputs.os_base_sha }}
+      freebsd_sha: ${{ needs.plan.outputs.freebsd_sha }}
+      ports_sha: ${{ needs.plan.outputs.ports_sha }}
+      image_sha256: ${{ needs.plan.outputs.image_sha256 }}
+      jail_object: ${{ needs.plan.outputs.jail_object }}
+      package_train: ${{ needs.plan.outputs.package_train }}
+      generation: ${{ needs.plan.outputs.generation }}
+      public_base_url: ${{ needs.plan.outputs.public_base_url }}
+    secrets: inherit
+
+  publish:
+    needs: [plan, build]
+    if: needs.build.result == 'success'
+    runs-on: ubuntu-24.04
+    environment: channel-publisher
+    permissions: {contents: read, id-token: write}
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with: {go-version-file: go.mod, cache: false}
+      - run: go build -trimpath -o "${RUNNER_TEMP}/fsbuild" ./cmd/fsbuild
+      - env:
+          R2_CREDENTIAL_BROKER_URL: ${{ vars.R2_CREDENTIAL_BROKER_URL }}
+          R2_CREDENTIAL_BROKER_AUDIENCE: ${{ vars.R2_CREDENTIAL_BROKER_AUDIENCE }}
+          R2_BUCKET: ${{ vars.R2_BUILD_BUCKET }}
+          R2_ENDPOINT: ${{ vars.R2_ENDPOINT }}
+          FSBUILD_STORE_PREFIX: v1
+        run: >-
+          "${RUNNER_TEMP}/fsbuild" credentials acquire --broker-url "${R2_CREDENTIAL_BROKER_URL}"
+          --audience "${R2_CREDENTIAL_BROKER_AUDIENCE}" --role channel-writer
+          --expected-bucket "${R2_BUCKET}" --expected-prefix v1 --expected-endpoint "${R2_ENDPOINT}"
+          --github-env "${GITHUB_ENV}"
+      - env:
+          R2_BUCKET: ${{ vars.R2_BUILD_BUCKET }}
+          FSBUILD_STORE_PREFIX: v1
+          SIGNING_KEY: ${{ secrets.FREESENSE_PKG_SIGNING_KEY }}
+        run: |
+          key=$(mktemp); trap 'rm -f "$key"' EXIT; chmod 600 "$key"; printf '%s' "${SIGNING_KEY}" >"$key"
+          "${RUNNER_TEMP}/fsbuild" channel update --component system \
+            --fingerprint "${{ needs.plan.outputs.system }}" \
+            --url "${{ needs.plan.outputs.public_base_url }}/artifacts/system/${{ needs.plan.outputs.system }}/amd64" \
+            --generation "${{ needs.plan.outputs.generation }}" --package-train "${{ needs.plan.outputs.package_train }}" \
+            --abi "${{ needs.plan.outputs.abi }}" --altabi "${{ needs.plan.outputs.altabi }}" \
+            --published-at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --private-key "$key"
+
