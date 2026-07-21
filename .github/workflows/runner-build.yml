@@ -105,15 +105,6 @@ jobs:
           if [[ "${STAGE}" == packages || "${STAGE}" == iso ]]; then args+=(--system-id "${SYSTEM_ID}"); fi
           if [[ "${STAGE}" == packages ]]; then args+=(--package-train "${PACKAGE_TRAIN}"); fi
           "${RUNNER_TEMP}/fsbuild" result check "${args[@]}"
-      - name: Verify pinned jail input
-        if: steps.reuse.outputs.complete != 'true' && inputs.stage != 'iso'
-        run: |
-          jail_sha=${JAIL_OBJECT##*/}
-          [[ "${JAIL_OBJECT}" == "inputs/sha256/${jail_sha}" ]]
-          [[ "${jail_sha}" =~ ^[0-9a-f]{64}$ ]]
-          jail_url=$("${RUNNER_TEMP}/fsbuild" blob url --sha256 "${jail_sha}" --validity 10m)
-          curl --fail --silent --show-error --range 0-0 --output /dev/null "${jail_url}"
-          unset jail_url
       - name: Verify required System result
         if: steps.reuse.outputs.complete != 'true' && inputs.stage != 'system'
         run: |

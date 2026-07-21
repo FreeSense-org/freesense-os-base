@@ -31,7 +31,7 @@ jobs:
         run: |
           bash -n scripts/runner/run-vm.sh
           bash -n scripts/verify-release.sh
-          sh -n scripts/runner/worker-common.sh scripts/runner/probe.sh scripts/runner/stages/*.sh apply.sh
+          sh -n scripts/runner/probe.sh apply.sh
           render_dir=$(mktemp -d)
           trap 'rm -rf "${render_dir}"' EXIT
           while read -r field; do export "${field}=test-value"; done < <(

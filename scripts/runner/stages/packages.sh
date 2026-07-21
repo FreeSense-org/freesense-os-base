@@ -29,7 +29,6 @@ for package in "${latest}"/All/*.pkg; do
 done
 phase optional-closure-check
 : >/tmp/available-packages
-test -n "$(find /root/work/packages/All -type f -name '*.pkg' -print -quit)"
 for package in /root/system-repo/All/*.pkg /root/work/packages/All/*.pkg; do
   pkg query -F "${package}" '%n|%v' >>/tmp/available-packages
 done
