@@ -26,7 +26,7 @@ for tool in qemu-system-x86_64 qemu-img cloud-localds curl sha256sum base64 awk;
   command -v "$tool" >/dev/null || { echo "missing host dependency: $tool" >&2; exit 1; }
 done
 [[ -r /dev/kvm && -w /dev/kvm ]] || { echo "/dev/kvm is not available to the runner" >&2; exit 1; }
-(( $(nproc) >= 16 )) || { echo "the build runner exposes fewer than 16 CPU threads" >&2; exit 1; }
+(( $(nproc) >= 12 )) || { echo "the build runner exposes fewer than 12 CPU threads" >&2; exit 1; }
 
 cache_dir=${HOME}/.cache/freesense-build/images
 base_image=${cache_dir}/${image_sha}.qcow2
@@ -99,6 +99,9 @@ if ! verify_image; then
 fi
 verify_image || { echo "cached worker image verification failed" >&2; exit 1; }
 qemu-img check -q "$base_image"
+while IFS= read -r -d '' stale_image; do
+  [[ $stale_image == "$base_image" ]] || rm -f -- "$stale_image"
+done < <(find "$cache_dir" -mindepth 1 -maxdepth 1 -type f -name '*.qcow2' -mtime +14 -print0)
 
 cleanup_orphans() {
   while IFS= read -r -d '' directory; do
@@ -205,7 +208,7 @@ qemu-system-x86_64 \
   -name freesense-${nonce} \
   -machine q35,accel=kvm \
   -cpu host \
-  -smp 16 \
+  -smp 12 \
   -m 32768 \
   -drive if=pflash,format=raw,readonly=on,file="$code" \
   -drive if=pflash,format=raw,file="$vars" \

@@ -18,10 +18,17 @@ on:
       package_train: {type: string, required: true}
       generation: {type: string, required: true}
       public_base_url: {type: string, required: true}
+      channel: {type: string, required: false, default: devel}
+      channel_payload_sha256: {type: string, required: false, default: ""}
+      channel_payload_base64: {type: string, required: false, default: ""}
+      channel_signature_base64: {type: string, required: false, default: ""}
 
 jobs:
   build:
     runs-on: [self-hosted, build-runner]
+    concurrency:
+      group: freesense-kvm-host
+      cancel-in-progress: false
     timeout-minutes: 345
     environment: build
     permissions:
@@ -33,6 +40,25 @@ jobs:
       R2_BUCKET: ${{ vars.R2_BUILD_BUCKET }}
       R2_ENDPOINT: ${{ vars.R2_ENDPOINT }}
       FSBUILD_STORE_PREFIX: v1
+      STAGE: ${{ inputs.stage }}
+      FINGERPRINT: ${{ inputs.fingerprint }}
+      PLATFORM_ID: ${{ inputs.platform_id }}
+      SYSTEM_ID: ${{ inputs.system_id }}
+      SOURCE_SHA: ${{ inputs.source_sha }}
+      SYSTEM_SHA: ${{ inputs.system_sha }}
+      PACKAGES_SHA: ${{ inputs.packages_sha }}
+      OS_BASE_SHA: ${{ inputs.os_base_sha }}
+      FREEBSD_SHA: ${{ inputs.freebsd_sha }}
+      PORTS_SHA: ${{ inputs.ports_sha }}
+      IMAGE_SHA256: ${{ inputs.image_sha256 }}
+      JAIL_OBJECT: ${{ inputs.jail_object }}
+      PACKAGE_TRAIN: ${{ inputs.package_train }}
+      GENERATION: ${{ inputs.generation }}
+      PUBLIC_BASE_URL: ${{ inputs.public_base_url }}
+      CHANNEL: ${{ inputs.channel }}
+      CHANNEL_PAYLOAD_SHA256: ${{ inputs.channel_payload_sha256 }}
+      CHANNEL_PAYLOAD_B64: ${{ inputs.channel_payload_base64 }}
+      CHANNEL_SIGNATURE_B64: ${{ inputs.channel_signature_base64 }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
@@ -52,7 +78,7 @@ jobs:
             sudo DEBIAN_FRONTEND=noninteractive apt-get install -yq qemu-system-x86 qemu-utils cloud-image-utils ovmf
           fi
           test -r /dev/kvm && test -w /dev/kvm
-          test "$(nproc)" -ge 16
+          test "$(nproc)" -ge 12
       - run: go build -trimpath -o "${RUNNER_TEMP}/fsbuild" ./cmd/fsbuild
       - name: Verify repository signing trust root
         env: {SIGNING_KEY: "${{ secrets.FREESENSE_PKG_SIGNING_KEY }}"}
@@ -74,13 +100,13 @@ jobs:
       - id: reuse
         name: Reuse completed immutable result
         run: |
-          args=(--stage "${{ inputs.stage }}" --id "${{ inputs.fingerprint }}" --github-output "${GITHUB_OUTPUT}")
-          if [[ "${{ inputs.stage }}" == packages ]]; then args+=(--package-train "${{ inputs.package_train }}"); fi
+          args=(--stage "${STAGE}" --id "${FINGERPRINT}" --platform-id "${PLATFORM_ID}" \
+            --generation "${GENERATION}" --github-output "${GITHUB_OUTPUT}")
+          if [[ "${STAGE}" == packages || "${STAGE}" == iso ]]; then args+=(--system-id "${SYSTEM_ID}"); fi
+          if [[ "${STAGE}" == packages ]]; then args+=(--package-train "${PACKAGE_TRAIN}"); fi
           "${RUNNER_TEMP}/fsbuild" result check "${args[@]}"
       - name: Verify pinned jail input
         if: steps.reuse.outputs.complete != 'true' && inputs.stage != 'iso'
-        env:
-          JAIL_OBJECT: ${{ inputs.jail_object }}
         run: |
           jail_sha=${JAIL_OBJECT##*/}
           [[ "${JAIL_OBJECT}" == "inputs/sha256/${jail_sha}" ]]
@@ -88,34 +114,29 @@ jobs:
           jail_url=$("${RUNNER_TEMP}/fsbuild" blob url --sha256 "${jail_sha}" --validity 10m)
           curl --fail --silent --show-error --range 0-0 --output /dev/null "${jail_url}"
           unset jail_url
+      - name: Verify required System result
+        if: steps.reuse.outputs.complete != 'true' && inputs.stage != 'system'
+        run: |
+          output=$(mktemp)
+          trap 'rm -f "${output}"' EXIT
+          "${RUNNER_TEMP}/fsbuild" result check --stage system \
+            --id "${SYSTEM_ID}" --platform-id "${PLATFORM_ID}" \
+            --github-output "${output}"
+          grep -qx 'complete=true' "${output}"
       - name: Render checked FreeBSD worker
         if: steps.reuse.outputs.complete != 'true'
         env:
           FREESENSE_REPO_SIGNING_KEY: ${{ secrets.FREESENSE_PKG_SIGNING_KEY }}
-          STAGE: ${{ inputs.stage }}
-          FINGERPRINT: ${{ inputs.fingerprint }}
-          PLATFORM_ID: ${{ inputs.platform_id }}
-          SYSTEM_ID: ${{ inputs.system_id }}
-          SOURCE_SHA: ${{ inputs.source_sha }}
-          SYSTEM_SHA: ${{ inputs.system_sha }}
-          PACKAGES_SHA: ${{ inputs.packages_sha }}
-          OS_BASE_SHA: ${{ inputs.os_base_sha }}
-          FREEBSD_SHA: ${{ inputs.freebsd_sha }}
-          PORTS_SHA: ${{ inputs.ports_sha }}
-          JAIL_OBJECT: ${{ inputs.jail_object }}
-          PACKAGE_TRAIN: ${{ inputs.package_train }}
-          GENERATION: ${{ inputs.generation }}
-          PUBLIC_BASE_URL: ${{ inputs.public_base_url }}
         run: |
           python3 scripts/render-worker.py --common scripts/runner/worker-common.sh \
             --stages scripts/runner/stages --output "${RUNNER_TEMP}/worker.sh"
           sh -n "${RUNNER_TEMP}/worker.sh"
-      - name: Build in a fresh 16-vCPU, 32-GiB FreeBSD VM
+      - name: Build in a fresh 12-vCPU, 32-GiB FreeBSD VM
         if: steps.reuse.outputs.complete != 'true'
         env:
           FSBUILD: ${{ runner.temp }}/fsbuild
         run: >-
-          scripts/runner/run-vm.sh --image-sha256 "${{ inputs.image_sha256 }}"
+          scripts/runner/run-vm.sh --image-sha256 "${IMAGE_SHA256}"
           --script "${RUNNER_TEMP}/worker.sh" --timeout 19800
       - name: Clean sensitive runner files
         if: always()

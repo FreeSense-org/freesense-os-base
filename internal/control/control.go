@@ -60,23 +60,27 @@ type Channel struct {
 }
 
 type Component struct {
-	Fingerprint string    `json:"fingerprint"`
-	URL         string    `json:"url"`
-	Generation  uint64    `json:"generation"`
-	PublishedAt time.Time `json:"published_at"`
-	Verified    bool      `json:"verified"`
+	Fingerprint       string    `json:"fingerprint"`
+	SystemFingerprint string    `json:"system_fingerprint,omitempty"`
+	URL               string    `json:"url"`
+	Generation        uint64    `json:"generation"`
+	PublishedAt       time.Time `json:"published_at"`
+	Verified          bool      `json:"verified"`
 }
 
 type UpdateOptions struct {
-	Channel      string
-	Component    string
-	Fingerprint  string
-	URL          string
-	Generation   uint64
-	PackageTrain string
-	ABI          string
-	AltABI       string
-	PublishedAt  time.Time
+	Channel     string
+	Component   string
+	Fingerprint string
+	// SystemFingerprint binds a packages component to the exact system it was
+	// built and tested against. It must be empty for system publications.
+	SystemFingerprint string
+	URL               string
+	Generation        uint64
+	PackageTrain      string
+	ABI               string
+	AltABI            string
+	PublishedAt       time.Time
 }
 
 func ReserveGeneration(ctx context.Context, backend store.Backend, fingerprint string, proposed uint64) (Generation, bool, error) {
@@ -198,12 +202,23 @@ func Update(payload Payload, options UpdateOptions) (Payload, error) {
 	if !fingerprintPattern.MatchString(options.Fingerprint) || options.Generation == 0 {
 		return Payload{}, errors.New("component identity is invalid")
 	}
-	parsedURL, err := url.Parse(options.URL)
-	if err != nil || parsedURL.Scheme != "https" || parsedURL.Host != "pkg.freesense.org" || !strings.HasPrefix(parsedURL.Path, "/v1/artifacts/") {
-		return Payload{}, errors.New("component URL must be an immutable pkg.freesense.org artifact URL")
+	if options.Component == "packages" && !fingerprintPattern.MatchString(options.SystemFingerprint) {
+		return Payload{}, errors.New("packages publication requires an exact system fingerprint binding")
+	}
+	if options.Component == "system" && options.SystemFingerprint != "" {
+		return Payload{}, errors.New("system publication must not have a system fingerprint binding")
 	}
 	if !regexp.MustCompile(`^[0-9]+\.[0-9]+$`).MatchString(options.PackageTrain) || options.ABI == "" || options.AltABI == "" {
 		return Payload{}, errors.New("package train and ABI fields are required")
+	}
+	expectedPath := fmt.Sprintf("/v1/artifacts/system/%s/amd64", options.Fingerprint)
+	if options.Component == "packages" {
+		expectedPath = fmt.Sprintf("/v1/artifacts/packages/%s/%s/amd64", options.PackageTrain, options.Fingerprint)
+	}
+	parsedURL, err := url.Parse(options.URL)
+	if err != nil || parsedURL.Scheme != "https" || parsedURL.Host != "pkg.freesense.org" ||
+		parsedURL.Path != expectedPath || parsedURL.RawQuery != "" || parsedURL.Fragment != "" || parsedURL.User != nil {
+		return Payload{}, errors.New("component URL must exactly match its immutable pkg.freesense.org artifact")
 	}
 	if options.PublishedAt.IsZero() {
 		return Payload{}, errors.New("published time is required")
@@ -212,6 +227,23 @@ func Update(payload Payload, options UpdateOptions) (Payload, error) {
 		payload.Channels = map[string]Channel{}
 	}
 	channel := payload.Channels[options.Channel]
+	if options.Component == "packages" {
+		if channel.System == nil || channel.System.Fingerprint != options.SystemFingerprint {
+			return Payload{}, errors.New("packages publication is not bound to the current devel system")
+		}
+	}
+	artifactURL := strings.TrimSuffix(options.URL, "/")
+	if channelMetadataMatches(channel, options) {
+		existing, err := componentOf(&channel, options.Component)
+		if err != nil {
+			return Payload{}, err
+		}
+		if componentIdentityMatches(existing, options.Fingerprint, options.SystemFingerprint, artifactURL, options.Generation) {
+			// A retry of the same publication must not restart its soak or discard
+			// successful integration verification.
+			return payload, nil
+		}
+	}
 	channel.Name = "devel"
 	channel.Description = "Development version"
 	channel.PackageTrain = options.PackageTrain
@@ -219,14 +251,19 @@ func Update(payload Payload, options UpdateOptions) (Payload, error) {
 	channel.AltABI = options.AltABI
 	channel.Default = true
 	component := &Component{
-		Fingerprint: options.Fingerprint,
-		URL:         strings.TrimSuffix(options.URL, "/"),
-		Generation:  options.Generation,
-		PublishedAt: options.PublishedAt.UTC(),
-		Verified:    false,
+		Fingerprint:       options.Fingerprint,
+		SystemFingerprint: options.SystemFingerprint,
+		URL:               artifactURL,
+		Generation:        options.Generation,
+		PublishedAt:       options.PublishedAt.UTC(),
+		Verified:          false,
 	}
 	if options.Component == "system" {
 		channel.System = component
+		// Package verification and promotion are meaningful only for the exact
+		// system they were built against. Any non-identical system publication
+		// invalidates the current package selection.
+		channel.Packages = nil
 	} else {
 		channel.Packages = component
 	}
@@ -247,6 +284,11 @@ func Verify(payload Payload, component, fingerprint string) (Payload, error) {
 	if target == nil || target.Fingerprint != fingerprint {
 		return Payload{}, errors.New("verification target is no longer current")
 	}
+	if component == "packages" {
+		if err := validatePackageBinding(channel, target); err != nil {
+			return Payload{}, err
+		}
+	}
 	target.Verified = true
 	payload.Channels["devel"] = channel
 	return payload, nil
@@ -264,10 +306,26 @@ func Promote(payload Payload, component string, now time.Time, soak time.Duratio
 	if target == nil || !target.Verified {
 		return Payload{}, errors.New("current devel component has not passed integration verification")
 	}
+	if component == "packages" {
+		if err := validatePackageBinding(devel, target); err != nil {
+			return Payload{}, err
+		}
+	} else {
+		if err := validatePackageBinding(devel, devel.Packages); err != nil {
+			return Payload{}, errors.New("system promotion requires a complete matching package release")
+		}
+		if !devel.Packages.Verified {
+			return Payload{}, errors.New("system promotion requires verified matching packages")
+		}
+		if now.UTC().Before(devel.Packages.PublishedAt.Add(soak)) {
+			return Payload{}, errors.New("system promotion requires matching packages to complete their soak")
+		}
+	}
 	if now.UTC().Before(target.PublishedAt.Add(soak)) {
 		return Payload{}, errors.New("current devel component has not completed its soak")
 	}
 	stable := payload.Channels["stable"]
+	stableCompatibilityMatches := channelCompatibilityEqual(stable, devel)
 	stable.Name = "stable"
 	stable.Description = "Stable version"
 	stable.PackageTrain = devel.PackageTrain
@@ -276,12 +334,63 @@ func Promote(payload Payload, component string, now time.Time, soak time.Duratio
 	stable.Default = false
 	copy := *target
 	if component == "system" {
+		keepPackages := stable.Packages != nil &&
+			stable.Packages.Verified &&
+			stable.System != nil &&
+			componentIdentityEqual(stable.System, target) &&
+			stableCompatibilityMatches &&
+			stable.Packages.SystemFingerprint == target.Fingerprint
 		stable.System = &copy
+		if !keepPackages {
+			stable.Packages = nil
+		}
 	} else {
+		if stable.System == nil || !stable.System.Verified || !componentIdentityEqual(stable.System, devel.System) {
+			return Payload{}, errors.New("matching devel system must be promoted before its packages")
+		}
+		if !stableCompatibilityMatches {
+			return Payload{}, errors.New("matching devel channel metadata must be promoted before its packages")
+		}
 		stable.Packages = &copy
 	}
 	payload.Channels["stable"] = stable
 	return payload, nil
+}
+
+func channelMetadataMatches(channel Channel, options UpdateOptions) bool {
+	return channel.Name == "devel" &&
+		channel.Description == "Development version" &&
+		channel.PackageTrain == options.PackageTrain &&
+		channel.ABI == options.ABI &&
+		channel.AltABI == options.AltABI &&
+		channel.Default
+}
+
+func channelCompatibilityEqual(left, right Channel) bool {
+	return left.PackageTrain == right.PackageTrain && left.ABI == right.ABI && left.AltABI == right.AltABI
+}
+
+func componentIdentityMatches(component *Component, fingerprint, systemFingerprint, artifactURL string, generation uint64) bool {
+	return component != nil &&
+		component.Fingerprint == fingerprint &&
+		component.SystemFingerprint == systemFingerprint &&
+		component.URL == artifactURL &&
+		component.Generation == generation
+}
+
+func componentIdentityEqual(left, right *Component) bool {
+	return left != nil && right != nil &&
+		componentIdentityMatches(left, right.Fingerprint, right.SystemFingerprint, right.URL, right.Generation)
+}
+
+func validatePackageBinding(channel Channel, packages *Component) error {
+	if packages == nil || !fingerprintPattern.MatchString(packages.SystemFingerprint) {
+		return errors.New("packages component has no valid system fingerprint binding")
+	}
+	if channel.System == nil || channel.System.Fingerprint != packages.SystemFingerprint {
+		return errors.New("packages component is not bound to the channel system")
+	}
+	return nil
 }
 
 func componentOf(channel *Channel, component string) (*Component, error) {

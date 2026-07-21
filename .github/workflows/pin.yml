@@ -16,6 +16,9 @@ jobs:
   pin:
     if: github.ref == 'refs/heads/main'
     runs-on: [self-hosted, build-runner]
+    concurrency:
+      group: freesense-kvm-host
+      cancel-in-progress: false
     timeout-minutes: 120
     environment: pin
     permissions:
@@ -42,7 +45,7 @@ jobs:
       - name: Install image tools
         run: |
           sudo apt-get update -q
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -yq qemu-system-x86 qemu-utils cloud-image-utils ovmf xz-utils jq gh
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -yq qemu-system-x86 qemu-utils cloud-image-utils ovmf xz-utils zstd jq gh
           go build -trimpath -o "${RUNNER_TEMP}/fsbuild" ./cmd/fsbuild
 
       - name: Acquire short-lived pin credentials
@@ -72,7 +75,11 @@ jobs:
           [[ "${builddate}" =~ ^[0-9]{8}$ ]]
           freebsd_sha=$(gh api "repos/freebsd/freebsd-src/commits/${revision}" --jq .sha)
           [[ "${freebsd_sha}" =~ ^[0-9a-f]{40}$ ]]
-          ports_sha=$(gh api "repos/freebsd/freebsd-ports/commits/main" --jq .sha)
+          packagesite_url=https://pkg.freebsd.org/FreeBSD:16:amd64/latest/packagesite.pkg
+          curl "${retry[@]}" -o "${RUNNER_TEMP}/packagesite.pkg" "${packagesite_url}"
+          ports_sha=$(tar -xOf "${RUNNER_TEMP}/packagesite.pkg" packagesite.yaml | \
+            jq -Rr 'fromjson? | select(.name == "pkg") | .annotations.ports_top_git_hash // empty' | \
+            sort -u)
           [[ "${ports_sha}" =~ ^[0-9a-f]{40}$ ]]
 
           base_sha=$(awk -F '\t' '$1=="base.txz" {print $2}' "${RUNNER_TEMP}/MANIFEST")
@@ -198,3 +205,13 @@ jobs:
           else
             echo "Updated pin PR #${number}"
           fi
+
+      - name: Clean pinning downloads
+        if: always()
+        shell: bash
+        run: |
+          rm -f "${RUNNER_TEMP}/MANIFEST" "${RUNNER_TEMP}/VM-CHECKSUM.SHA256" \
+            "${RUNNER_TEMP}/base.txz" "${RUNNER_TEMP}/packagesite.pkg" \
+            "${RUNNER_TEMP}/freebsd-16-worker.qcow2" \
+            "${RUNNER_TEMP}"/FreeBSD-16.0-CURRENT-amd64-BASIC-CLOUDINIT-*.qcow2 \
+            "${RUNNER_TEMP}"/FreeBSD-16.0-CURRENT-amd64-BASIC-CLOUDINIT-*.qcow2.xz
