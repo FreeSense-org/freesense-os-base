@@ -86,6 +86,8 @@ distfiles_dir = "mkdir -p /usr/ports/distfiles"
 source_archive = "tar czf /usr/ports/distfiles/freesense-src.tar.gz"
 if "configure_poudriere()" not in common or "NOLINUX=yes" not in common:
     raise SystemExit("runner must explicitly configure Poudriere without Linux compatibility modules")
+if "export DO_NOT_SIGN_PKG_REPO=1" not in common:
+    raise SystemExit("runner must bypass the legacy bootstrap signer before applying its own repository signature")
 for name, stage in (("system", system_stage), ("packages", packages_stage)):
     if distfiles_dir not in stage or stage.find(distfiles_dir) > stage.find(source_archive):
         raise SystemExit(f"{name} source archive is written before its distfiles directory exists")
