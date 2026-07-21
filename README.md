@@ -2,7 +2,7 @@
 
 This repository pins FreeBSD 16 and defines the complete FreeSense build. GitHub
 Actions only plans and publishes; all FreeBSD work runs in a fresh KVM guest on
-the single 16-thread, 32-GiB Ryzen runner.
+the single 16-thread, 32-GiB build runner.
 
 There are two independently invalidated package repositories:
 

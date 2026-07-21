@@ -15,7 +15,7 @@ concurrency:
 jobs:
   pin:
     if: github.ref == 'refs/heads/main'
-    runs-on: [self-hosted, ryzen]
+    runs-on: [self-hosted, build-runner]
     timeout-minutes: 120
     environment: pin
     permissions:
@@ -162,13 +162,13 @@ jobs:
           jq -e '.ready and (.freebsd_source.commit|length)==40' config/freebsd-16.json
           echo "image_sha256=$(jq -r .worker_image.sha256 config/freebsd-16.json)" >>"${GITHUB_OUTPUT}"
 
-      - name: Boot the exact R2 image on the Ryzen KVM host
+      - name: Boot the exact R2 image on the KVM build runner
         env:
           FSBUILD: ${{ runner.temp }}/fsbuild
         run: >-
-          scripts/ryzen/run-vm.sh
+          scripts/runner/run-vm.sh
           --image-sha256 "${{ steps.resolve.outputs.image_sha256 }}"
-          --script scripts/ryzen/probe.sh
+          --script scripts/runner/probe.sh
           --timeout 3600
 
       - name: Open or update the single pin PR
@@ -194,7 +194,7 @@ jobs:
           if [[ -z "${number}" ]]; then
             gh pr create --head "${branch}" --base main \
               --title "Pin the current official FreeBSD 16 snapshot" \
-              --body "Automated checksum-verified FreeBSD source, jail seed, and Ryzen KVM worker-image pin. The fixed branch is reused; pinning never creates tag or branch sprawl."
+              --body "Automated checksum-verified FreeBSD source, jail seed, and KVM worker-image pin. The fixed branch is reused; pinning never creates tag or branch sprawl."
           else
             echo "Updated pin PR #${number}"
           fi

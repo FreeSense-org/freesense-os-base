@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Resolve immutable inputs and decide whether one Ryzen build is required."""
+"""Resolve immutable inputs and decide whether one build-runner job is required."""
 
 from __future__ import annotations
 
@@ -96,9 +96,9 @@ def main() -> int:
     packages_sha = remote_sha("FreeSense-org/freesense-packages")
     patch_files = [ROOT / "apply.sh", ROOT / "manifest.env", *sorted((ROOT / "patches").glob("*.patch"))]
     platform_recipe = recipe_digest([
-        ROOT / "scripts/ryzen/run-vm.sh",
-        ROOT / "scripts/ryzen/worker-common.sh",
-        ROOT / "scripts/ryzen/stages/system.sh",
+        ROOT / "scripts/runner/run-vm.sh",
+        ROOT / "scripts/runner/worker-common.sh",
+        ROOT / "scripts/runner/stages/system.sh",
         *patch_files,
     ])
     platform = fingerprint({
@@ -119,8 +119,8 @@ def main() -> int:
         "system_ports": system_sha,
         "recipe": recipe_digest([
             ROOT / "scripts/render-worker.py",
-            ROOT / "scripts/ryzen/worker-common.sh",
-            ROOT / "scripts/ryzen/stages/system.sh",
+            ROOT / "scripts/runner/worker-common.sh",
+            ROOT / "scripts/runner/stages/system.sh",
         ]),
     })
     packages = fingerprint({
@@ -134,8 +134,8 @@ def main() -> int:
         "package_train": policy["package_train"],
         "recipe": recipe_digest([
             ROOT / "scripts/render-worker.py",
-            ROOT / "scripts/ryzen/worker-common.sh",
-            ROOT / "scripts/ryzen/stages/packages.sh",
+            ROOT / "scripts/runner/worker-common.sh",
+            ROOT / "scripts/runner/stages/packages.sh",
         ]),
     })
     iso_system = args.system_id or system
@@ -147,7 +147,7 @@ def main() -> int:
         "system": iso_system,
         "source": source_sha,
         "os_recipe": platform_recipe,
-        "recipe": recipe_digest([ROOT / "scripts/render-worker.py", ROOT / "scripts/ryzen/worker-common.sh", ROOT / "scripts/ryzen/stages/iso.sh"]),
+        "recipe": recipe_digest([ROOT / "scripts/render-worker.py", ROOT / "scripts/runner/worker-common.sh", ROOT / "scripts/runner/stages/iso.sh"]),
     })
     identifiers = {"platform": platform, "system": iso_system if args.kind == "iso" else system, "packages": packages, "iso": iso}
     selected = identifiers[args.kind]

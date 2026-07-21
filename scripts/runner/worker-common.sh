@@ -1,4 +1,4 @@
-# Shared runtime for the three FreeBSD build jobs. Every path is derived from
+# Shared runtime for the three isolated FreeBSD build jobs. Every path is derived from
 # immutable inputs; complete.json is committed last.
 
 decode() { printf '%s' "$1" | base64 -d; }

@@ -1,3 +1,4 @@
+# Assemble only from the exact signed system repository selected by the channel.
 configure_source
 fetch_repository system "${SYSTEM_ID}" /root/system-repo
 cd /root/freesense-src

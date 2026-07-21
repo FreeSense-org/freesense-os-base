@@ -17,8 +17,8 @@ Environments:
 
 - `broker`: Worker deployment and one smoke object
 - `build-coordinator`: immutable generation reservations
-- `build`: immutable inputs/artifacts from the Ryzen reusable workflow
-- `pin`: weekly input mirroring on Ryzen
+- `build`: immutable inputs/artifacts from the reusable build-runner workflow
+- `pin`: weekly input mirroring on the build runner
 - `channel-publisher`: the single signed channel object
 
 The organization secret `FREESENSE_PKG_SIGNING_KEY` signs both pkg repository

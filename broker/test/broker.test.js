@@ -104,7 +104,7 @@ function claimsFor(role, overrides = {}) {
       environment: "build",
       runner_environment: "self-hosted",
       workflow_ref: protocol.workflows.system,
-      job_workflow_ref: protocol.workflows.ryzenBuild,
+      job_workflow_ref: protocol.workflows.runnerBuild,
       job_workflow_sha: "b".repeat(40),
     },
     "pin-writer": {

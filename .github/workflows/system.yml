@@ -68,7 +68,7 @@ jobs:
   build:
     needs: plan
     if: needs.plan.outputs.needed == 'true'
-    uses: ./.github/workflows/ryzen-build.yml
+    uses: ./.github/workflows/runner-build.yml
     with:
       stage: system
       fingerprint: ${{ needs.plan.outputs.system }}
@@ -121,4 +121,3 @@ jobs:
             --generation "${{ needs.plan.outputs.generation }}" --package-train "${{ needs.plan.outputs.package_train }}" \
             --abi "${{ needs.plan.outputs.abi }}" --altabi "${{ needs.plan.outputs.altabi }}" \
             --published-at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --private-key "$key"
-
