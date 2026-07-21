@@ -92,6 +92,7 @@ export FREESENSE_SYSTEM_FINGERPRINT="${SYSTEM_ID}"
 export FREESENSE_PACKAGES_REPO_URL="${packages_url}"
 export FREESENSE_PACKAGES_FINGERPRINT="${packages_fingerprint}"
 export FREESENSE_CHANNEL_PUBLIC_KEY_FILE="/root/sign/channel-public.pem"
+export DO_NOT_SIGN_PKG_REPO=1
 EOF
 }
 
