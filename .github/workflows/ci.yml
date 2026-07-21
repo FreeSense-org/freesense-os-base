@@ -30,5 +30,20 @@ jobs:
         run: |
           bash -n scripts/runner/run-vm.sh
           sh -n scripts/runner/worker-common.sh scripts/runner/probe.sh scripts/runner/stages/*.sh apply.sh
+          render_dir=$(mktemp -d)
+          trap 'rm -rf "${render_dir}"' EXIT
+          while read -r field; do export "${field}=test-value"; done < <(
+            python3 - <<'PY'
+          import runpy
+          for field in runpy.run_path("scripts/render-worker.py")["FIELDS"]:
+              print(field)
+          PY
+          )
+          for stage in system packages iso; do
+            export STAGE=${stage}
+            python3 scripts/render-worker.py --common scripts/runner/worker-common.sh \
+              --stages scripts/runner/stages --output "${render_dir}/${stage}.sh"
+            sh -n "${render_dir}/${stage}.sh"
+          done
           jq -e . config/*.json broker/*.json >/dev/null
           git diff --check

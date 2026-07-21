@@ -5,6 +5,7 @@ create_jail
 configure_poudriere
 export REPO_KIND=packages OVERLAY_DIR=/root/freesense-packages
 export FREESENSE_SYSTEM_OVERLAY_DIR=/root/freesense-system-ports
+phase optional-ports-tree
 ./build.sh --update-poudriere-ports
 cp tools/conf/pfPorts/poudriere_packages tools/conf/pfPorts/poudriere_bulk
 
@@ -16,13 +17,12 @@ cp /root/system-repo/All/*.pkg "${cache}/All/"
 pkg repo "${cache}"
 ln -sfn .real_system "${cache%/.real_system}/.latest"
 
-mkdir -p /usr/ports/distfiles
-rm -f /usr/ports/distfiles/freesense-src.tar.gz
-tar czf /usr/ports/distfiles/freesense-src.tar.gz -C /root \
-  --exclude='freesense-src/.git' --exclude='freesense-src/tmp' \
-  --exclude='freesense-src/logs' freesense-src
+create_source_archive
+phase optional-packages-build
 env NOLINUX=yes ./build.sh --update-pkg-repo
+phase optional-packages-ready
 latest=$(find /usr/local/poudriere/data/packages -type l -name .latest -exec realpath {} \; | head -1)
+test -n "${latest}"
 mkdir -p /root/work/packages/All
 : >/tmp/system-names
 for package in /root/system-repo/All/*.pkg; do pkg query -F "${package}" '%n' >>/tmp/system-names; done

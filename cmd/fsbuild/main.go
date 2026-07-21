@@ -276,7 +276,7 @@ func commandBlob(ctx context.Context, args []string) error {
 		if err != nil {
 			return err
 		}
-		if info.SHA256 != *sha {
+		if info.SHA256 != *sha || info.Size <= 0 {
 			return errors.New("immutable blob metadata conflicts with its SHA-256 identity")
 		}
 		return writeJSON(*output, map[string]any{

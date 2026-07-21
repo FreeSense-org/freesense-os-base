@@ -30,8 +30,54 @@ done
 
 cache_dir=${HOME}/.cache/freesense-build/images
 base_image=${cache_dir}/${image_sha}.qcow2
+download=""
+run_dir=""
+overlay=""
+pidfile=""
+
+qemu_owns_overlay() {
+  local qemu_pid=$1 qemu_overlay=$2
+  [[ $qemu_pid =~ ^[0-9]+$ ]] || return 1
+  [[ -r /proc/${qemu_pid}/cmdline ]] || return 1
+  grep -Fq -- "$qemu_overlay" "/proc/${qemu_pid}/cmdline"
+}
+
+stop_qemu() {
+  local qemu_pid=$1 qemu_overlay=$2
+  kill -0 "$qemu_pid" 2>/dev/null || return 0
+  qemu_owns_overlay "$qemu_pid" "$qemu_overlay" || return 1
+  kill "$qemu_pid" 2>/dev/null || true
+  for _ in {1..20}; do
+    kill -0 "$qemu_pid" 2>/dev/null || return 0
+    qemu_owns_overlay "$qemu_pid" "$qemu_overlay" || return 0
+    sleep 1
+  done
+  qemu_owns_overlay "$qemu_pid" "$qemu_overlay" || return 0
+  kill -9 "$qemu_pid" 2>/dev/null || true
+}
+
+cleanup() {
+  if [[ -n $pidfile && -f $pidfile ]]; then
+    pid=$(cat "$pidfile" 2>/dev/null || true)
+    if [[ $pid =~ ^[0-9]+$ ]] && kill -0 "$pid" 2>/dev/null; then
+      if ! stop_qemu "$pid" "$overlay"; then
+        echo "refusing to stop PID $pid because it does not own this build overlay" >&2
+      fi
+    fi
+  fi
+  [[ -z $run_dir ]] || rm -rf -- "$run_dir"
+  [[ -z $download ]] || rm -f -- "$download"
+}
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
 mkdir -p "$cache_dir"
 chmod 700 "$cache_dir"
+
+while IFS= read -r -d '' stale_download; do
+  rm -f -- "$stale_download"
+done < <(find "$cache_dir" -mindepth 1 -maxdepth 1 -type f -name '*.download.*' -print0)
 
 verify_image() {
   [[ -f $base_image ]] && [[ $(sha256sum "$base_image" | awk '{print $1}') == "$image_sha" ]]
@@ -49,6 +95,7 @@ if ! verify_image; then
   [[ $actual == "$image_sha" ]] || { rm -f "$download"; echo "worker image checksum mismatch" >&2; exit 1; }
   chmod 600 "$download"
   mv "$download" "$base_image"
+  download=""
 fi
 verify_image || { echo "cached worker image verification failed" >&2; exit 1; }
 qemu-img check -q "$base_image"
@@ -57,7 +104,12 @@ cleanup_orphans() {
   while IFS= read -r -d '' directory; do
     orphan_pid=$(cat "${directory}/qemu.pid" 2>/dev/null || true)
     if [[ $orphan_pid =~ ^[0-9]+$ ]] && kill -0 "$orphan_pid" 2>/dev/null; then
-      continue
+      if qemu_owns_overlay "$orphan_pid" "${directory}/worker.qcow2"; then
+        echo "Stopping orphaned FreeSense QEMU process ${orphan_pid}"
+        stop_qemu "$orphan_pid" "${directory}/worker.qcow2"
+      else
+        echo "Discarding stale runner directory with reused PID ${orphan_pid}"
+      fi
     fi
     rm -rf -- "$directory"
   done < <(find "$RUNNER_TEMP" -mindepth 1 -maxdepth 1 -type d -name 'freesense-runner.*' -print0)
@@ -75,19 +127,6 @@ begin_marker=FREESENSE_RUNNER_JOB_BEGIN_${nonce}
 ok_marker=FREESENSE_RUNNER_JOB_OK_${nonce}
 fail_marker=FREESENSE_RUNNER_JOB_FAILED_${nonce}
 
-cleanup() {
-  if [[ -f $pidfile ]]; then
-    pid=$(cat "$pidfile" 2>/dev/null || true)
-    if [[ $pid =~ ^[0-9]+$ ]] && kill -0 "$pid" 2>/dev/null; then
-      kill "$pid" 2>/dev/null || true
-      for _ in {1..20}; do kill -0 "$pid" 2>/dev/null || break; sleep 1; done
-      kill -9 "$pid" 2>/dev/null || true
-    fi
-  fi
-  rm -rf "$run_dir"
-}
-trap cleanup EXIT INT TERM
-
 code=""
 vars_template=""
 for firmware in /usr/share/OVMF/OVMF_CODE_4M.fd /usr/share/OVMF/OVMF_CODE.fd /usr/share/edk2/ovmf/OVMF_CODE.fd; do
@@ -101,6 +140,12 @@ cp "$vars_template" "$vars"
 
 qemu-img create -q -f qcow2 -F qcow2 -b "$base_image" "$overlay"
 qemu-img resize -q "$overlay" 160G
+available_kib=$(df -Pk "$RUNNER_TEMP" | awk 'END {print $4}')
+required_kib=$((80 * 1024 * 1024))
+(( available_kib >= required_kib )) || {
+  echo "build runner has less than 80 GiB free for the VM overlay" >&2
+  exit 1
+}
 
 payload_b64=$(base64 -w 0 "$script_path")
 wrapper=$(cat <<EOF
@@ -178,39 +223,51 @@ pid=$(cat "$pidfile")
 start=$(date +%s)
 next_report=$start
 seen_begin=false
+
+show_diagnostics() {
+  echo "FreeSense phase history:" >&2
+  tr '\r' '\n' <"$serial" \
+    | grep -E '^(FreeSense phase|FREESENSE_RUNNER_JOB_)' \
+    | tail -n 100 >&2 || true
+  echo "FreeBSD serial tail:" >&2
+  tr '\r' '\n' <"$serial" | tail -n 400 >&2
+}
+
 while true; do
   now=$(date +%s)
-  if grep -Fq "$ok_marker" "$serial"; then
+  recent=$(tail -c 1048576 "$serial")
+  if grep -Fq "$ok_marker" <<<"$recent"; then
     echo "FreeBSD stage completed successfully"
     break
   fi
-  if grep -Fq "$fail_marker" "$serial"; then
+  if grep -Fq "$fail_marker" <<<"$recent"; then
     echo "FreeBSD stage reported failure" >&2
-    tail -n 200 "$serial" >&2
+    show_diagnostics
     exit 1
   fi
-  if grep -Fq "$begin_marker" "$serial"; then seen_begin=true; fi
+  if [[ $seen_begin == false ]] && grep -Fq "$begin_marker" "$serial"; then seen_begin=true; fi
   if [[ $seen_begin == false ]] && (( now - start >= 300 )); then
     echo "FreeBSD booted without executing nuageinit user-data within 300s" >&2
-    tail -n 200 "$serial" >&2
+    show_diagnostics
     exit 1
   fi
   if (( now - start >= timeout_seconds )); then
     echo "FreeBSD stage exceeded ${timeout_seconds}s" >&2
-    tail -n 200 "$serial" >&2
+    show_diagnostics
     exit 1
   fi
   if ! kill -0 "$pid" 2>/dev/null; then
     echo "FreeBSD VM stopped before its success marker" >&2
-    tail -n 200 "$serial" >&2
+    show_diagnostics
     exit 1
   fi
   if (( now >= next_report )); then
-    cpu=$(ps -p "$pid" -o %cpu= | xargs)
-    rss_kib=$(ps -p "$pid" -o rss= | xargs)
+    cpu=$(ps -p "$pid" -o %cpu= 2>/dev/null | xargs || true)
+    rss_kib=$(ps -p "$pid" -o rss= 2>/dev/null | xargs || true)
     avail_kib=$(awk '/MemAvailable:/ {print $2}' /proc/meminfo)
     load=$(awk '{print $1, $2, $3}' /proc/loadavg)
-    phase=$(grep -E '^(FreeSense|==>|---|FREESENSE_)' "$serial" | tail -n 1 || true)
+    phase=$(printf '%s\n' "$recent" | tr '\r' '\n' \
+      | grep -E '^(FreeSense|==>|---|FREESENSE_)' | tail -n 1 || true)
     printf 'Build runner heartbeat: guest_started=%s qemu_cpu=%s%% qemu_rss=%sMiB host_available=%sMiB load=%s phase=%s\n' \
       "$seen_begin" "${cpu:-0}" "$(( ${rss_kib:-0} / 1024 ))" "$(( ${avail_kib:-0} / 1024 ))" "$load" "${phase:-booting}"
     next_report=$((now + 180))
