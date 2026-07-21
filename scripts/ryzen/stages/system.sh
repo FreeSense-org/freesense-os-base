@@ -15,6 +15,7 @@ create_jail
 export REPO_KIND=system OVERLAY_DIR=/root/freesense-system-ports
 ./build.sh --update-poudriere-ports
 cp tools/conf/pfPorts/poudriere_system tools/conf/pfPorts/poudriere_bulk
+mkdir -p /usr/ports/distfiles
 rm -f /usr/ports/distfiles/freesense-src.tar.gz
 tar czf /usr/ports/distfiles/freesense-src.tar.gz -C /root \
   --exclude='freesense-src/.git' --exclude='freesense-src/tmp' \
