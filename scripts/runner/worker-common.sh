@@ -20,11 +20,12 @@ RESULT="R2:${R2_BUCKET}/${PREFIX}/artifacts/${STAGE}/${FINGERPRINT}"
 
 env ASSUME_ALWAYS_YES=yes pkg bootstrap -f
 tool_install_status=0
+set +e
 env ASSUME_ALWAYS_YES=yes pkg install -y \
   archivers/gtar archivers/zstd devel/git ftp/curl net/rclone \
-  lang/python311 ports-mgmt/poudriere-devel security/openssl textproc/jq textproc/xmlstarlet \
-  || tool_install_status=$?
-hash -r
+  lang/python311 ports-mgmt/poudriere-devel security/openssl textproc/jq textproc/xmlstarlet
+tool_install_status=$?
+set -e
 for tool in gtar zstd git curl rclone python3.11 poudriere openssl jq xml; do
   command -v "${tool}" >/dev/null || {
     echo "worker tool installation did not provide ${tool} (pkg status ${tool_install_status})" >&2
