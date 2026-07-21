@@ -41,7 +41,7 @@ func Smoke(ctx context.Context, options SmokeOptions) (SmokeResult, error) {
 	if !deploymentSHAPattern.MatchString(options.DeploymentSHA) {
 		return SmokeResult{}, errors.New("credential broker smoke deployment SHA must be a 40-character lowercase commit")
 	}
-	key := fmt.Sprintf("smoke/credential-broker/%s.json", options.DeploymentSHA)
+	key := fmt.Sprintf("smoke/broker/%s.json", options.DeploymentSHA)
 	payload, err := json.Marshal(smokeMarker{
 		SchemaVersion: SmokeSchema,
 		DeploymentSHA: options.DeploymentSHA,
