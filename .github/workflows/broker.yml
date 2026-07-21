@@ -5,13 +5,18 @@ on:
     branches: [main]
     paths: ["broker/**", ".github/workflows/broker.yml"]
   workflow_dispatch:
+    inputs:
+      restrict_secrets:
+        description: One-time restriction of active organization secrets to this repository
+        type: boolean
+        default: false
 
 permissions: {contents: read}
 concurrency: {group: credential-broker, cancel-in-progress: false}
 
 jobs:
   deploy:
-    if: github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main' && inputs.restrict_secrets != true
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     environment: broker
@@ -75,3 +80,26 @@ jobs:
         env: {FSBUILD_STORE_PREFIX: v1, R2_BUCKET: "${{ vars.R2_BUILD_BUCKET }}"}
         run: |
           "${RUNNER_TEMP}/fsbuild" credentials smoke --deployment-sha "${GITHUB_SHA}"
+
+  restrict-secrets:
+    if: github.ref == 'refs/heads/main' && inputs.restrict_secrets == true
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    environment: broker
+    env:
+      GH_TOKEN: ${{ secrets.RESTRICTOR_PAT }}
+    steps:
+      - name: Restrict active organization secrets to this repository
+        env:
+          BROKER_TOKEN: ${{ secrets.CLOUDFLARE_BROKER_API_TOKEN }}
+          SIGNING_KEY: ${{ secrets.FREESENSE_PKG_SIGNING_KEY }}
+          R2_ACCESS_KEY: ${{ secrets.R2_BROKER_PARENT_ACCESS_KEY_ID }}
+          R2_SECRET_KEY: ${{ secrets.R2_BROKER_PARENT_SECRET_ACCESS_KEY }}
+        run: |
+          set -euo pipefail
+          [[ -n "${GH_TOKEN}" && -n "${BROKER_TOKEN}" && -n "${SIGNING_KEY}" ]]
+          [[ -n "${R2_ACCESS_KEY}" && -n "${R2_SECRET_KEY}" ]]
+          printf '%s' "${BROKER_TOKEN}" | gh secret set CLOUDFLARE_BROKER_API_TOKEN --org FreeSense-org --repos freesense-os-base
+          printf '%s' "${SIGNING_KEY}" | gh secret set FREESENSE_PKG_SIGNING_KEY --org FreeSense-org --repos freesense-os-base
+          printf '%s' "${R2_ACCESS_KEY}" | gh secret set R2_BROKER_PARENT_ACCESS_KEY_ID --org FreeSense-org --repos freesense-os-base
+          printf '%s' "${R2_SECRET_KEY}" | gh secret set R2_BROKER_PARENT_SECRET_ACCESS_KEY --org FreeSense-org --repos freesense-os-base
