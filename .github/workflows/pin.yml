@@ -42,7 +42,7 @@ jobs:
       - name: Install image tools
         run: |
           sudo apt-get update -q
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -yq qemu-system-x86 qemu-utils cloud-image-utils ovmf xz-utils jq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -yq qemu-system-x86 qemu-utils cloud-image-utils ovmf xz-utils jq gh
           go build -trimpath -o "${RUNNER_TEMP}/fsbuild" ./cmd/fsbuild
 
       - name: Acquire short-lived pin credentials
