@@ -96,7 +96,6 @@ def main() -> int:
     packages_sha = remote_sha("FreeSense-org/freesense-packages")
     patch_files = [ROOT / "apply.sh", ROOT / "manifest.env", *sorted((ROOT / "patches").glob("*.patch"))]
     platform_recipe = recipe_digest([
-        ROOT / "scripts/runner/run-vm.sh",
         ROOT / "scripts/runner/worker-common.sh",
         ROOT / "scripts/runner/stages/system.sh",
         *patch_files,
@@ -107,8 +106,10 @@ def main() -> int:
         "freebsd_source": lock["freebsd_source"]["commit"],
         "freebsd_ports": lock["freebsd_ports"]["commit"],
         "jail_seed": lock["jail_seed"]["sha256"],
+        "worker_image": lock["worker_image"]["sha256"],
         "source": source_sha,
         "system_ports": system_sha,
+        "package_train": policy["package_train"],
         "recipe": platform_recipe,
     })
     system = fingerprint({
@@ -117,6 +118,7 @@ def main() -> int:
         "platform": platform,
         "source": source_sha,
         "system_ports": system_sha,
+        "package_train": policy["package_train"],
         "recipe": recipe_digest([
             ROOT / "scripts/render-worker.py",
             ROOT / "scripts/runner/worker-common.sh",
@@ -146,6 +148,7 @@ def main() -> int:
         "kind": "iso",
         "system": iso_system,
         "source": source_sha,
+        "package_train": policy["package_train"],
         "os_recipe": platform_recipe,
         "recipe": recipe_digest([ROOT / "scripts/render-worker.py", ROOT / "scripts/runner/worker-common.sh", ROOT / "scripts/runner/stages/iso.sh"]),
     })

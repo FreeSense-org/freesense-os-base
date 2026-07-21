@@ -77,6 +77,17 @@ jobs:
           args=(--stage "${{ inputs.stage }}" --id "${{ inputs.fingerprint }}" --github-output "${GITHUB_OUTPUT}")
           if [[ "${{ inputs.stage }}" == packages ]]; then args+=(--package-train "${{ inputs.package_train }}"); fi
           "${RUNNER_TEMP}/fsbuild" result check "${args[@]}"
+      - name: Verify pinned jail input
+        if: steps.reuse.outputs.complete != 'true' && inputs.stage != 'iso'
+        env:
+          JAIL_OBJECT: ${{ inputs.jail_object }}
+        run: |
+          jail_sha=${JAIL_OBJECT##*/}
+          [[ "${JAIL_OBJECT}" == "inputs/sha256/${jail_sha}" ]]
+          [[ "${jail_sha}" =~ ^[0-9a-f]{64}$ ]]
+          jail_url=$("${RUNNER_TEMP}/fsbuild" blob url --sha256 "${jail_sha}" --validity 10m)
+          curl --fail --silent --show-error --range 0-0 --output /dev/null "${jail_url}"
+          unset jail_url
       - name: Render checked FreeBSD worker
         if: steps.reuse.outputs.complete != 'true'
         env:
@@ -95,9 +106,10 @@ jobs:
           PACKAGE_TRAIN: ${{ inputs.package_train }}
           GENERATION: ${{ inputs.generation }}
           PUBLIC_BASE_URL: ${{ inputs.public_base_url }}
-        run: >-
-          python3 scripts/render-worker.py --common scripts/runner/worker-common.sh
-          --stages scripts/runner/stages --output "${RUNNER_TEMP}/worker.sh"
+        run: |
+          python3 scripts/render-worker.py --common scripts/runner/worker-common.sh \
+            --stages scripts/runner/stages --output "${RUNNER_TEMP}/worker.sh"
+          sh -n "${RUNNER_TEMP}/worker.sh"
       - name: Build in a fresh 16-vCPU, 32-GiB FreeBSD VM
         if: steps.reuse.outputs.complete != 'true'
         env:
@@ -105,3 +117,8 @@ jobs:
         run: >-
           scripts/runner/run-vm.sh --image-sha256 "${{ inputs.image_sha256 }}"
           --script "${RUNNER_TEMP}/worker.sh" --timeout 19800
+      - name: Clean sensitive runner files
+        if: always()
+        run: >-
+          rm -f "${RUNNER_TEMP}/repo.key" "${RUNNER_TEMP}/repo.pub"
+          "${RUNNER_TEMP}/worker.sh"

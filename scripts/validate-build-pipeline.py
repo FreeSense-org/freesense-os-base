@@ -56,7 +56,8 @@ reusable = read(".github/workflows/runner-build.yml")
 for required in (
     "runs-on: [self-hosted, build-runner]", "-smp 16", "-m 32768",
     'qemu-img resize -q "$overlay" 160G', "/dev/kvm", "nuageinit",
-    "next_report=$((now + 180))", "cleanup_orphans", "trap cleanup EXIT INT TERM",
+    "next_report=$((now + 180))", "cleanup_orphans", "trap cleanup EXIT",
+    "trap 'exit 130' INT", "show_diagnostics", "qemu_owns_overlay",
 ):
     if required not in runner + reusable:
         raise SystemExit(f"build-runner KVM contract is missing {required!r}")
@@ -80,23 +81,33 @@ if any((ROOT / f"scripts/runner/stages/{old}.sh").exists() for old in ("base", "
     raise SystemExit("a removed intermediate stage still exists")
 if common.rfind('"${RESULT}/complete.json"') < common.rfind("--immutable"):
     raise SystemExit("completion marker is not the last immutable repository write")
+if 'rclone cat "${RESULT}/complete.json"' in common:
+    raise SystemExit("guest duplicates the host's authoritative result check")
+if "name: Reuse completed immutable result" not in reusable:
+    raise SystemExit("host immutable-result reuse check is missing")
 if "FREESENSE_DIST_WORLD_ARCHIVE" not in common:
     raise SystemExit("system world is not seeded from pinned base.txz")
-distfiles_dir = "mkdir -p /usr/ports/distfiles"
-source_archive = "tar czf /usr/ports/distfiles/freesense-src.tar.gz"
+source_archive = "create_source_archive"
 if "configure_poudriere()" not in common or "NOLINUX=yes" not in common:
     raise SystemExit("runner must explicitly configure Poudriere without Linux compatibility modules")
 if "export DO_NOT_SIGN_PKG_REPO=1" not in common:
     raise SystemExit("runner must bypass the legacy bootstrap signer before applying its own repository signature")
-if "tool_install_status" not in common or "EPKG_REQUIRED" not in common:
-    raise SystemExit("runner must verify tools before accepting pkg's completed-transaction status")
+for required in (
+    "tool_install_status", "FreeSense phase failed:", "${destination}.part",
+    "--error-on-no-transfer", "immutable input checksum mismatch",
+):
+    if required not in common:
+        raise SystemExit(f"worker failure contract is missing {required!r}")
 for name, stage in (("system", system_stage), ("packages", packages_stage)):
-    if distfiles_dir not in stage or stage.find(distfiles_dir) > stage.find(source_archive):
-        raise SystemExit(f"{name} source archive is written before its distfiles directory exists")
+    if source_archive not in stage:
+        raise SystemExit(f"{name} does not create the pinned source archive")
     nolinux_config = "configure_poudriere"
     nolinux_bulk = "env NOLINUX=yes ./build.sh --update-pkg-repo"
     if nolinux_config not in stage or nolinux_bulk not in stage:
         raise SystemExit(f"{name} bulk build may load unused Linux compatibility modules")
+for required in ("--sort=name", '--mtime="@${source_time}"', "--owner=0", "gzip -n"):
+    if required not in common:
+        raise SystemExit(f"source archive reproducibility contract is missing {required!r}")
 
 lock = json.loads(read("config/freebsd-16.json"))
 if lock.get("schema_version") != "freesense.freebsd-pin/v2" or not lock.get("ready"):
