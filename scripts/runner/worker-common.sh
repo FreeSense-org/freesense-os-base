@@ -19,10 +19,25 @@ RESULT="R2:${R2_BUCKET}/${PREFIX}/artifacts/${STAGE}/${FINGERPRINT}"
   && RESULT="R2:${R2_BUCKET}/${PREFIX}/artifacts/packages/${PACKAGE_TRAIN}/${FINGERPRINT}"
 
 env ASSUME_ALWAYS_YES=yes pkg bootstrap -f
+tool_install_status=0
 env ASSUME_ALWAYS_YES=yes pkg install -y \
   archivers/gtar archivers/zstd devel/git ftp/curl net/rclone \
-  lang/python311 ports-mgmt/poudriere-devel security/openssl textproc/jq textproc/xmlstarlet
+  lang/python311 ports-mgmt/poudriere-devel security/openssl textproc/jq textproc/xmlstarlet \
+  || tool_install_status=$?
 hash -r
+for tool in gtar zstd git curl rclone python3.11 poudriere openssl jq xml; do
+  command -v "${tool}" >/dev/null || {
+    echo "worker tool installation did not provide ${tool} (pkg status ${tool_install_status})" >&2
+    exit 1
+  }
+done
+case "${tool_install_status}" in
+  0) ;;
+  # pkg 2.7 may return EPKG_REQUIRED after completing the transaction. Only
+  # accept that status when the complete executable set was verified above.
+  4) echo "pkg returned EPKG_REQUIRED after installing all worker tools; continuing" ;;
+  *) echo "worker tool installation failed with pkg status ${tool_install_status}" >&2; exit "${tool_install_status}" ;;
+esac
 
 RCLONE_CONFIG=/root/.config/rclone/rclone.conf
 export RCLONE_CONFIG
