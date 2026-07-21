@@ -53,7 +53,7 @@ const ROLE_DEFINITIONS = Object.freeze({
   "artifact-writer": {
     environments: ["build"],
     workflow: "artifact",
-    actions: ["GetObject", "HeadObject", "PutObject"],
+    actions: ["GetObject", "HeadObject", "ListObjectsV2", "PutObject"],
     ttlSeconds: 345 * 60,
     paths() {
       return [

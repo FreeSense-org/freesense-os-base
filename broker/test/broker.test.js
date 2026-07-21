@@ -241,6 +241,10 @@ describe("least-privilege role policies", () => {
       assert.deepEqual(session.paths.objectPaths, objects);
       assert.equal(session.exp - session.iat, ttl);
       assert.ok(session.actions.includes("PutObject"));
+      assert.equal(
+        session.actions.includes("ListObjectsV2"),
+        role === "artifact-writer",
+      );
       assert.ok(!session.actions.includes("DeleteObject"));
       assert.ok(!session.actions.some((action) => /Multipart/u.test(action)));
     });

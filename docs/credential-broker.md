@@ -33,6 +33,8 @@ The `broker` environment additionally holds:
 - `R2_BROKER_PARENT_ACCESS_KEY_ID`
 - `R2_BROKER_PARENT_SECRET_ACCESS_KEY`
 
-The parent R2 credential must cover only bucket `freesense-pkg`. Broker sessions
-never grant delete or multipart actions. Published files remain under prefix
-`v1`; failed partial uploads are safe because `complete.json` is always last.
+The parent R2 credential must cover only bucket `freesense-pkg`. Build-artifact
+sessions may list objects so a stage can copy an immutable dependency repository;
+other sessions cannot list. No session grants delete or multipart actions.
+Published files remain under prefix `v1`; failed partial uploads are safe because
+`complete.json` is always last.
