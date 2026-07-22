@@ -241,7 +241,7 @@ jobs:
             --generation "${{ needs.iso-plan.outputs.generation }}" \
             --source "${{ needs.plan.outputs.source_sha }}" --ports "${{ needs.plan.outputs.ports_sha }}" \
             --os-definition "${GITHUB_SHA}" --freebsd "${{ needs.plan.outputs.freebsd_sha }}" \
-            --output "${RUNNER_TEMP}/releases.json"
-          aws s3 cp "${RUNNER_TEMP}/releases.json" "s3://${R2_BUCKET}/v1/releases.json" \
+            --output "${RUNNER_TEMP}/stable.json"
+          aws s3 cp "${RUNNER_TEMP}/stable.json" "s3://${R2_BUCKET}/v1/releases/stable.json" \
             --endpoint-url "${R2_ENDPOINT}" --no-progress --content-type application/json \
             --cache-control 'public, max-age=60, must-revalidate'
