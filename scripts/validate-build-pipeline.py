@@ -87,6 +87,10 @@ require({path.stem for path in stage_dir.glob("*.sh")} == {"system", "packages",
 system_stage = read("scripts/runner/stages/system.sh")
 packages_stage = read("scripts/runner/stages/packages.sh")
 iso_stage = read("scripts/runner/stages/iso.sh")
+for value in ('TMPFS_BLACKLIST="rust telegraf"',
+              "TMPFS_BLACKLIST_TMPDIR=/usr/local/poudriere/data/cache/tmp"):
+    require(value in packages_stage,
+            f"optional heavy-package disk workdir contract is missing {value!r}")
 for value in ("verify_repository()", "packagesite.yaml.sig",
               "repository packages do not match the signed catalog"):
     require(value in common, f"signed repository verification is missing {value!r}")

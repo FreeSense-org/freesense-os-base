@@ -2,6 +2,10 @@ configure_source
 fetch_repository system "${SYSTEM_ID}" /root/system-repo
 cd /root/freesense-src
 configure_poudriere
+cat >>/usr/local/etc/poudriere.conf <<'EOF'
+TMPFS_BLACKLIST="rust telegraf"
+TMPFS_BLACKLIST_TMPDIR=/usr/local/poudriere/data/cache/tmp
+EOF
 create_jail
 export REPO_KIND=packages OVERLAY_DIR=/root/freesense-packages
 export FREESENSE_SYSTEM_OVERLAY_DIR=/root/freesense-system-ports
