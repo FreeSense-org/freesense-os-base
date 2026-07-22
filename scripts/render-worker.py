@@ -41,6 +41,12 @@ def main() -> int:
     for name in FIELDS:
         encoded = base64.b64encode(os.environ[name].encode()).decode("ascii")
         lines.append(f"{name}_B64='{encoded}'")
+    if stage == "iso":
+        installer_patch = ROOT / "patches/0005-installer.patch"
+        if not installer_patch.is_file():
+            raise SystemExit(f"missing ISO installer patch: {installer_patch}")
+        encoded = base64.b64encode(installer_patch.read_bytes()).decode("ascii")
+        lines.append(f"FREESENSE_INSTALLER_PATCH_B64='{encoded}'")
     lines.extend(path.read_text(encoding="utf-8") for path in parts)
     args.output.write_text("\n".join(lines), encoding="utf-8")
     args.output.chmod(0o700)

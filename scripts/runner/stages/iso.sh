@@ -19,6 +19,30 @@ transformed=/tmp/freesense-assemble-iso.sh
 test "$(grep -Ec '^[[:space:]]*install_assembly_channel$' "${assembler}")" = 1
 cat >"${overlay}" <<'EOF'
 
+	: "${FREESENSE_ASSEMBLY_INSTALLER_OVERLAY:?installer overlay is required}"
+	_installer_overlay="${FREESENSE_ASSEMBLY_INSTALLER_OVERLAY}"
+	mkdir -p "${INSTALLER_CHROOT_DIR}/usr/libexec/bsdinstall"
+	for _installer_script in auto config zfsboot copy_configxml_from_usb fix_fstab; do
+		test -s "${_installer_overlay}/scripts/${_installer_script}" || {
+			echo ">>> ERROR: installer overlay is missing ${_installer_script}" >&2
+			return 1
+		}
+		install -o root -g wheel -m 0555 \
+			"${_installer_overlay}/scripts/${_installer_script}" \
+			"${INSTALLER_CHROOT_DIR}/usr/libexec/bsdinstall/${_installer_script}"
+	done
+	test -s "${_installer_overlay}/startbsdinstall" || {
+		echo ">>> ERROR: installer overlay is missing startbsdinstall" >&2
+		return 1
+	}
+	install -o root -g wheel -m 0555 "${_installer_overlay}/startbsdinstall" \
+		"${INSTALLER_CHROOT_DIR}/usr/sbin/startbsdinstall"
+	grep -Fq 'FreeSense - Copyright and License Notice' \
+		"${INSTALLER_CHROOT_DIR}/usr/sbin/startbsdinstall" || {
+		echo ">>> ERROR: startbsdinstall was not FreeSense-branded" >&2
+		return 1
+	}
+
 	# Keep the graphical installer while also exposing its deterministic boot
 	# readiness marker to headless release smoke tests.
 	cat > "${INSTALLER_CHROOT_DIR}/boot.config" <<'CONSOLE_EOF'
@@ -82,6 +106,41 @@ test -s /root/freebsd-tools/release/amd64/mkisoimages.sh
 test -s /root/freebsd-tools/release/scripts/make-manifest.sh
 test -s /root/freebsd-tools/release/scripts/tools.subr
 test -s /root/freebsd-tools/tools/boot/install-boot.sh
+
+# Materialize only the installer shell sources touched by the canonical
+# FreeSense patch.  The base files come from the pinned FreeBSD commit and the
+# patch bytes are embedded in (and fingerprinted with) this ISO recipe.
+phase iso-installer-overlay
+installer_source=/root/freebsd-installer
+installer_patch=/tmp/freesense-installer.patch
+mkdir -p "${installer_source}/usr.sbin/bsdinstall/scripts"
+for installer_path in \
+  usr.sbin/bsdinstall/scripts/Makefile \
+  usr.sbin/bsdinstall/scripts/auto \
+  usr.sbin/bsdinstall/scripts/config \
+  usr.sbin/bsdinstall/scripts/zfsboot \
+  usr.sbin/bsdinstall/startbsdinstall; do
+  fetch -qo "${installer_source}/${installer_path}" \
+    "https://raw.githubusercontent.com/freebsd/freebsd-src/${FREEBSD_SHA}/${installer_path}"
+  test -s "${installer_source}/${installer_path}"
+done
+printf '%s' "${FREESENSE_INSTALLER_PATCH_B64}" | \
+  openssl base64 -d -A >"${installer_patch}"
+test -s "${installer_patch}"
+(cd "${installer_source}" && \
+  git apply --check "${installer_patch}" && \
+  git apply "${installer_patch}")
+sh tools/ci/fs-rebrand-installer.sh \
+  "${installer_source}/usr.sbin/bsdinstall/startbsdinstall"
+for installer_path in \
+  scripts/auto scripts/config scripts/zfsboot \
+  scripts/copy_configxml_from_usb scripts/fix_fstab startbsdinstall; do
+  test -s "${installer_source}/usr.sbin/bsdinstall/${installer_path}"
+done
+grep -Fq 'FreeSense - Copyright and License Notice' \
+  "${installer_source}/usr.sbin/bsdinstall/startbsdinstall"
+rm -f "${installer_patch}"
+export FREESENSE_ASSEMBLY_INSTALLER_OVERLAY="${installer_source}/usr.sbin/bsdinstall"
 export FREESENSE_ASSEMBLY_SYSTEM_REPO=/root/system-repo
 export FREESENSE_ASSEMBLY_FREEBSD_SRC=/root/freebsd-tools
 

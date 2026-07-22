@@ -109,6 +109,11 @@ require(iso_payload >= 0 and iso_complete > iso_payload,
 require("repos.manifest.json" not in iso_stage and
         "CHANNEL_PAYLOAD_B64" in iso_stage and "CHANNEL_SIGNATURE_B64" in iso_stage,
         "ISO does not consume the exact selected signed channel payload")
+for value in ("FREESENSE_INSTALLER_PATCH_B64", "git apply --check",
+              "FREESENSE_ASSEMBLY_INSTALLER_OVERLAY", "startbsdinstall",
+              "copy_configxml_from_usb", "fix_fstab"):
+    require(value in iso_stage or value in read("scripts/render-worker.py"),
+            f"ISO installer payload contract is missing {value!r}")
 require("name: Reuse completed immutable result" in reusable and
         "name: Verify required System result" in reusable,
         "host-side immutable reuse or prerequisite check is missing")
