@@ -31,6 +31,7 @@ jobs:
       - name: Parse scripts and checked data
         run: |
           bash -n scripts/runner/run-vm.sh
+          bash -n scripts/runner/smoke-iso.sh
           bash -n scripts/pin-worker-tools.sh
           bash -n scripts/verify-release.sh
           sh -n scripts/runner/install-worker-tools.sh scripts/runner/probe.sh apply.sh

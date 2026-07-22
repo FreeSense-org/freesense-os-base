@@ -125,6 +125,7 @@ def main() -> int:
     channel_payload_sha256 = closure.get("payload_sha256", "")
     channel_payload_base64 = closure.get("payload_base64", "")
     channel_signature_base64 = closure.get("signature_base64", "")
+    channel_system_verified = closure.get("verified", "false")
     system_platform_id = closure.get("artifact_platform", "")
     system_source_sha = closure.get("artifact_source_sha", "")
     system_system_sha = closure.get("artifact_system_sha", "")
@@ -136,6 +137,8 @@ def main() -> int:
     system_jail_object = closure.get("artifact_jail_object", "")
     system_signing_public_key_sha256 = closure.get("artifact_signing_public_key_sha256", "")
     current_packages_fingerprint = closure.get("packages_fingerprint", "")
+    current_packages_generation = closure.get("packages_generation", 0)
+    current_packages_verified = closure.get("packages_verified", "false")
 
     if args.kind == "system" and not SHA.fullmatch(args.os_base_sha):
         raise SystemExit("--os-base-sha must be a full Git commit")
@@ -240,6 +243,14 @@ def main() -> int:
         else:
             if channel_name not in {"devel", "stable"} or not isinstance(channel_generation, int) or channel_generation <= 0:
                 raise SystemExit("selected ISO channel identity is invalid")
+            if (
+                channel_system_verified != "true"
+                or not SHA256.fullmatch(current_packages_fingerprint)
+                or not isinstance(current_packages_generation, int)
+                or current_packages_generation <= 0
+                or current_packages_verified != "true"
+            ):
+                raise SystemExit("selected ISO channel is not a verified System/Packages pair")
             try:
                 payload = base64.b64decode(channel_payload_base64, validate=True)
                 signature = base64.b64decode(channel_signature_base64, validate=True)

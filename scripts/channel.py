@@ -79,6 +79,9 @@ def main() -> int:
     generation = component.get("generation")
     if not isinstance(generation, int) or generation <= 0:
         raise SystemExit("selected channel component has an invalid generation")
+    verified = component.get("verified")
+    if not isinstance(verified, bool):
+        raise SystemExit("selected channel component has an invalid verification state")
     url = component.get("url", "")
     expected_url = f"https://pkg.freesense.org/v1/artifacts/system/{fingerprint}/amd64"
     if args.component == "packages":
@@ -90,7 +93,7 @@ def main() -> int:
         "url": url,
         "generation": generation,
         "published_at": component["published_at"],
-        "verified": str(bool(component.get("verified"))).lower(),
+        "verified": str(verified).lower(),
         "package_train": package_train,
         "abi": channel["abi"],
         "altabi": channel["altabi"],
@@ -109,9 +112,13 @@ def main() -> int:
         selected_packages = channel.get("packages")
         if selected_packages is None:
             values["packages_fingerprint"] = ""
+            values["packages_generation"] = 0
+            values["packages_verified"] = "false"
         elif isinstance(selected_packages, dict):
             packages_fingerprint = selected_packages.get("fingerprint", "")
             packages_system = selected_packages.get("system_fingerprint", "")
+            packages_generation = selected_packages.get("generation")
+            packages_verified = selected_packages.get("verified")
             expected_packages_url = (
                 f"https://pkg.freesense.org/v1/artifacts/packages/"
                 f"{package_train}/{packages_fingerprint}/amd64"
@@ -119,10 +126,15 @@ def main() -> int:
             if (
                 not SHA256.fullmatch(packages_fingerprint)
                 or packages_system != fingerprint
+                or not isinstance(packages_generation, int)
+                or packages_generation <= 0
+                or not isinstance(packages_verified, bool)
                 or selected_packages.get("url") != expected_packages_url
             ):
                 raise SystemExit("selected channel packages conflict with its System")
             values["packages_fingerprint"] = packages_fingerprint
+            values["packages_generation"] = packages_generation
+            values["packages_verified"] = str(packages_verified).lower()
         else:
             raise SystemExit("selected channel packages are invalid")
 
