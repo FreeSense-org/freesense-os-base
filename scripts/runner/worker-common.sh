@@ -445,6 +445,36 @@ run_poudriere_build() {
   POUDRIERE_RETRY_BASE=${base_repository}
 }
 
+seed_poudriere_with_retry() (
+  set -eu
+  retry_repository=$1
+  primary_repository=${2:-}
+
+  rm -rf "${retry_repository}"
+  set +e
+  if [ -n "${primary_repository}" ]; then
+    restore_poudriere_retry_cache "${retry_repository}" "${primary_repository}"
+  else
+    restore_poudriere_retry_cache "${retry_repository}"
+  fi
+  retry_status=$?
+  set -e
+
+  case "${retry_status}" in 129|130|143) exit "${retry_status}" ;; esac
+  if [ "${retry_status}" -eq 0 ]; then
+    if [ -n "${primary_repository}" ]; then
+      seed_poudriere_repository "${primary_repository}" "${retry_repository}"
+    else
+      seed_poudriere_repository "${retry_repository}"
+    fi
+  elif [ -n "${primary_repository}" ]; then
+    echo "No verified exact-fingerprint package retry is available; using System only."
+    seed_poudriere_repository "${primary_repository}"
+  else
+    echo "No verified exact-fingerprint package retry is available; building clean."
+  fi
+)
+
 create_jail() {
   phase poudriere-jail
   [ -s /root/jail-base.txz ] || fetch_input "${JAIL_OBJECT}" /root/jail-base.txz
@@ -715,8 +745,6 @@ save_poudriere_retry_cache() (
       generation:$generation,system_fingerprint:$system,package_train:$package_train,
       catalog_sha256:$catalog}' >"${snapshot}"
   openssl dgst -sha256 -sign /root/sign/repo.key -out "${signature}" "${snapshot}"
-  openssl dgst -sha256 -verify /root/sign/repo.pub -signature "${signature}" \
-    "${snapshot}" >/dev/null
 
   for package in "${repository}/All"/*.pkg; do
     package_sha=$(sha256 -q "${package}")

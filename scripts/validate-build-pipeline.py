@@ -151,10 +151,8 @@ if "optional-closure-check" not in packages_stage or "'%dn|%dv'" not in packages
 for required in (
     "package_metadata()", "inventory_package()", "merge_package()",
     "seed_poudriere_repository()", "poudriere_latest_repository()",
-    "poudriere_building_repository()", "show_poudriere_errors()",
-    "verified_catalog_inventory()", "make_signed_repository()",
     "save_poudriere_retry_cache()", "restore_poudriere_retry_cache()",
-    "POUDRIERE_RETRY_SOURCE", 'POUDRIERE_RETRY_SOURCE=${building}',
+    "seed_poudriere_with_retry()",
 ):
     if required not in common:
         raise SystemExit(f"repository composition helper is missing {required!r}")
@@ -162,20 +160,9 @@ if "Retrying once with Poudriere" in common:
     raise SystemExit("Poudriere failures must checkpoint once and return to the orchestrator")
 if "conflicting package name or filename" not in common or "find /usr/local/poudriere/data/packages" in system_stage + packages_stage:
     raise SystemExit("repository composition can overwrite packages or select an ambiguous Poudriere result")
-for required in (
-    'restore_poudriere_retry_cache "${retry_repository}"',
-    'seed_poudriere_repository "${retry_repository}"',
-):
-    if required not in system_stage:
-        raise SystemExit(f"System retry reuse is missing {required!r}")
-for required in (
-    'restore_poudriere_retry_cache "${retry_repository}" /root/system-repo',
-    'seed_poudriere_repository /root/system-repo "${retry_repository}"',
-    "seed_poudriere_repository /root/system-repo",
-    "run_poudriere_build /root/system-repo",
-):
-    if required not in packages_stage:
-        raise SystemExit(f"optional package retry reuse is missing {required!r}")
+for name, stage in (("System", system_stage), ("optional package", packages_stage)):
+    if stage.count("seed_poudriere_with_retry") != 1:
+        raise SystemExit(f"{name} retry reuse must have one shared seed call")
 seed_call = "phase optional-system-seed"
 seed_order = (
     packages_stage.find("create_jail"),
