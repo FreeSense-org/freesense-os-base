@@ -2,15 +2,29 @@
 # immutable inputs; complete.json is committed last.
 
 LAST_PHASE=initialization
+POUDRIERE_RETRY_SOURCE=
+POUDRIERE_RETRY_BASE=
 phase() {
   LAST_PHASE=$1
   printf 'FreeSense phase: %s\n' "${LAST_PHASE}"
 }
 report_phase_failure() {
   status=$?
+  trap - EXIT
   if [ "${status}" -ne 0 ]; then
     printf 'FreeSense phase failed: %s status=%s\n' "${LAST_PHASE}" "${status}" >&2
+    if [ -n "${POUDRIERE_RETRY_SOURCE}" ]; then
+      set +e
+      save_poudriere_retry_cache "${POUDRIERE_RETRY_SOURCE}" \
+        "${POUDRIERE_RETRY_BASE}"
+      retry_status=$?
+      set -e
+      if [ "${retry_status}" -ne 0 ]; then
+        echo "Unable to save the verified retry cache; preserving the build failure." >&2
+      fi
+    fi
   fi
+  exit "${status}"
 }
 trap report_phase_failure EXIT
 
@@ -215,7 +229,7 @@ EOF
   done
 }
 
-package_metadata() {
+package_metadata() (
   package=$1
   metadata=$(pkg query -F "${package}" '%n|%v|%o|%q|%Q') || return 1
   [ "$(printf '%s\n' "${metadata}" | awk 'END { print NR }')" -eq 1 ] || {
@@ -227,30 +241,32 @@ package_metadata() {
     return 1
   }
   printf '%s\n' "${metadata}"
-}
+)
 
-inventory_package() {
+inventory_package() (
   package=$1 inventory=$2
   metadata=$(package_metadata "${package}") || return 1
   name=${metadata%%|*}
   filename=$(basename "${package}")
   sha=$(sha256 -q "${package}") || return 1
-  if awk -F '|' -v name="${name}" -v filename="${filename}" \
-    '$1 == name || $6 == filename { found=1 } END { exit !found }' "${inventory}"; then
+  existing=$(awk -F '|' -v name="${name}" -v filename="${filename}" \
+    '$1 == name || $6 == filename { print; exit }' "${inventory}") || return 1
+  if [ -n "${existing}" ]; then
     echo "sealed repository contains a duplicate package name or filename: ${name}" >&2
     return 1
   fi
-  printf '%s|%s|%s|%s\n' "${metadata}" "${filename}" "${sha}" "${package}" >>"${inventory}"
-}
+  printf '%s|%s|%s|%s\n' "${metadata}" "${filename}" "${sha}" "${package}" \
+    >>"${inventory}" || return 1
+)
 
-merge_package() {
+merge_package() (
   package=$1 destination=$2 inventory=$3 duplicate_policy=$4
   metadata=$(package_metadata "${package}") || return 1
   name=${metadata%%|*}
   filename=$(basename "${package}")
   sha=$(sha256 -q "${package}") || return 1
   existing=$(awk -F '|' -v name="${name}" -v filename="${filename}" \
-    '$1 == name || $6 == filename { print; exit }' "${inventory}")
+    '$1 == name || $6 == filename { print; exit }' "${inventory}") || return 1
   if [ -n "${existing}" ]; then
     existing_without_path=${existing%|*}
     if [ "${duplicate_policy}" = identical ] && \
@@ -274,24 +290,42 @@ merge_package() {
     echo "package copy checksum mismatch: ${filename}" >&2
     return 1
   }
-  mv "${temporary}" "${target}"
-  printf '%s|%s|%s|%s\n' "${metadata}" "${filename}" "${sha}" "${target}" >>"${inventory}"
-}
+  mv "${temporary}" "${target}" || { rm -f "${temporary}"; return 1; }
+  printf '%s|%s|%s|%s\n' "${metadata}" "${filename}" "${sha}" "${target}" \
+    >>"${inventory}" || return 1
+)
 
-seed_poudriere_repository() {
-  source_repository=$1
+seed_poudriere_repository() (
+  set -eu
+  primary_repository=$1
+  retry_repository=${2:-}
   repository=/usr/local/poudriere/data/packages/FreeSense_main_amd64-FreeSense_main
   jail_version_file=/usr/local/etc/poudriere.d/jails/FreeSense_main_amd64/version
   staging=${repository}.part.$$
   seed_inventory=/tmp/system-seed-inventory.$$
-  package_count=0
-  pkg_count=0
-  pkg_filename=
 
-  [ -d "${source_repository}/All" ] || {
-    echo "System repository has no package directory" >&2
+  cleanup_seed() {
+    seed_status=$?
+    trap - EXIT HUP INT TERM
+    rm -rf "${staging}" || true
+    rm -f "${seed_inventory}" || true
+    exit "${seed_status}"
+  }
+  trap cleanup_seed EXIT
+  trap 'exit 129' HUP
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+
+  [ -d "${primary_repository}/All" ] || {
+    echo "Poudriere seed has no primary package directory" >&2
     return 1
   }
+  if [ -n "${retry_repository}" ]; then
+    [ -d "${retry_repository}/All" ] || {
+      echo "Poudriere retry seed has no package directory" >&2
+      return 1
+    }
+  fi
   [ -s "${jail_version_file}" ] || {
     echo "Poudriere jail has no version marker" >&2
     return 1
@@ -304,19 +338,22 @@ seed_poudriere_repository() {
   rm -rf "${repository}" "${staging}"
   mkdir -p "${staging}/All" "${staging}/Latest"
   : >"${seed_inventory}"
-  for package in "${source_repository}"/All/*.pkg; do
+  for package in "${primary_repository}"/All/*.pkg; do
     [ -f "${package}" ] || continue
-    metadata=$(package_metadata "${package}") || return 1
-    name=${metadata%%|*}
     merge_package "${package}" "${staging}/All" "${seed_inventory}" reject || return 1
-    package_count=$((package_count + 1))
-    if [ "${name}" = pkg ]; then
-      pkg_count=$((pkg_count + 1))
-      pkg_filename=$(basename "${package}")
-    fi
   done
+  if [ -n "${retry_repository}" ]; then
+    for package in "${retry_repository}"/All/*.pkg; do
+      [ -f "${package}" ] || continue
+      merge_package "${package}" "${staging}/All" "${seed_inventory}" identical || return 1
+    done
+  fi
+  package_count=$(awk 'END { print NR + 0 }' "${seed_inventory}")
+  pkg_count=$(awk -F '|' '$1 == "pkg" { count++ } END { print count + 0 }' \
+    "${seed_inventory}")
+  pkg_filename=$(awk -F '|' '$1 == "pkg" { print $6; exit }' "${seed_inventory}")
   [ "${package_count}" -gt 0 ] || {
-    echo "System repository is empty" >&2
+    echo "Poudriere seed is empty" >&2
     return 1
   }
   [ "${pkg_count}" -eq 1 ] || {
@@ -338,20 +375,74 @@ seed_poudriere_repository() {
 
   mv "${staging}" "${repository}"
   [ -f "${repository}/Latest/pkg.pkg" ] || return 1
-  rm -f "${seed_inventory}"
-}
+)
 
 poudriere_latest_repository() {
   repository=/usr/local/poudriere/data/packages/FreeSense_main_amd64-FreeSense_main
   latest=${repository}/.latest
   [ -L "${latest}" ] || { echo "Poudriere repository has no atomic .latest link" >&2; return 1; }
   resolved=$(realpath "${latest}") || return 1
-  case "${resolved}" in
-    "${repository}"/.real_*) : ;;
-    *) echo "Poudriere .latest escapes its expected repository" >&2; return 1 ;;
+  [ "$(dirname "${resolved}")" = "${repository}" ] || {
+    echo "Poudriere .latest escapes its expected repository" >&2
+    return 1
+  }
+  case "$(basename "${resolved}")" in
+    .real_*) : ;;
+    *) echo "Poudriere .latest is not an atomic repository" >&2; return 1 ;;
   esac
-  [ -d "${resolved}/All" ] || { echo "Poudriere repository has no package directory" >&2; return 1; }
+  [ -d "${resolved}/All" ] && [ ! -L "${resolved}/All" ] || {
+    echo "Poudriere repository has no regular package directory" >&2
+    return 1
+  }
   printf '%s\n' "${resolved}"
+}
+
+poudriere_building_repository() {
+  repository=/usr/local/poudriere/data/packages/FreeSense_main_amd64-FreeSense_main
+  building=${repository}/.building
+  [ -d "${building}" ] && [ ! -L "${building}" ] || return 1
+  resolved=$(realpath "${building}") || return 1
+  [ "${resolved}" = "${building}" ] || {
+    echo "Poudriere .building escapes its expected repository" >&2
+    return 1
+  }
+  [ -d "${resolved}/All" ] && [ ! -L "${resolved}/All" ] || return 1
+  printf '%s\n' "${resolved}"
+}
+
+show_poudriere_errors() {
+  shown=0
+  for directory in /usr/local/poudriere/data/logs/bulk/*/latest/logs/errors; do
+    [ -d "${directory}" ] || continue
+    for logfile in "${directory}"/*.log; do
+      [ -f "${logfile}" ] || continue
+      printf '\n===== Poudriere error: %s =====\n' "${logfile##*/}" >&2
+      tail -n 80 "${logfile}" >&2 || true
+      shown=$((shown + 1))
+      [ "${shown}" -lt 5 ] || return 0
+    done
+  done
+}
+
+run_poudriere_build() {
+  base_repository=${1:-}
+  set +e
+  env NOLINUX=yes ./build.sh --update-pkg-repo
+  build_status=$?
+  set -e
+  if [ "${build_status}" -ne 0 ]; then
+    show_poudriere_errors
+    if building=$(poudriere_building_repository); then
+      POUDRIERE_RETRY_SOURCE=${building}
+      POUDRIERE_RETRY_BASE=${base_repository}
+    elif latest=$(poudriere_latest_repository); then
+      POUDRIERE_RETRY_SOURCE=${latest}
+      POUDRIERE_RETRY_BASE=${base_repository}
+    fi
+    return "${build_status}"
+  fi
+  POUDRIERE_RETRY_SOURCE=$(poudriere_latest_repository) || return 1
+  POUDRIERE_RETRY_BASE=${base_repository}
 }
 
 create_jail() {
@@ -392,13 +483,21 @@ fetch_input() {
   phase input-ready
 }
 
-verify_repository() (
+verified_catalog_inventory() (
   set -eu
   set -o pipefail
-  repository=$1
-  archive=${repository}/packagesite.pkg
+  archive=$1
+  output=$2
   work=$(mktemp -d /tmp/freesense-repository.XXXXXX)
-  trap 'rm -rf "${work}"' EXIT
+  temporary=${output}.part.$$
+  cleanup_catalog() {
+    catalog_status=$?
+    trap - EXIT HUP INT TERM
+    rm -rf "${work}" || true
+    rm -f "${temporary}" || true
+    exit "${catalog_status}"
+  }
+  trap cleanup_catalog EXIT
   trap 'exit 129' HUP
   trap 'exit 130' INT
   trap 'exit 143' TERM
@@ -424,25 +523,53 @@ verify_repository() (
 
   jq -Rr '
     select(length > 0) | fromjson |
-    if ((.repopath | type) == "string" and
-        (.repopath | test("^All/[^/]+[.]pkg$")) and
-        ((.repopath | test("[\\t\\r\\n]")) | not) and
+    if ((.name | type) == "string" and
+        (.name | test("^[A-Za-z0-9][A-Za-z0-9+_.-]*$")) and
+        (.repopath | type) == "string" and
+        (.repopath | test("^All/[A-Za-z0-9][A-Za-z0-9+_.-]*[.]pkg$")) and
         (.sum | type) == "string" and
         (.sum | test("^[0-9a-f]{64}$")))
-    then [.repopath, .sum] | @tsv
+    then [.name, .repopath, .sum] | @tsv
     else error("invalid signed package catalog record")
     end
-  ' "${work}/packagesite.yaml" | LC_ALL=C sort >"${work}/expected"
-  [ -s "${work}/expected" ] || {
+  ' "${work}/packagesite.yaml" | LC_ALL=C sort >"${temporary}"
+  [ -s "${temporary}" ] || {
     echo "signed package catalog is empty" >&2
     return 1
   }
+  tab=$(printf '\t')
+  awk -F "${tab}" '
+    NF != 3 || seen_name[$1]++ || seen_path[$2]++ { invalid=1 }
+    END { exit invalid }
+  ' "${temporary}" || {
+    echo "signed package catalog has duplicate or malformed records" >&2
+    return 1
+  }
+  mv -f "${temporary}" "${output}"
+)
+
+verify_repository() (
+  set -eu
+  repository=$1
+  work=$(mktemp -d /tmp/freesense-repository.XXXXXX)
+  trap 'rm -rf "${work}"' EXIT
+  trap 'exit 129' HUP
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+
+  verified_catalog_inventory "${repository}/packagesite.pkg" "${work}/expected"
 
   : >"${work}/actual"
   for package in "${repository}"/All/*.pkg; do
     [ -f "${package}" ] || continue
-    printf 'All/%s\t%s\n' "${package##*/}" "$(sha256 -q "${package}")" \
-      >>"${work}/actual"
+    [ ! -L "${package}" ] || {
+      echo "repository package is a symbolic link: ${package##*/}" >&2
+      return 1
+    }
+    metadata=$(package_metadata "${package}") || return 1
+    name=${metadata%%|*}
+    printf '%s\tAll/%s\t%s\n' "${name}" "${package##*/}" \
+      "$(sha256 -q "${package}")" >>"${work}/actual"
   done
   LC_ALL=C sort -o "${work}/actual" "${work}/actual"
   cmp -s "${work}/expected" "${work}/actual" || {
@@ -489,17 +616,229 @@ create_source_archive() {
   phase source-archive-ready
 }
 
+make_signed_repository() {
+  directory=$1
+  test -s /root/sign/repo.key
+  if [ ! -x /root/sign/sign.sh ]; then
+    fetch -qo /root/sign/sign.sh \
+      https://raw.githubusercontent.com/freebsd/pkg/2678d2b6a8ca3cf80cb4dbc8da557a2998e1b5c0/scripts/sign.sh
+    sed -i '' 's+ repo\.+ /root/sign/repo.+g' /root/sign/sign.sh
+    chmod 700 /root/sign/sign.sh
+  fi
+  pkg repo "${directory}" signing_command: /root/sign/sign.sh /root/sign/repo.key
+}
+
 sign_repository() {
   directory=$1
   phase repository-sign
-  test -s /root/sign/repo.key
-  fetch -qo /root/sign/sign.sh \
-    https://raw.githubusercontent.com/freebsd/pkg/2678d2b6a8ca3cf80cb4dbc8da557a2998e1b5c0/scripts/sign.sh
-  sed -i '' 's+ repo\.+ /root/sign/repo.+g' /root/sign/sign.sh
-  chmod 700 /root/sign/sign.sh
-  pkg repo "${directory}" signing_command: /root/sign/sign.sh /root/sign/repo.key
+  make_signed_repository "${directory}"
   phase repository-signed
 }
+
+retry_download() (
+  source=$1 destination=$2
+  temporary=${destination}.part.$$
+  rm -f "${temporary}"
+  if ! rclone copyto --error-on-no-transfer --retries 10 --low-level-retries 20 \
+    "${source}" "${temporary}"; then
+    rm -f "${temporary}"
+    return 1
+  fi
+  [ -s "${temporary}" ] || { rm -f "${temporary}"; return 1; }
+  mv -f "${temporary}" "${destination}"
+)
+
+save_poudriere_retry_cache() (
+  set -eu
+  source_repository=$1
+  base_repository=${2:-}
+  work=$(mktemp -d /tmp/freesense-retry-save.XXXXXX)
+  repository=${work}/repository
+  inventory=${work}/inventory
+  retry_root=${RESULT}/_retry/v1
+  cleanup_retry_save() {
+    retry_status=$?
+    trap - EXIT HUP INT TERM
+    rm -rf "${work}" || true
+    exit "${retry_status}"
+  }
+  trap cleanup_retry_save EXIT
+  trap 'exit 129' HUP
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+
+  poudriere_repository=/usr/local/poudriere/data/packages/FreeSense_main_amd64-FreeSense_main
+  resolved_source=$(realpath "${source_repository}") || return 1
+  [ "${resolved_source}" = "${source_repository}" ] || return 1
+  [ "$(dirname "${resolved_source}")" = "${poudriere_repository}" ] || return 1
+  case "$(basename "${resolved_source}")" in
+    .building|.real_*) : ;;
+    *) return 1 ;;
+  esac
+  [ -d "${resolved_source}/All" ] && [ ! -L "${resolved_source}" ] && \
+    [ ! -L "${resolved_source}/All" ] || return 1
+  mkdir -p "${repository}/All"
+  : >"${inventory}"
+  if [ -n "${base_repository}" ]; then
+    [ -d "${base_repository}/All" ] || return 1
+    for package in "${base_repository}"/All/*.pkg; do
+      [ -e "${package}" ] || continue
+      [ -f "${package}" ] && [ ! -L "${package}" ] || return 1
+      inventory_package "${package}" "${inventory}" || return 1
+    done
+  fi
+  for package in "${resolved_source}/All"/*.pkg; do
+    [ -e "${package}" ] || continue
+    [ -f "${package}" ] && [ ! -L "${package}" ] || {
+      echo "retry cache rejected a non-regular package" >&2
+      return 1
+    }
+    merge_package "${package}" "${repository}/All" "${inventory}" identical || return 1
+  done
+  package_count=$(find "${repository}/All" -type f -name '*.pkg' | awk 'END { print NR + 0 }')
+  [ "${package_count}" -gt 0 ] || return 1
+  if [ -z "${base_repository}" ]; then
+    pkg_count=$(awk -F '|' '$1 == "pkg" { count++ } END { print count + 0 }' \
+      "${inventory}")
+    [ "${pkg_count}" -eq 1 ] || return 1
+  fi
+
+  make_signed_repository "${repository}"
+  verify_repository "${repository}"
+  catalog_sha=$(sha256 -q "${repository}/packagesite.pkg")
+  snapshot=${work}/snapshot.json
+  signature=${work}/snapshot.sig
+  jq -cnS --arg stage "${STAGE}" --arg fingerprint "${FINGERPRINT}" \
+    --arg system "${SYSTEM_ID}" --arg package_train "${PACKAGE_TRAIN}" \
+    --arg catalog "${catalog_sha}" --argjson generation "${GENERATION}" \
+    '{schema_version:"freesense.retry/v1",stage:$stage,fingerprint:$fingerprint,
+      generation:$generation,system_fingerprint:$system,package_train:$package_train,
+      catalog_sha256:$catalog}' >"${snapshot}"
+  openssl dgst -sha256 -sign /root/sign/repo.key -out "${signature}" "${snapshot}"
+  openssl dgst -sha256 -verify /root/sign/repo.pub -signature "${signature}" \
+    "${snapshot}" >/dev/null
+
+  for package in "${repository}/All"/*.pkg; do
+    package_sha=$(sha256 -q "${package}")
+    upload_immutable "${package}" "${retry_root}/objects/sha256/${package_sha}"
+  done
+  snapshot_root=${retry_root}/snapshots/${catalog_sha}
+  upload_immutable "${repository}/packagesite.pkg" "${snapshot_root}/packagesite.pkg"
+  upload_immutable "${snapshot}" "${snapshot_root}/snapshot.json"
+  upload_immutable "${signature}" "${snapshot_root}/snapshot.sig"
+  echo "Saved ${package_count} verified package(s) for an exact-fingerprint retry."
+)
+
+restore_poudriere_retry_cache() (
+  set -eu
+  destination=$1
+  base_repository=${2:-}
+  retry_root=${RESULT}/_retry/v1
+  work=$(mktemp -d /tmp/freesense-retry-restore.XXXXXX)
+  staging=${destination}.part.$$
+  combined=${work}/combined
+  composition=${work}/composition
+  cleanup_retry_restore() {
+    retry_status=$?
+    trap - EXIT HUP INT TERM
+    rm -rf "${work}" "${staging}" || true
+    exit "${retry_status}"
+  }
+  trap cleanup_retry_restore EXIT
+  trap 'exit 129' HUP
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+
+  [ ! -e "${destination}" ] || return 1
+  if [ -n "${base_repository}" ]; then
+    [ -d "${base_repository}/All" ] || return 1
+  fi
+  mkdir -p "${staging}/All" "${work}/objects" "${work}/packages"
+  : >"${combined}"
+  : >"${composition}"
+  if ! rclone lsf --recursive --files-only "${retry_root}/snapshots" \
+    >"${work}/listed" 2>/dev/null; then
+    return 1
+  fi
+  awk -F / '$2 == "snapshot.sig" && NF == 2 && length($1) == 64 &&
+    $1 !~ /[^0-9a-f]/ { print }' "${work}/listed" | LC_ALL=C sort \
+    >"${work}/markers"
+  [ -s "${work}/markers" ] || return 1
+
+  tab=$(printf '\t')
+  while IFS= read -r marker; do
+    catalog_sha=${marker%/snapshot.sig}
+    snapshot_directory=${work}/snapshots/${catalog_sha}
+    mkdir -p "${snapshot_directory}"
+    for file in packagesite.pkg snapshot.json snapshot.sig; do
+      retry_download "${retry_root}/snapshots/${catalog_sha}/${file}" \
+        "${snapshot_directory}/${file}" || return 1
+    done
+    openssl dgst -sha256 -verify /root/sign/repo.pub \
+      -signature "${snapshot_directory}/snapshot.sig" \
+      "${snapshot_directory}/snapshot.json" >/dev/null || return 1
+    jq -e --arg stage "${STAGE}" --arg fingerprint "${FINGERPRINT}" \
+      --arg generation "${GENERATION}" --arg system "${SYSTEM_ID}" \
+      --arg package_train "${PACKAGE_TRAIN}" --arg catalog "${catalog_sha}" '
+      type == "object" and .schema_version == "freesense.retry/v1" and
+      .stage == $stage and .fingerprint == $fingerprint and
+      (.generation | tostring) == $generation and
+      .system_fingerprint == $system and .package_train == $package_train and
+      .catalog_sha256 == $catalog
+    ' "${snapshot_directory}/snapshot.json" >/dev/null || return 1
+    [ "$(sha256 -q "${snapshot_directory}/packagesite.pkg")" = "${catalog_sha}" ] || \
+      return 1
+    verified_catalog_inventory "${snapshot_directory}/packagesite.pkg" \
+      "${snapshot_directory}/inventory"
+
+    while IFS="${tab}" read -r name repopath package_sha; do
+      record=$(printf '%s\t%s\t%s' "${name}" "${repopath}" "${package_sha}")
+      existing=$(awk -F "${tab}" -v name="${name}" -v path="${repopath}" \
+        '$1 == name || $2 == path { print; exit }' "${combined}")
+      if [ -n "${existing}" ]; then
+        [ "${existing}" = "${record}" ] || {
+          echo "retry cache contains conflicting signed package snapshots" >&2
+          return 1
+        }
+        continue
+      fi
+      printf '%s\n' "${record}" >>"${combined}"
+    done <"${snapshot_directory}/inventory"
+  done <"${work}/markers"
+  [ -s "${combined}" ] || return 1
+
+  if [ -n "${base_repository}" ]; then
+    for package in "${base_repository}"/All/*.pkg; do
+      [ -e "${package}" ] || continue
+      [ -f "${package}" ] && [ ! -L "${package}" ] || return 1
+      inventory_package "${package}" "${composition}" || return 1
+    done
+  fi
+  LC_ALL=C sort -o "${combined}" "${combined}"
+  while IFS="${tab}" read -r name repopath package_sha; do
+    filename=${repopath#All/}
+    object=${work}/objects/${package_sha}
+    if [ ! -f "${object}" ]; then
+      retry_download "${retry_root}/objects/sha256/${package_sha}" "${object}" || return 1
+      [ "$(sha256 -q "${object}")" = "${package_sha}" ] || return 1
+    fi
+    package=${work}/packages/${filename}
+    cp "${object}" "${package}"
+    metadata=$(package_metadata "${package}") || return 1
+    [ "${metadata%%|*}" = "${name}" ] || return 1
+    merge_package "${package}" "${staging}/All" "${composition}" identical || return 1
+  done <"${combined}"
+
+  restored_count=$(find "${staging}/All" -type f -name '*.pkg' | awk 'END { print NR + 0 }')
+  [ "${restored_count}" -gt 0 ] || return 1
+  if [ -z "${base_repository}" ]; then
+    pkg_count=$(awk -F '|' '$1 == "pkg" { count++ } END { print count + 0 }' \
+      "${composition}")
+    [ "${pkg_count}" -eq 1 ] || return 1
+  fi
+  mv "${staging}" "${destination}"
+  echo "Restored ${restored_count} verified package(s) from failed exact-fingerprint runs."
+)
 
 publish_repository() {
   directory=$1

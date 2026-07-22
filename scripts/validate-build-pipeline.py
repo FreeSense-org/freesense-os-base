@@ -141,7 +141,7 @@ for name, stage in (("system", system_stage), ("packages", packages_stage)):
     if source_archive not in stage:
         raise SystemExit(f"{name} does not create the pinned source archive")
     nolinux_config = "configure_poudriere"
-    nolinux_bulk = "env NOLINUX=yes ./build.sh --update-pkg-repo"
+    nolinux_bulk = "run_poudriere_build"
     if nolinux_config not in stage or nolinux_bulk not in stage:
         raise SystemExit(f"{name} bulk build may load unused Linux compatibility modules")
     if stage.find("configure_poudriere") > stage.find("create_jail"):
@@ -151,19 +151,37 @@ if "optional-closure-check" not in packages_stage or "'%dn|%dv'" not in packages
 for required in (
     "package_metadata()", "inventory_package()", "merge_package()",
     "seed_poudriere_repository()", "poudriere_latest_repository()",
+    "poudriere_building_repository()", "show_poudriere_errors()",
+    "verified_catalog_inventory()", "make_signed_repository()",
+    "save_poudriere_retry_cache()", "restore_poudriere_retry_cache()",
+    "POUDRIERE_RETRY_SOURCE", 'POUDRIERE_RETRY_SOURCE=${building}',
 ):
     if required not in common:
         raise SystemExit(f"repository composition helper is missing {required!r}")
+if "Retrying once with Poudriere" in common:
+    raise SystemExit("Poudriere failures must checkpoint once and return to the orchestrator")
 if "conflicting package name or filename" not in common or "find /usr/local/poudriere/data/packages" in system_stage + packages_stage:
     raise SystemExit("repository composition can overwrite packages or select an ambiguous Poudriere result")
-seed_call = "seed_poudriere_repository /root/system-repo"
-if packages_stage.count(seed_call) != 1:
-    raise SystemExit("optional packages must seed exactly one System repository")
+for required in (
+    'restore_poudriere_retry_cache "${retry_repository}"',
+    'seed_poudriere_repository "${retry_repository}"',
+):
+    if required not in system_stage:
+        raise SystemExit(f"System retry reuse is missing {required!r}")
+for required in (
+    'restore_poudriere_retry_cache "${retry_repository}" /root/system-repo',
+    'seed_poudriere_repository /root/system-repo "${retry_repository}"',
+    "seed_poudriere_repository /root/system-repo",
+    "run_poudriere_build /root/system-repo",
+):
+    if required not in packages_stage:
+        raise SystemExit(f"optional package retry reuse is missing {required!r}")
+seed_call = "phase optional-system-seed"
 seed_order = (
     packages_stage.find("create_jail"),
     packages_stage.find("--update-poudriere-ports"),
     packages_stage.find(seed_call),
-    packages_stage.find("--update-pkg-repo"),
+    packages_stage.find("run_poudriere_build"),
 )
 if -1 in seed_order or tuple(sorted(seed_order)) != seed_order:
     raise SystemExit("System repository seed is outside the Poudriere build window")
@@ -182,8 +200,10 @@ for required in ("--sort=name", '--mtime="@${source_time}"', "--owner=0", "gzip 
 iso_stage = read("scripts/runner/stages/iso.sh")
 if common.count("--immutable --checksum --multi-thread-streams 0") != 1:
     raise SystemExit("immutable publication must use single-part checksum uploads")
-if common.count("upload_immutable \"") != 2 or iso_stage.count("upload_immutable ") != 2:
-    raise SystemExit("every artifact publication must use the immutable upload helper")
+if "rclone copyto --immutable" in iso_stage:
+    raise SystemExit("artifact stages must use the shared immutable upload helper")
+if "upload_immutable" not in common or "upload_immutable" not in iso_stage:
+    raise SystemExit("artifact publication bypasses the immutable upload helper")
 
 planner = read("scripts/plan.py")
 channel_reader = read("scripts/channel.py")

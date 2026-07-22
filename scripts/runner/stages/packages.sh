@@ -10,12 +10,24 @@ phase optional-ports-tree
 cp tools/conf/pfPorts/poudriere_packages tools/conf/pfPorts/poudriere_bulk
 
 phase optional-system-seed
-seed_poudriere_repository /root/system-repo
+retry_repository=/root/work/poudriere-retry
+rm -rf "${retry_repository}"
+set +e
+restore_poudriere_retry_cache "${retry_repository}" /root/system-repo
+retry_status=$?
+set -e
+case "${retry_status}" in 129|130|143) exit "${retry_status}" ;; esac
+if [ "${retry_status}" -eq 0 ]; then
+  seed_poudriere_repository /root/system-repo "${retry_repository}"
+else
+  echo "No verified exact-fingerprint package retry is available; using System only."
+  seed_poudriere_repository /root/system-repo
+fi
 phase optional-system-seed-ready
 
 create_source_archive
 phase optional-packages-build
-env NOLINUX=yes ./build.sh --update-pkg-repo
+run_poudriere_build /root/system-repo
 phase optional-packages-ready
 latest=$(poudriere_latest_repository)
 mkdir -p /root/work/packages/All

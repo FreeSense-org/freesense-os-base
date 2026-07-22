@@ -27,9 +27,24 @@ export REPO_KIND=system OVERLAY_DIR=/root/freesense-system-ports
 phase system-ports-tree
 ./build.sh --update-poudriere-ports
 cp tools/conf/pfPorts/poudriere_system tools/conf/pfPorts/poudriere_bulk
+retry_repository=/root/work/poudriere-retry
+rm -rf "${retry_repository}"
+phase system-retry-restore
+set +e
+restore_poudriere_retry_cache "${retry_repository}"
+retry_status=$?
+set -e
+case "${retry_status}" in 129|130|143) exit "${retry_status}" ;; esac
+if [ "${retry_status}" -eq 0 ]; then
+  phase system-retry-seed
+  seed_poudriere_repository "${retry_repository}"
+  phase system-retry-seed-ready
+else
+  echo "No verified exact-fingerprint package retry is available; building clean."
+fi
 create_source_archive
 phase system-packages-build
-env NOLINUX=yes ./build.sh --update-pkg-repo
+run_poudriere_build
 phase system-packages-ready
 latest=$(poudriere_latest_repository)
 for package in "${latest}"/All/*.pkg; do
