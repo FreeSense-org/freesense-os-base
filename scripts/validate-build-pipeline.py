@@ -129,6 +129,9 @@ for value in ("FREESENSE_INSTALLER_PATCH_B64", "git apply --check",
 require('INSTALLED_VERSION="${INSTALLED_VERSION%%-*}"' in iso_stage and
         "v1.0 repoc compatibility overlay" in iso_stage,
         "the sealed 1.0 System repoc compatibility overlay is missing")
+require('printf \'%s\\n\' "${PRODUCT_VERSION}" >src/etc/version' in common and
+        '"${_repoc_root}/etc/version"' in iso_stage,
+        "checked release versions are not stamped into source and ISO roots")
 require("name: Reuse completed immutable result" in reusable and
         "name: Verify required System result" in reusable,
         "host-side immutable reuse or prerequisite check is missing")
