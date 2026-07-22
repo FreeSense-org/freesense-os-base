@@ -7,11 +7,12 @@ import (
 )
 
 const (
-	resultID   = "1111111111111111111111111111111111111111111111111111111111111111"
-	systemID   = "2222222222222222222222222222222222222222222222222222222222222222"
-	platformID = "3333333333333333333333333333333333333333333333333333333333333333"
-	otherID    = "4444444444444444444444444444444444444444444444444444444444444444"
-	isoSHA256  = "5555555555555555555555555555555555555555555555555555555555555555"
+	resultID     = "1111111111111111111111111111111111111111111111111111111111111111"
+	systemID     = "2222222222222222222222222222222222222222222222222222222222222222"
+	platformID   = "3333333333333333333333333333333333333333333333333333333333333333"
+	otherID      = "4444444444444444444444444444444444444444444444444444444444444444"
+	isoSHA256    = "5555555555555555555555555555555555555555555555555555555555555555"
+	freeBSDPinID = "6666666666666666666666666666666666666666666666666666666666666666"
 )
 
 func TestValidateResultMarkerAcceptsCompleteClosures(t *testing.T) {
@@ -55,6 +56,7 @@ func TestValidateResultMarkerAcceptsCompleteClosures(t *testing.T) {
 				test.id,
 				test.systemID,
 				test.platformID,
+				freeBSDPinID,
 				1,
 				marshalMarker(t, test.marker),
 			)
@@ -92,7 +94,7 @@ func TestValidateResultMarkerRejectsBrokenClosures(t *testing.T) {
 			id:         systemID,
 			platformID: platformID,
 			marker:     repositoryMarker("system", systemID, systemID, otherID),
-			wantError:  "invalid closure",
+			wantError:  "invalid identity",
 		},
 		{
 			name:       "system identity mismatch",
@@ -103,13 +105,13 @@ func TestValidateResultMarkerRejectsBrokenClosures(t *testing.T) {
 			wantError:  "invalid identity",
 		},
 		{
-			name:       "packages system mismatch",
+			name:       "packages FreeBSD pin mismatch",
 			stage:      "packages",
 			id:         resultID,
 			systemID:   systemID,
 			platformID: platformID,
-			marker:     repositoryMarker("packages", resultID, otherID, platformID),
-			wantError:  "different system",
+			marker:     repositoryMarkerWithPin("packages", resultID, otherID, platformID, otherID),
+			wantError:  "different FreeBSD pin",
 		},
 		{
 			name:       "iso platform mismatch",
@@ -160,6 +162,7 @@ func TestValidateResultMarkerRejectsBrokenClosures(t *testing.T) {
 				test.id,
 				test.systemID,
 				test.platformID,
+				freeBSDPinID,
 				expectedGeneration,
 				marshalMarker(t, test.marker),
 			)
@@ -174,6 +177,10 @@ func TestValidateResultMarkerRejectsBrokenClosures(t *testing.T) {
 }
 
 func repositoryMarker(stage, fingerprint, boundSystem, platform string) resultMarker {
+	return repositoryMarkerWithPin(stage, fingerprint, boundSystem, platform, freeBSDPinID)
+}
+
+func repositoryMarkerWithPin(stage, fingerprint, boundSystem, platform, pinID string) resultMarker {
 	marker := resultMarker{
 		SchemaVersion: "freesense.artifact/v1",
 		Stage:         stage,
@@ -182,6 +189,7 @@ func repositoryMarker(stage, fingerprint, boundSystem, platform string) resultMa
 	}
 	marker.Inputs.Platform = platform
 	marker.Inputs.System = boundSystem
+	marker.Inputs.FreeBSDPinID = pinID
 	return marker
 }
 

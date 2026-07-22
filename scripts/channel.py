@@ -61,7 +61,8 @@ def main() -> int:
         )
 
     payload = json.loads(payload_bytes)
-    if not isinstance(payload, dict) or payload.get("schema_version") != "freesense.channels/v1":
+    payload_schema = payload.get("schema_version") if isinstance(payload, dict) else ""
+    if payload_schema not in {"freesense.channels/v1", "freesense.channels/v2"}:
         raise SystemExit("unsupported signed channel payload")
     try:
         channel = payload["channels"][args.channel]
@@ -102,12 +103,18 @@ def main() -> int:
         "payload_base64": envelope["payload"],
         "signature_base64": envelope["signature"],
     }
+    declared_pin_id = component.get("freebsd_pin_id", "")
+    if payload_schema == "freesense.channels/v2" and not SHA256.fullmatch(declared_pin_id):
+        raise SystemExit("selected channel component has an invalid FreeBSD pin identity")
     if args.component == "packages":
         system_fingerprint = component.get("system_fingerprint", "")
+        built_against_system = component.get("built_against_system", system_fingerprint)
         selected_system = channel.get("system", {}).get("fingerprint", "")
-        if not SHA256.fullmatch(system_fingerprint) or system_fingerprint != selected_system:
+        if (not SHA256.fullmatch(system_fingerprint) or system_fingerprint != selected_system
+                or not SHA256.fullmatch(built_against_system)):
             raise SystemExit("selected packages component lacks a valid System binding")
         values["system_fingerprint"] = system_fingerprint
+        values["built_against_system"] = built_against_system
     else:
         selected_packages = channel.get("packages")
         if selected_packages is None:
@@ -119,6 +126,7 @@ def main() -> int:
             packages_system = selected_packages.get("system_fingerprint", "")
             packages_generation = selected_packages.get("generation")
             packages_verified = selected_packages.get("verified")
+            packages_pin_id = selected_packages.get("freebsd_pin_id", declared_pin_id)
             expected_packages_url = (
                 f"https://pkg.freesense.org/v1/artifacts/packages/"
                 f"{package_train}/{packages_fingerprint}/amd64"
@@ -130,11 +138,13 @@ def main() -> int:
                 or packages_generation <= 0
                 or not isinstance(packages_verified, bool)
                 or selected_packages.get("url") != expected_packages_url
+                or (payload_schema == "freesense.channels/v2" and packages_pin_id != declared_pin_id)
             ):
                 raise SystemExit("selected channel packages conflict with its System")
             values["packages_fingerprint"] = packages_fingerprint
             values["packages_generation"] = packages_generation
             values["packages_verified"] = str(packages_verified).lower()
+            values["packages_freebsd_pin_id"] = packages_pin_id
         else:
             raise SystemExit("selected channel packages are invalid")
 
@@ -170,6 +180,17 @@ def main() -> int:
         "worker_tools": inputs.get("worker_tools", ""),
         "signing_public_key": inputs.get("signing_public_key", ""),
     }
+    artifact_pin_id = hashlib.sha256(json.dumps({
+        "abi": channel["abi"],
+        "altabi": channel["altabi"],
+        "freebsd_ports": inputs.get("ports", ""),
+        "freebsd_source": inputs.get("freebsd", ""),
+        "jail_seed": inputs.get("jail_object", "").removeprefix("inputs/sha256/"),
+        "kind": "freebsd-pin",
+        "schema": 1,
+        "worker_image": inputs.get("worker_image", ""),
+        "worker_tools": inputs.get("worker_tools", ""),
+    }, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
     expected_system = fingerprint
     if args.component == "packages":
         expected_system = values["system_fingerprint"]
@@ -179,6 +200,8 @@ def main() -> int:
         or any(not SHA.fullmatch(value) for value in required_sha.values())
         or any(not SHA256.fullmatch(value) for value in required_sha256.values())
         or not re.fullmatch(r"inputs/sha256/[0-9a-f]{64}", inputs.get("jail_object", ""))
+        or inputs.get("freebsd_pin_id", artifact_pin_id) != artifact_pin_id
+        or (declared_pin_id and declared_pin_id != artifact_pin_id)
     ):
         raise SystemExit(
             f"selected {args.component} completion marker conflicts with its channel entry"
@@ -196,7 +219,9 @@ def main() -> int:
             "artifact_worker_tools_sha256": required_sha256["worker_tools"],
             "artifact_jail_object": inputs["jail_object"],
             "artifact_signing_public_key_sha256": required_sha256["signing_public_key"],
+            "artifact_freebsd_pin_id": artifact_pin_id,
         })
+    values["freebsd_pin_id"] = artifact_pin_id
     if not args.json_output and not args.github_output:
         print(json.dumps(values, indent=2, sort_keys=True))
     if args.json_output:

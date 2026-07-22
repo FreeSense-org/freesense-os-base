@@ -1,6 +1,8 @@
 {
   "schema_version": "freesense.freebsd-pin/v2",
   "ready": true,
+  "valid_from": "2026-07-22T06:00:00Z",
+  "valid_until": "2026-08-05T06:00:00Z",
   "freebsd_source": {
     "commit": "7fc2c9f688efb12beddd58a01628157e32b632b0",
     "revision_prefix": "7fc2c9f688ef",

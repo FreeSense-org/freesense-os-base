@@ -85,7 +85,7 @@ func commandState(ctx context.Context, args []string) error {
 
 func commandChannel(ctx context.Context, args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: fsbuild channel <update|verify|promote> [options]")
+		return errors.New("usage: fsbuild channel <update|verify|promote|seal-stable> [options]")
 	}
 	flags := newFlagSet("channel " + args[0])
 	component := flags.String("component", "", "system or packages")
@@ -99,6 +99,7 @@ func commandChannel(ctx context.Context, args []string) error {
 		artifactURL := flags.String("url", "", "immutable public artifact URL")
 		generation := flags.Uint64("generation", 0, "reserved build generation")
 		systemFingerprint := flags.String("system-fingerprint", "", "exact system fingerprint required for packages")
+		freeBSDPinID := flags.String("freebsd-pin-id", "", "exact 14-day FreeBSD compatibility pin")
 		packageTrain := flags.String("package-train", "", "major.minor compatibility train")
 		abi := flags.String("abi", "FreeBSD:16:amd64", "pkg ABI")
 		altABI := flags.String("altabi", "freebsd:16:x86:64", "pkg alternate ABI")
@@ -113,7 +114,8 @@ func commandChannel(ctx context.Context, args []string) error {
 		mutate = func(payload control.Payload) (control.Payload, error) {
 			return control.Update(payload, control.UpdateOptions{
 				Channel: "devel", Component: *component, Fingerprint: *fingerprint, SystemFingerprint: *systemFingerprint,
-				URL: *artifactURL, Generation: *generation, PackageTrain: *packageTrain,
+				FreeBSDPinID: *freeBSDPinID,
+				URL:          *artifactURL, Generation: *generation, PackageTrain: *packageTrain,
 				ABI: *abi, AltABI: *altABI, PublishedAt: when,
 			})
 		}
@@ -140,6 +142,39 @@ func commandChannel(ctx context.Context, args []string) error {
 		}
 		mutate = func(payload control.Payload) (control.Payload, error) {
 			return control.Promote(payload, *component, now, *soak)
+		}
+	case "seal-stable":
+		systemFingerprint := flags.String("system-fingerprint", "", "sealed System fingerprint")
+		systemURL := flags.String("system-url", "", "immutable System URL")
+		systemGeneration := flags.Uint64("system-generation", 0, "System build generation")
+		packagesFingerprint := flags.String("packages-fingerprint", "", "sealed Packages fingerprint")
+		packagesURL := flags.String("packages-url", "", "immutable Packages URL")
+		packagesGeneration := flags.Uint64("packages-generation", 0, "Packages build generation")
+		freeBSDPinID := flags.String("freebsd-pin-id", "", "exact FreeBSD compatibility pin")
+		packageTrain := flags.String("package-train", "1.0", "sealed package train")
+		abi := flags.String("abi", "FreeBSD:16:amd64", "pkg ABI")
+		altABI := flags.String("altabi", "freebsd:16:x86:64", "pkg alternate ABI")
+		publishedAt := flags.String("published-at", "", "RFC3339 publication time")
+		if err := parseFlags(flags, args[1:]); err != nil {
+			return err
+		}
+		when, err := time.Parse(time.RFC3339, *publishedAt)
+		if err != nil {
+			return errors.New("--published-at must be RFC3339")
+		}
+		mutate = func(payload control.Payload) (control.Payload, error) {
+			common := control.UpdateOptions{
+				Channel: "devel", FreeBSDPinID: *freeBSDPinID, PackageTrain: *packageTrain,
+				ABI: *abi, AltABI: *altABI, PublishedAt: when,
+			}
+			system := common
+			system.Component, system.Fingerprint, system.URL, system.Generation =
+				"system", *systemFingerprint, *systemURL, *systemGeneration
+			packages := common
+			packages.Component, packages.Fingerprint, packages.SystemFingerprint,
+				packages.URL, packages.Generation = "packages", *packagesFingerprint,
+				*systemFingerprint, *packagesURL, *packagesGeneration
+			return control.SealStable(payload, system, packages)
 		}
 	default:
 		return fmt.Errorf("unknown channel command %q", args[0])
@@ -227,6 +262,7 @@ func commandResult(ctx context.Context, args []string) error {
 	systemID := flags.String("system-id", "", "exact required system for packages or ISO")
 	platformID := flags.String("platform-id", "", "exact platform closure")
 	packageTrain := flags.String("package-train", "", "required for optional package results")
+	freeBSDPinID := flags.String("freebsd-pin-id", "", "required compatibility pin for optional package results")
 	generation := flags.Uint64("generation", 0, "expected reserved or selected generation")
 	githubOutput := flags.String("github-output", os.Getenv("GITHUB_OUTPUT"), "GitHub output file")
 	if err := parseFlags(flags, args[1:]); err != nil {
@@ -238,6 +274,9 @@ func commandResult(ctx context.Context, args []string) error {
 	}
 	if (*stage == "packages" || *stage == "iso") && !sha256Pattern.MatchString(*systemID) {
 		return errors.New("packages and ISO result checks require --system-id")
+	}
+	if *stage == "packages" && !sha256Pattern.MatchString(*freeBSDPinID) {
+		return errors.New("package result checks require --freebsd-pin-id")
 	}
 	backend, err := openStore()
 	if err != nil {
@@ -257,7 +296,7 @@ func commandResult(ctx context.Context, args []string) error {
 	} else if err != nil {
 		return err
 	} else {
-		marker, validateErr := validateResultMarker(*stage, *id, *systemID, *platformID, *generation, object.Data)
+		marker, validateErr := validateResultMarker(*stage, *id, *systemID, *platformID, *freeBSDPinID, *generation, object.Data)
 		if validateErr != nil {
 			return validateErr
 		}
@@ -302,12 +341,13 @@ type resultMarker struct {
 	Size          int64  `json:"size"`
 	File          string `json:"file"`
 	Inputs        struct {
-		Platform string `json:"platform"`
-		System   string `json:"system"`
+		Platform     string `json:"platform"`
+		System       string `json:"system"`
+		FreeBSDPinID string `json:"freebsd_pin_id"`
 	} `json:"inputs"`
 }
 
-func validateResultMarker(stage, id, systemID, platformID string, generation uint64, data []byte) (resultMarker, error) {
+func validateResultMarker(stage, id, systemID, platformID, freeBSDPinID string, generation uint64, data []byte) (resultMarker, error) {
 	var marker resultMarker
 	if err := json.Unmarshal(data, &marker); err != nil || marker.Fingerprint != id || marker.Generation == 0 {
 		return resultMarker{}, errors.New("result completion marker conflicts with its content ID")
@@ -323,14 +363,14 @@ func validateResultMarker(stage, id, systemID, platformID string, generation uin
 		}
 		return marker, nil
 	}
-	if marker.SchemaVersion != "freesense.artifact/v1" || marker.Stage != stage || marker.Inputs.Platform != platformID {
+	if marker.SchemaVersion != "freesense.artifact/v1" || marker.Stage != stage {
 		return resultMarker{}, errors.New("repository completion marker has an invalid closure")
 	}
-	if stage == "system" && marker.Inputs.System != id {
+	if stage == "system" && (marker.Inputs.System != id || marker.Inputs.Platform != platformID) {
 		return resultMarker{}, errors.New("system completion marker has an invalid identity")
 	}
-	if stage == "packages" && marker.Inputs.System != systemID {
-		return resultMarker{}, errors.New("packages completion marker is bound to a different system")
+	if stage == "packages" && marker.Inputs.FreeBSDPinID != freeBSDPinID {
+		return resultMarker{}, errors.New("packages completion marker is bound to a different FreeBSD pin")
 	}
 	return marker, nil
 }

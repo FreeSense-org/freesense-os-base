@@ -14,6 +14,7 @@ import subprocess
 import tempfile
 import urllib.error
 import urllib.request
+from datetime import datetime, timedelta, timezone
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -83,7 +84,9 @@ def current_component(manifest_url: str, component: str) -> str:
                 stderr=subprocess.DEVNULL,
             )
         payload = json.loads(payload_bytes)
-        if not isinstance(payload, dict) or payload.get("schema_version") != "freesense.channels/v1":
+        if not isinstance(payload, dict) or payload.get("schema_version") not in {
+            "freesense.channels/v1", "freesense.channels/v2"
+        }:
             raise ValueError("unsupported signed channel payload")
         selected = payload.get("channels", {}).get("devel", {}).get(component)
         if selected is None:
@@ -136,6 +139,7 @@ def main() -> int:
     system_worker_tools_sha256 = closure.get("artifact_worker_tools_sha256", "")
     system_jail_object = closure.get("artifact_jail_object", "")
     system_signing_public_key_sha256 = closure.get("artifact_signing_public_key_sha256", "")
+    system_freebsd_pin_id = closure.get("artifact_freebsd_pin_id", "")
     current_packages_fingerprint = closure.get("packages_fingerprint", "")
     current_packages_generation = closure.get("packages_generation", 0)
     current_packages_verified = closure.get("packages_verified", "false")
@@ -146,6 +150,16 @@ def main() -> int:
     policy = json.loads((ROOT / "config/build-policy.json").read_text())
     if lock.get("schema_version") != "freesense.freebsd-pin/v2" or not lock.get("ready"):
         raise SystemExit("FreeBSD lock is not ready")
+    try:
+        valid_from = datetime.fromisoformat(lock["valid_from"].replace("Z", "+00:00"))
+        valid_until = datetime.fromisoformat(lock["valid_until"].replace("Z", "+00:00"))
+    except (KeyError, TypeError, ValueError) as error:
+        raise SystemExit("FreeBSD lock has no valid 14-day window") from error
+    now = datetime.now(timezone.utc)
+    if valid_until - valid_from != timedelta(days=14):
+        raise SystemExit("FreeBSD lock window must be exactly 14 days")
+    if now < valid_from or now >= valid_until:
+        raise SystemExit("FreeBSD lock is outside its active 14-day window")
     worker_tools = lock.get("worker_tools", {})
     worker_tools_lock_sha256 = (
         worker_tools.get("sha256", "") if isinstance(worker_tools, dict) else ""
@@ -163,6 +177,17 @@ def main() -> int:
     signing_public_key_sha256 = hashlib.sha256(
         (ROOT / "config/channel-signing-public.pem").read_bytes()
     ).hexdigest()
+    freebsd_pin_id = fingerprint({
+        "schema": 1,
+        "kind": "freebsd-pin",
+        "freebsd_source": lock["freebsd_source"]["commit"],
+        "freebsd_ports": lock["freebsd_ports"]["commit"],
+        "jail_seed": lock["jail_seed"]["sha256"],
+        "worker_image": lock["worker_image"]["sha256"],
+        "worker_tools": worker_tools_lock_sha256,
+        "abi": policy["abi"],
+        "altabi": policy["altabi"],
+    })
     patch_files = [ROOT / "apply.sh", ROOT / "manifest.env", *sorted((ROOT / "patches").glob("*.patch"))]
     platform_recipe = recipe_digest([
         ROOT / "scripts/runner/install-worker-tools.sh",
@@ -224,6 +249,7 @@ def main() -> int:
             "image": system_image_sha256,
             "worker tools": system_worker_tools_sha256,
             "signing key": system_signing_public_key_sha256,
+            "FreeBSD pin": system_freebsd_pin_id,
         }
         if any(not isinstance(value, str) or not SHA.fullmatch(value) for value in sha_inputs.values()):
             raise SystemExit("selected System closure contains an invalid Git commit")
@@ -273,6 +299,7 @@ def main() -> int:
         jail_object = system_jail_object
         platform = system_platform_id
         system = system_id
+        freebsd_pin_id = system_freebsd_pin_id
     else:
         source_sha = latest_source_sha
         system_sha = latest_system_sha
@@ -286,14 +313,12 @@ def main() -> int:
         platform = desired_platform
         system = desired_system
     packages = fingerprint({
-        "schema": 2,
+        "schema": 3,
         "kind": "packages",
-        "platform": platform,
-        "system": system,
-        "source": source_sha,
-        "system_ports": system_sha,
+        "freebsd_pin": freebsd_pin_id,
         "packages": packages_sha,
         "package_train": selected_package_train,
+        "signing_public_key": signing_public_key_sha256,
         "recipe": recipe_digest([
             ROOT / "scripts/render-worker.py",
             ROOT / "scripts/runner/install-worker-tools.sh",
@@ -311,8 +336,6 @@ def main() -> int:
         "freebsd_ports": ports_sha,
         "worker_image": image_sha256,
         "channel": channel_name,
-        "channel_generation": channel_generation,
-        "channel_payload": channel_payload_sha256,
         "package_train": selected_package_train,
         "signing_public_key": signing_public_key_sha256,
         "runner_policy": policy["runner"],
@@ -358,6 +381,8 @@ def main() -> int:
         "channel_payload_base64": channel_payload_base64,
         "channel_signature_base64": channel_signature_base64,
         "signing_public_key_sha256": signing_public_key_sha256,
+        "freebsd_pin_id": freebsd_pin_id,
+        "product_version": "1.1.0-DEVELOPMENT",
     }
     print(json.dumps(values, indent=2, sort_keys=True))
     if args.github_output:

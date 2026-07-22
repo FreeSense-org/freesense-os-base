@@ -3,7 +3,7 @@ name: System
 on:
   workflow_dispatch:
   schedule:
-    - cron: "17 1 * * *"
+    - cron: "0 6 * * *"
 
 permissions:
   contents: read
@@ -35,6 +35,8 @@ jobs:
       abi: ${{ steps.plan.outputs.abi }}
       altabi: ${{ steps.plan.outputs.altabi }}
       public_base_url: ${{ steps.plan.outputs.public_base_url }}
+      freebsd_pin_id: ${{ steps.plan.outputs.freebsd_pin_id }}
+      product_version: ${{ steps.plan.outputs.product_version }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
@@ -84,6 +86,8 @@ jobs:
       image_sha256: ${{ needs.plan.outputs.image_sha256 }}
       worker_tools_sha256: ${{ needs.plan.outputs.worker_tools_sha256 }}
       jail_object: ${{ needs.plan.outputs.jail_object }}
+      freebsd_pin_id: ${{ needs.plan.outputs.freebsd_pin_id }}
+      product_version: ${{ needs.plan.outputs.product_version }}
       package_train: ${{ needs.plan.outputs.package_train }}
       generation: ${{ needs.plan.outputs.generation }}
       public_base_url: ${{ needs.plan.outputs.public_base_url }}
@@ -121,5 +125,8 @@ jobs:
             --fingerprint "${{ needs.plan.outputs.system }}" \
             --url "${{ needs.plan.outputs.public_base_url }}/artifacts/system/${{ needs.plan.outputs.system }}/amd64" \
             --generation "${{ needs.plan.outputs.generation }}" --package-train "${{ needs.plan.outputs.package_train }}" \
+            --freebsd-pin-id "${{ needs.plan.outputs.freebsd_pin_id }}" \
             --abi "${{ needs.plan.outputs.abi }}" --altabi "${{ needs.plan.outputs.altabi }}" \
             --published-at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --private-key "$key"
+          "${RUNNER_TEMP}/fsbuild" channel verify --component system \
+            --fingerprint "${{ needs.plan.outputs.system }}" --private-key "$key"

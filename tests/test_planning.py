@@ -46,6 +46,7 @@ def signed_envelope(
     system_fingerprint: str | None = None,
     include_packages: bool = False,
     verified: bool = False,
+    schema: str = "freesense.channels/v1",
 ):
     artifact_path = f"{component}/{FINGERPRINT}"
     if component == "packages":
@@ -81,7 +82,7 @@ def signed_envelope(
             "verified": True,
         }
     payload = {
-        "schema_version": "freesense.channels/v1",
+        "schema_version": schema,
         "channels": {
             "devel": {
                 "name": "devel",
@@ -151,6 +152,7 @@ def system_closure(*, channel_name: str = "devel"):
         "artifact_signing_public_key_sha256": hashlib.sha256(
             (ROOT / "config/channel-signing-public.pem").read_bytes()
         ).hexdigest(),
+        "artifact_freebsd_pin_id": "8" * 64,
         "packages_fingerprint": PACKAGES_FINGERPRINT,
         "packages_generation": 8,
         "packages_verified": "true",
@@ -167,6 +169,8 @@ class PlannerChannelTests(unittest.TestCase):
             (root / "config/freebsd-16.json").write_text(json.dumps({
                 "schema_version": "freesense.freebsd-pin/v2",
                 "ready": True,
+                "valid_from": "2026-07-22T06:00:00Z",
+                "valid_until": "2026-08-05T06:00:00Z",
                 "freebsd_source": {"commit": "1" * 40},
                 "freebsd_ports": {"commit": "2" * 40},
                 "jail_seed": {
@@ -217,6 +221,18 @@ class PlannerChannelTests(unittest.TestCase):
         self.assertEqual(requests[0][0].get_header("User-agent"), plan.USER_AGENT)
         self.assertEqual(requests[0][1], 15)
         verify.assert_called_once()
+
+    def test_current_component_accepts_v2_channel_manifest(self):
+        envelope, _ = signed_envelope(schema="freesense.channels/v2")
+        with mock.patch.object(
+            plan.urllib.request, "urlopen", return_value=Response(envelope)
+        ), mock.patch.object(plan.subprocess, "run"):
+            self.assertEqual(
+                plan.current_component(
+                    "https://pkg.freesense.org/v1/repos.manifest.json", "system"
+                ),
+                FINGERPRINT,
+            )
 
     def test_current_component_allows_only_not_found_as_empty(self):
         missing = urllib.error.HTTPError("https://example.invalid", 404, "missing", {}, None)
@@ -403,6 +419,24 @@ class PlannerChannelTests(unittest.TestCase):
         self.assertEqual(values["platform"], "b" * 64)
         self.assertEqual(values["os_base_sha"], "3" * 40)
         self.assertEqual(values["packages_sha"], "8" * 40)
+
+    def test_package_fingerprint_is_independent_of_same_pin_system_update(self):
+        fingerprints = []
+        for system_id, platform_id in (("a" * 64, "b" * 64), ("c" * 64, "d" * 64)):
+            with tempfile.TemporaryDirectory() as directory:
+                closure = system_closure()
+                closure["fingerprint"] = system_id
+                closure["artifact_platform"] = platform_id
+                closure["packages_fingerprint"] = ""
+                closure_path = Path(directory, "system.json")
+                closure_path.write_text(json.dumps(closure))
+                argv = ["plan.py", "packages", "--system-closure", str(closure_path)]
+                with mock.patch.object(sys, "argv", argv), mock.patch.object(
+                    plan, "remote_sha", return_value="8" * 40
+                ), redirect_stdout(io.StringIO()) as rendered:
+                    self.assertEqual(plan.main(), 0)
+                fingerprints.append(json.loads(rendered.getvalue())["packages"])
+        self.assertEqual(fingerprints[0], fingerprints[1])
 
 
 if __name__ == "__main__":

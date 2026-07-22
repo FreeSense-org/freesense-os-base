@@ -16,6 +16,8 @@ on:
       image_sha256: {type: string, required: true}
       worker_tools_sha256: {type: string, required: true}
       jail_object: {type: string, required: true}
+      freebsd_pin_id: {type: string, required: true}
+      product_version: {type: string, required: true}
       package_train: {type: string, required: true}
       generation: {type: string, required: true}
       public_base_url: {type: string, required: true}
@@ -54,6 +56,8 @@ jobs:
       IMAGE_SHA256: ${{ inputs.image_sha256 }}
       WORKER_TOOLS_SHA256: ${{ inputs.worker_tools_sha256 }}
       JAIL_OBJECT: ${{ inputs.jail_object }}
+      FREEBSD_PIN_ID: ${{ inputs.freebsd_pin_id }}
+      PRODUCT_VERSION: ${{ inputs.product_version }}
       PACKAGE_TRAIN: ${{ inputs.package_train }}
       GENERATION: ${{ inputs.generation }}
       PUBLIC_BASE_URL: ${{ inputs.public_base_url }}
@@ -92,6 +96,7 @@ jobs:
             --generation "${GENERATION}" --github-output "${GITHUB_OUTPUT}")
           if [[ "${STAGE}" == packages || "${STAGE}" == iso ]]; then args+=(--system-id "${SYSTEM_ID}"); fi
           if [[ "${STAGE}" == packages ]]; then args+=(--package-train "${PACKAGE_TRAIN}"); fi
+          if [[ "${STAGE}" == packages ]]; then args+=(--freebsd-pin-id "${FREEBSD_PIN_ID}"); fi
           "${RUNNER_TEMP}/fsbuild" result check "${args[@]}"
       - name: Verify required System result
         if: steps.reuse.outputs.complete != 'true' && inputs.stage != 'system'

@@ -3,7 +3,7 @@ name: Pin FreeBSD
 on:
   workflow_dispatch:
   schedule:
-    - cron: "17 0 * * 1"
+    - cron: "0 2 * * *"
 
 permissions:
   contents: read
@@ -38,15 +38,32 @@ jobs:
         with:
           fetch-depth: 1
 
+      - name: Check the 14-day pin window
+        id: window
+        shell: bash
+        run: |
+          set -euo pipefail
+          valid_until=$(jq -er .valid_until config/freebsd-16.json)
+          due_at=$(date -u --date="${valid_until} - 4 hours" +%s)
+          if (( $(date -u +%s) >= due_at )); then
+            echo "due=true" >>"${GITHUB_OUTPUT}"
+          else
+            echo "due=false" >>"${GITHUB_OUTPUT}"
+            echo "FreeBSD remains pinned through ${valid_until}."
+          fi
+
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        if: steps.window.outputs.due == 'true'
         with:
           go-version-file: go.mod
           cache: false
 
       - name: Build coordinator
+        if: steps.window.outputs.due == 'true'
         run: go build -trimpath -o "${RUNNER_TEMP}/fsbuild" ./cmd/fsbuild
 
       - name: Acquire short-lived pin credentials
+        if: steps.window.outputs.due == 'true'
         run: >-
           "${RUNNER_TEMP}/fsbuild" credentials acquire
           --broker-url "${R2_CREDENTIAL_BROKER_URL}"
@@ -58,6 +75,7 @@ jobs:
           --github-env "${GITHUB_ENV}"
 
       - name: Verify and mirror one official weekly snapshot
+        if: steps.window.outputs.due == 'true'
         id: resolve
         shell: bash
         run: |
@@ -164,13 +182,16 @@ jobs:
             --argjson base_size "$(jq -r .size "${RUNNER_TEMP}/base-blob.json")" \
             --argjson image_size "$(jq -r .size "${RUNNER_TEMP}/image-blob.json")" \
             --argjson tools_size "$(jq -r .size "${RUNNER_TEMP}/worker-tools-blob.json")" \
-            '{schema_version:"freesense.freebsd-pin/v2",ready:true,freebsd_source:{commit:$freebsd_sha,revision_prefix:$revision,build_date:$builddate},freebsd_ports:{commit:$ports_sha},jail_seed:{url:$base_url,upstream_sha256:$base_upstream_sha256,object:$base_object,sha256:$base_sha256,size:$base_size},worker_image:{url:$image_url,upstream_compressed_sha256:$image_upstream_sha256,object:$image_object,sha256:$image_sha256,size:$image_size},worker_tools:{object:$tools_object,sha256:$tools_sha256,size:$tools_size}}' \
+            --arg valid_from "$(jq -er .valid_until config/freebsd-16.json)" \
+            --arg valid_until "$(date -u --date="$(jq -er .valid_until config/freebsd-16.json) + 14 days" +%Y-%m-%dT%H:%M:%SZ)" \
+            '{schema_version:"freesense.freebsd-pin/v2",ready:true,valid_from:$valid_from,valid_until:$valid_until,freebsd_source:{commit:$freebsd_sha,revision_prefix:$revision,build_date:$builddate},freebsd_ports:{commit:$ports_sha},jail_seed:{url:$base_url,upstream_sha256:$base_upstream_sha256,object:$base_object,sha256:$base_sha256,size:$base_size},worker_image:{url:$image_url,upstream_compressed_sha256:$image_upstream_sha256,object:$image_object,sha256:$image_sha256,size:$image_size},worker_tools:{object:$tools_object,sha256:$tools_sha256,size:$tools_size}}' \
             > config/freebsd-16.json
           jq -e '.ready and (.freebsd_source.commit|length)==40' config/freebsd-16.json
           echo "image_sha256=$(jq -r .worker_image.sha256 config/freebsd-16.json)" >>"${GITHUB_OUTPUT}"
           echo "worker_tools_sha256=$(jq -r .worker_tools.sha256 config/freebsd-16.json)" >>"${GITHUB_OUTPUT}"
 
       - name: Install pinned tools and probe the exact R2 image
+        if: steps.window.outputs.due == 'true'
         env:
           FSBUILD: ${{ runner.temp }}/fsbuild
           WORKER_TOOLS_SHA256: ${{ steps.resolve.outputs.worker_tools_sha256 }}
@@ -200,6 +221,7 @@ jobs:
             --timeout 3600
 
       - name: Open or update the single pin PR
+        if: steps.window.outputs.due == 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -227,6 +249,7 @@ jobs:
             echo "Updated pin PR #${number}"
           fi
           gh workflow run ci.yml --ref "${branch}"
+          gh pr merge "${number:-$(gh pr list --head "${branch}" --state open --json number --jq '.[0].number')}" --auto --squash
           echo "Dispatched required CI for ${branch}."
 
       - name: Clean pinning downloads

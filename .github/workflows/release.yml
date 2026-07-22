@@ -5,7 +5,7 @@ on:
     inputs:
       operation:
         type: choice
-        options: [verify, promote, iso]
+        options: [verify, iso]
         default: verify
         required: true
       channel:
@@ -13,15 +13,16 @@ on:
         options: [devel, stable]
         default: devel
         required: true
-  schedule:
-    - cron: "17 5 * * *"
+  workflow_run:
+    workflows: [System, Optional packages]
+    types: [completed]
 
 permissions: {contents: read, id-token: write}
 concurrency: {group: release-control, cancel-in-progress: false}
 
 jobs:
   control:
-    if: github.event_name == 'schedule' || inputs.operation == 'verify' || inputs.operation == 'promote'
+    if: github.event_name == 'workflow_dispatch' && inputs.operation == 'verify'
     runs-on: ubuntu-24.04
     environment: channel-publisher
     steps:
@@ -53,35 +54,10 @@ jobs:
         run: >-
           bash scripts/verify-release.sh "${RUNNER_TEMP}/channel.pub"
           "${RUNNER_TEMP}/channel.key" "${RUNNER_TEMP}/fsbuild"
-      - name: Promote verified components after seven days
-        if: >-
-          (github.event_name == 'schedule' || inputs.operation == 'promote') &&
-          steps.verify.outputs.ready == 'true'
-        env: {R2_BUCKET: "${{ vars.R2_BUILD_BUCKET }}", FSBUILD_STORE_PREFIX: v1}
-        run: |
-          set -euo pipefail
-          soak_hours=$(jq -er '.stable_soak_hours | select(. > 0)' config/build-policy.json)
-          promoted=0
-          for component in system packages; do
-            output="${RUNNER_TEMP}/${component}.promote.out"
-            rm -f "$output"
-            if ! python3 scripts/channel.py --public-key "${RUNNER_TEMP}/channel.pub" \
-              --channel devel --component "$component" --github-output "$output"; then
-              continue
-            fi
-            verified=$(sed -n 's/^verified=//p' "$output")
-            published=$(sed -n 's/^published_at=//p' "$output")
-            ready=$(date -u --date="$published + ${soak_hours} hours" +%s)
-            if [[ "$verified" == true && $(date -u +%s) -ge $ready ]]; then
-              "${RUNNER_TEMP}/fsbuild" channel promote --component "$component" --soak "${soak_hours}h" \
-                --private-key "${RUNNER_TEMP}/channel.key"
-              promoted=$((promoted + 1))
-            fi
-          done
-          echo "Promoted ${promoted} component(s)."
-
   iso-plan:
-    if: inputs.operation == 'iso'
+    if: >-
+      (github.event_name == 'workflow_dispatch' && inputs.operation == 'iso') ||
+      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success')
     runs-on: ubuntu-24.04
     environment: build-coordinator
     outputs:
@@ -100,6 +76,8 @@ jobs:
       jail_object: ${{ steps.plan.outputs.jail_object }}
       package_train: ${{ steps.plan.outputs.package_train }}
       public_base_url: ${{ steps.plan.outputs.public_base_url }}
+      freebsd_pin_id: ${{ steps.plan.outputs.freebsd_pin_id }}
+      product_version: ${{ steps.plan.outputs.product_version }}
       channel: ${{ steps.plan.outputs.channel }}
       channel_payload_sha256: ${{ steps.plan.outputs.channel_payload_sha256 }}
       channel_payload_base64: ${{ steps.plan.outputs.channel_payload_base64 }}
@@ -109,7 +87,7 @@ jobs:
       - name: Read signed selected channel
         run: |
           python3 scripts/channel.py --public-key config/channel-signing-public.pem \
-            --channel "${{ inputs.channel }}" --component system \
+            --channel "${{ github.event_name == 'workflow_dispatch' && inputs.channel || 'devel' }}" --component system \
             --json-output "${RUNNER_TEMP}/system.json"
       - id: plan
         run: >-
@@ -133,6 +111,8 @@ jobs:
       image_sha256: ${{ needs.iso-plan.outputs.image_sha256 }}
       worker_tools_sha256: ${{ needs.iso-plan.outputs.worker_tools_sha256 }}
       jail_object: ${{ needs.iso-plan.outputs.jail_object }}
+      freebsd_pin_id: ${{ needs.iso-plan.outputs.freebsd_pin_id }}
+      product_version: ${{ needs.iso-plan.outputs.product_version }}
       package_train: ${{ needs.iso-plan.outputs.package_train }}
       generation: ${{ needs.iso-plan.outputs.generation }}
       public_base_url: ${{ needs.iso-plan.outputs.public_base_url }}
