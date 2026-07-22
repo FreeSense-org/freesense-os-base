@@ -93,6 +93,11 @@ chmod 600 "${RCLONE_CONFIG}"
 unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN
 phase storage-ready
 
+upload_immutable() {
+  rclone copyto --immutable --checksum --multi-thread-streams 0 \
+    --retries 10 --low-level-retries 20 "$1" "$2"
+}
+
 clone_exact() {
   url=$1 destination=$2 commit=$3
   rm -rf "${destination}"
@@ -502,8 +507,7 @@ publish_repository() {
   test -n "$(find "${directory}/All" -type f -name '*.pkg' -print -quit)"
   find "${directory}" -type f ! -name complete.json | while IFS= read -r file; do
     relative=${file#"${directory}/"}
-    rclone copyto --immutable --checksum --retries 10 --low-level-retries 20 \
-      "${file}" "${RESULT}/amd64/${relative}"
+    upload_immutable "${file}" "${RESULT}/amd64/${relative}"
   done
   jq -n --arg stage "${STAGE}" --arg fingerprint "${FINGERPRINT}" \
     --arg platform "${PLATFORM_ID}" --arg system "${SYSTEM_ID}" \
@@ -515,7 +519,6 @@ publish_repository() {
     --argjson generation "${GENERATION}" \
     '{schema_version:"freesense.artifact/v1",stage:$stage,fingerprint:$fingerprint,generation:$generation,inputs:{platform:$platform,system:$system,source:$source,system_ports:$system_ports,freebsd:$freebsd,ports:$ports,package_train:$package_train,os_definition:$os_definition,worker_image:$worker_image,jail_object:$jail_object,signing_public_key:$signing_public_key}} | if $stage == "packages" then .inputs.packages = $packages else . end' \
     >"${directory}/complete.json"
-  rclone copyto --immutable --checksum --retries 10 --low-level-retries 20 \
-    "${directory}/complete.json" "${RESULT}/complete.json"
+  upload_immutable "${directory}/complete.json" "${RESULT}/complete.json"
   phase repository-complete
 }

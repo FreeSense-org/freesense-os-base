@@ -179,8 +179,11 @@ for duplicate in (".real_system", ".latest.new", '.latest/${member_name}'):
 for required in ("--sort=name", '--mtime="@${source_time}"', "--owner=0", "gzip -n"):
     if required not in common:
         raise SystemExit(f"source archive reproducibility contract is missing {required!r}")
-if common.count("--immutable --checksum") != 2 or read("scripts/runner/stages/iso.sh").count("--immutable --checksum") != 2:
-    raise SystemExit("every immutable retry must compare checksums")
+iso_stage = read("scripts/runner/stages/iso.sh")
+if common.count("--immutable --checksum --multi-thread-streams 0") != 1:
+    raise SystemExit("immutable publication must use single-part checksum uploads")
+if common.count("upload_immutable \"") != 2 or iso_stage.count("upload_immutable ") != 2:
+    raise SystemExit("every artifact publication must use the immutable upload helper")
 
 planner = read("scripts/plan.py")
 channel_reader = read("scripts/channel.py")
@@ -197,7 +200,6 @@ for required in ("SystemFingerprint", "packages publication is not bound", "chan
 for required in ("group: freesense-kvm-host", "name: Verify required System result"):
     if required not in reusable:
         raise SystemExit(f"single-runner dependency contract is missing {required!r}")
-iso_stage = read("scripts/runner/stages/iso.sh")
 if "repos.manifest.json" in iso_stage:
     raise SystemExit("ISO worker refetches the mutable channel alias")
 if 'fetch_input "${JAIL_OBJECT}" /root/jail-base.txz' not in iso_stage:
