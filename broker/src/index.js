@@ -81,7 +81,11 @@ const ROLE_DEFINITIONS = Object.freeze({
     ttlSeconds: 75 * 60,
     pathKind: "object",
     paths() {
-      return [`${R2_PREFIX}/repos.manifest.json`, `${R2_PREFIX}/releases.json`];
+      return [
+        `${R2_PREFIX}/repos.manifest.json`,
+        `${R2_PREFIX}/releases/stable.json`,
+        `${R2_PREFIX}/releases/devel.json`,
+      ];
     },
   },
   "broker-smoke": {

@@ -223,7 +223,16 @@ describe("least-privilege role policies", () => {
       [],
     ],
     ["pin-writer", 20700, ["v1/inputs/sha256/"], []],
-    ["channel-writer", 4500, [], ["v1/repos.manifest.json", "v1/releases.json"]],
+    [
+      "channel-writer",
+      4500,
+      [],
+      [
+        "v1/repos.manifest.json",
+        "v1/releases/stable.json",
+        "v1/releases/devel.json",
+      ],
+    ],
     ["broker-smoke", 900, [], [`v1/smoke/broker/${"a".repeat(40)}.json`]],
   ];
 
