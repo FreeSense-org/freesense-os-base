@@ -28,6 +28,7 @@ pipeline_files = [
     *sorted(WORKFLOWS.glob("*.yml")),
     ROOT / "scripts/plan.py",
     ROOT / "scripts/channel.py",
+    ROOT / "scripts/select_ports_pin.py",
     ROOT / "scripts/verify-release.sh",
     ROOT / "scripts/render-worker.py",
     ROOT / "scripts/runner/run-vm.sh",
@@ -83,6 +84,13 @@ if "workflow_run:" not in packages_workflow or "workflows: [System]" not in pack
     raise SystemExit("optional packages are not chained to successful System completion")
 if "schedule:" in packages_workflow:
     raise SystemExit("optional packages retain a racing fixed schedule")
+pin_workflow = read(".github/workflows/pin.yml")
+for required in (
+    "scripts/select_ports_pin.py",
+    "repos/freebsd/freebsd-ports/commits/${ports_sha}",
+):
+    if required not in pin_workflow:
+        raise SystemExit(f"FreeBSD ports pin is missing {required!r}")
 
 common = read("scripts/runner/worker-common.sh")
 system_stage = read("scripts/runner/stages/system.sh")
