@@ -15,6 +15,7 @@ const SECRET_KEY = "2".repeat(64);
 const AUDIENCE = protocol.githubAudience;
 const ENDPOINT = `https://${ACCOUNT_ID}.r2.cloudflarestorage.com`;
 const BUCKET = "freesense-builds";
+const DOWNLOAD_BUCKET = "freesense-downloads";
 const DEPLOYMENT = `${"d".repeat(40)}.123456789.1`;
 const KID = "test-key";
 const encoder = new TextEncoder();
@@ -25,6 +26,7 @@ const env = Object.freeze({
   R2_ACCOUNT_ID: ACCOUNT_ID,
   R2_ENDPOINT: ENDPOINT,
   R2_BUCKET: BUCKET,
+  R2_DOWNLOAD_BUCKET: DOWNLOAD_BUCKET,
   BROKER_DEPLOYMENT_ID: DEPLOYMENT,
   R2_PARENT_ACCESS_KEY_ID: ACCESS_KEY,
   R2_PARENT_SECRET_ACCESS_KEY: SECRET_KEY,
@@ -120,7 +122,21 @@ function claimsFor(role, overrides = {}) {
       job_workflow_ref: protocol.workflows.packages,
       job_workflow_sha: "b".repeat(40),
     },
+    "download-writer": {
+      environment: "channel-publisher",
+      workflow_ref: protocol.workflows.release,
+      job_workflow_ref: protocol.workflows.release,
+      job_workflow_sha: "b".repeat(40),
+      event_name: "workflow_run",
+    },
     "broker-smoke": {
+      environment: "broker",
+      workflow_ref: protocol.workflows.broker,
+      job_workflow_ref: protocol.workflows.broker,
+      job_workflow_sha: "b".repeat(40),
+      event_name: "push",
+    },
+    "download-smoke": {
       environment: "broker",
       workflow_ref: protocol.workflows.broker,
       job_workflow_ref: protocol.workflows.broker,
@@ -203,6 +219,11 @@ describe("configuration and protocol", () => {
       { ...env, R2_BUCKET: "" },
     );
     assert.equal(incomplete.status, 503);
+    const noDownloads = await broker.fetch(
+      new Request("https://broker.example/healthz"),
+      { ...env, R2_DOWNLOAD_BUCKET: "" },
+    );
+    assert.equal(noDownloads.status, 503);
   });
 
   it("keeps the checked-in protocol synchronized", () => {
@@ -215,16 +236,18 @@ describe("configuration and protocol", () => {
 
 describe("least-privilege role policies", () => {
   const cases = [
-    ["coordinator", 2700, ["v1/state/generations/"], []],
+    ["coordinator", BUCKET, 2700, ["v1/state/generations/"], []],
     [
       "artifact-writer",
+      BUCKET,
       20700,
       ["v1/inputs/sha256/", "v1/artifacts/"],
       [],
     ],
-    ["pin-writer", 20700, ["v1/inputs/sha256/"], []],
+    ["pin-writer", BUCKET, 20700, ["v1/inputs/sha256/"], []],
     [
       "channel-writer",
+      BUCKET,
       4500,
       [],
       [
@@ -233,17 +256,19 @@ describe("least-privilege role policies", () => {
         "v1/releases/devel.json",
       ],
     ],
-    ["broker-smoke", 900, [], [`v1/smoke/broker/${"a".repeat(40)}.json`]],
+    ["download-writer", DOWNLOAD_BUCKET, 4500, ["v1/releases/"], []],
+    ["broker-smoke", BUCKET, 900, [], [`v1/smoke/broker/${"a".repeat(40)}.json`]],
+    ["download-smoke", DOWNLOAD_BUCKET, 900, [], [`v1/smoke/broker/${"a".repeat(40)}.json`]],
   ];
 
-  for (const [role, ttl, prefixes, objects] of cases) {
+  for (const [role, bucket, ttl, prefixes, objects] of cases) {
     it(`issues only the ${role} scope`, async () => {
       const response = await request(role);
       assert.equal(response.status, 200);
       const body = await response.json();
       assert.equal(body.schema_version, protocol.responseSchema);
       assert.equal(body.prefix, "v1");
-      assert.equal(body.bucket, BUCKET);
+      assert.equal(body.bucket, bucket);
       assert.equal(body.endpoint, ENDPOINT);
       const session = decodeSession(body.session_token);
       assert.deepEqual(session.paths.prefixPaths, prefixes);
@@ -273,6 +298,14 @@ describe("automatic package-chain identity", () => {
       assert.equal(response.status, 200);
     });
   }
+
+  it("rejects downloads-bucket access from the package workflow", async () => {
+    const response = await request(
+      "download-writer",
+      claimsFor("download-writer", packageEntry),
+    );
+    assert.equal(response.status, 403);
+  });
 
   it("allows the package workflow_run to call the reusable artifact writer", async () => {
     const response = await request(
@@ -305,7 +338,7 @@ describe("automatic package-chain identity", () => {
 });
 
 describe("stable patch workflow identity", () => {
-  for (const role of ["coordinator", "channel-writer"]) {
+  for (const role of ["coordinator", "channel-writer", "download-writer"]) {
     it(`allows ${role} for a direct stable workflow dispatch`, async () => {
       const response = await request(
         role,

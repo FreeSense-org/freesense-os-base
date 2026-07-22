@@ -59,7 +59,7 @@ jobs:
             sleep 5
           done
           exit 1
-      - name: Acquire narrow smoke credential
+      - name: Acquire narrow package-bucket smoke credential
         env:
           R2_CREDENTIAL_BROKER_URL: ${{ vars.R2_CREDENTIAL_BROKER_URL }}
           R2_CREDENTIAL_BROKER_AUDIENCE: ${{ vars.R2_CREDENTIAL_BROKER_AUDIENCE }}
@@ -71,7 +71,23 @@ jobs:
             --audience "${R2_CREDENTIAL_BROKER_AUDIENCE}" --role broker-smoke \
             --expected-bucket "${R2_BUCKET}" --expected-prefix v1 --expected-endpoint "${R2_ENDPOINT}" \
             --github-env "${GITHUB_ENV}"
-      - name: Exercise narrow smoke credential
+      - name: Exercise narrow package-bucket smoke credential
         env: {FSBUILD_STORE_PREFIX: v1, R2_BUCKET: "${{ vars.R2_BUILD_BUCKET }}"}
+        run: |
+          "${RUNNER_TEMP}/fsbuild" credentials smoke --deployment-sha "${GITHUB_SHA}"
+      - name: Acquire narrow downloads-bucket smoke credential
+        env:
+          R2_CREDENTIAL_BROKER_URL: ${{ vars.R2_CREDENTIAL_BROKER_URL }}
+          R2_CREDENTIAL_BROKER_AUDIENCE: ${{ vars.R2_CREDENTIAL_BROKER_AUDIENCE }}
+          R2_BUCKET: ${{ vars.R2_DOWNLOAD_BUCKET }}
+          R2_ENDPOINT: ${{ vars.R2_ENDPOINT }}
+          FSBUILD_STORE_PREFIX: v1
+        run: |
+          "${RUNNER_TEMP}/fsbuild" credentials acquire --broker-url "${R2_CREDENTIAL_BROKER_URL}" \
+            --audience "${R2_CREDENTIAL_BROKER_AUDIENCE}" --role download-smoke \
+            --expected-bucket "${R2_BUCKET}" --expected-prefix v1 --expected-endpoint "${R2_ENDPOINT}" \
+            --github-env "${GITHUB_ENV}"
+      - name: Exercise narrow downloads-bucket smoke credential
+        env: {FSBUILD_STORE_PREFIX: v1, R2_BUCKET: "${{ vars.R2_DOWNLOAD_BUCKET }}"}
         run: |
           "${RUNNER_TEMP}/fsbuild" credentials smoke --deployment-sha "${GITHUB_SHA}"

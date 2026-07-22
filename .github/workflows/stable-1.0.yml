@@ -218,6 +218,32 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with: {go-version-file: go.mod, cache: false}
       - run: go build -trimpath -o "${RUNNER_TEMP}/fsbuild" ./cmd/fsbuild
+      - name: Prepare release document
+        run: |
+          python3 scripts/publish_download.py --channel stable \
+            --version "${{ needs.plan.outputs.release_version }}" \
+            --fingerprint "${{ needs.iso-plan.outputs.fingerprint }}" \
+            --system "${{ needs.plan.outputs.system }}" \
+            --generation "${{ needs.iso-plan.outputs.generation }}" \
+            --source "${{ needs.plan.outputs.source_sha }}" --ports "${{ needs.plan.outputs.ports_sha }}" \
+            --os-definition "${GITHUB_SHA}" --freebsd "${{ needs.plan.outputs.freebsd_sha }}" \
+            --output "${RUNNER_TEMP}/stable.json"
+      - name: Acquire downloads-bucket writer
+        env:
+          R2_CREDENTIAL_BROKER_URL: ${{ vars.R2_CREDENTIAL_BROKER_URL }}
+          R2_CREDENTIAL_BROKER_AUDIENCE: ${{ vars.R2_CREDENTIAL_BROKER_AUDIENCE }}
+          R2_BUCKET: ${{ vars.R2_DOWNLOAD_BUCKET }}
+          R2_ENDPOINT: ${{ vars.R2_ENDPOINT }}
+        run: >-
+          "${RUNNER_TEMP}/fsbuild" credentials acquire --broker-url "${R2_CREDENTIAL_BROKER_URL}"
+          --audience "${R2_CREDENTIAL_BROKER_AUDIENCE}" --role download-writer
+          --expected-bucket "${R2_BUCKET}" --expected-prefix v1 --expected-endpoint "${R2_ENDPOINT}"
+          --github-env "${GITHUB_ENV}"
+      - name: Publish boot-tested ISO to downloads
+        env:
+          R2_BUCKET: ${{ vars.R2_DOWNLOAD_BUCKET }}
+          R2_ENDPOINT: ${{ vars.R2_ENDPOINT }}
+        run: bash scripts/publish_iso.sh "${RUNNER_TEMP}/stable.json"
       - name: Acquire download-index writer
         env:
           R2_CREDENTIAL_BROKER_URL: ${{ vars.R2_CREDENTIAL_BROKER_URL }}
@@ -229,19 +255,15 @@ jobs:
           --audience "${R2_CREDENTIAL_BROKER_AUDIENCE}" --role channel-writer
           --expected-bucket "${R2_BUCKET}" --expected-prefix v1 --expected-endpoint "${R2_ENDPOINT}"
           --github-env "${GITHUB_ENV}"
-      - name: Publish website release feed after boot smoke
+      - name: Publish release document after downloads verification
         env:
           R2_BUCKET: ${{ vars.R2_BUILD_BUCKET }}
           R2_ENDPOINT: ${{ vars.R2_ENDPOINT }}
         run: |
-          python3 scripts/publish_download.py --channel stable \
-            --version "${{ needs.plan.outputs.release_version }}" \
-            --fingerprint "${{ needs.iso-plan.outputs.fingerprint }}" \
-            --system "${{ needs.plan.outputs.system }}" \
-            --generation "${{ needs.iso-plan.outputs.generation }}" \
-            --source "${{ needs.plan.outputs.source_sha }}" --ports "${{ needs.plan.outputs.ports_sha }}" \
-            --os-definition "${GITHUB_SHA}" --freebsd "${{ needs.plan.outputs.freebsd_sha }}" \
-            --output "${RUNNER_TEMP}/stable.json"
           aws s3 cp "${RUNNER_TEMP}/stable.json" "s3://${R2_BUCKET}/v1/releases/stable.json" \
             --endpoint-url "${R2_ENDPOINT}" --no-progress --content-type application/json \
             --cache-control 'public, max-age=60, must-revalidate'
+          curl --fail --silent --show-error --location \
+            "https://pkg.freesense.org/v1/releases/stable.json?run=${GITHUB_RUN_ID}" \
+            --output "${RUNNER_TEMP}/published.json"
+          diff <(jq -S . "${RUNNER_TEMP}/stable.json") <(jq -S . "${RUNNER_TEMP}/published.json")

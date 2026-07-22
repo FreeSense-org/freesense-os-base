@@ -9,6 +9,7 @@ Repository variables:
 
 - `R2_ACCOUNT_ID`
 - `R2_BUILD_BUCKET` (`freesense-pkg`)
+- `R2_DOWNLOAD_BUCKET` (`freesense-downloads`)
 - `R2_ENDPOINT`
 - `R2_CREDENTIAL_BROKER_URL`
 - `R2_CREDENTIAL_BROKER_AUDIENCE`
@@ -19,7 +20,7 @@ Environments:
 - `build-coordinator`: immutable generation reservations
 - `build`: immutable inputs/artifacts from the reusable build-runner workflow
 - `pin`: weekly input mirroring on the build runner
-- `channel-publisher`: the single signed channel object
+- `channel-publisher`: signed repository/release metadata and immutable public ISOs
 
 The organization secret `FREESENSE_PKG_SIGNING_KEY` signs both pkg repository
 catalogs and the channel document. Its public key is checked in at
@@ -33,8 +34,10 @@ The `broker` environment additionally holds:
 - `R2_BROKER_PARENT_ACCESS_KEY_ID`
 - `R2_BROKER_PARENT_SECRET_ACCESS_KEY`
 
-The parent R2 credential must cover only bucket `freesense-pkg`. Build-artifact
+The parent R2 credential must cover only buckets `freesense-pkg` and
+`freesense-downloads`. Build-artifact
 sessions may list objects so a stage can copy an immutable dependency repository;
-other sessions cannot list. No session grants delete or multipart actions.
+other sessions cannot list. The downloads session can write only under
+`v1/releases/`. No session grants delete or multipart actions.
 Published files remain under prefix `v1`; failed partial uploads are safe because
 `complete.json` is always last.

@@ -72,6 +72,8 @@ for value in ("Require an upstream publication and complete release pair",
 require('expected_system = values["built_against_system"]' in read("scripts/channel.py"),
         "rebound optional packages are not verified against their build System")
 for value in ("sync-downloads", "scripts/migrate_downloads.py",
+              "scripts/publish_iso.sh", "vars.R2_DOWNLOAD_BUCKET",
+              "--role download-writer",
               "/v1/releases/${{ needs.iso-plan.outputs.channel }}.json"):
     require(value in release_workflow,
             f"independent download publication is missing {value!r}")
@@ -85,6 +87,13 @@ for value in ("releases/stable.json", "releases/devel.json"):
             f"channel-writer credentials do not authorize {value!r}")
 require("`${R2_PREFIX}/releases.json`" not in broker_source,
         "channel-writer credentials still authorize the legacy combined download index")
+for value in ('"download-writer"', 'bucket: "downloads"', "R2_DOWNLOAD_BUCKET"):
+    require(value in broker_source,
+            f"downloads-bucket credential boundary is missing {value!r}")
+publisher = read("scripts/publish_iso.sh")
+for value in ("https://downloads.freesense.org/v1/releases/", "sha256sum --check",
+              "refusing to overwrite a conflicting downloads object"):
+    require(value in publisher, f"ISO publisher is missing {value!r}")
 require("freebsd_pin_id" in reusable and "product_version" in reusable,
         "reusable builds omit the release or FreeBSD pin identity")
 
@@ -179,7 +188,8 @@ for value in ("scripts/resolve_worker_tools.py", "packagesite.yaml.sig",
     require(value in pin_contract, f"Pin FreeBSD trust contract is missing {value!r}")
 
 broker = read("broker/src/index.js")
-for role in ("coordinator", "artifact-writer", "pin-writer", "channel-writer", "broker-smoke"):
+for role in ("coordinator", "artifact-writer", "pin-writer", "channel-writer",
+             "download-writer", "broker-smoke", "download-smoke"):
     require(role in broker, f"credential broker lacks {role}")
 require("GITHUB_REPOSITORY_ID" in broker and "ref_protected" in broker,
         "credential broker is not bound to protected main")
