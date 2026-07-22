@@ -27,6 +27,7 @@ jobs:
       freebsd_sha: ${{ steps.plan.outputs.freebsd_sha }}
       ports_sha: ${{ steps.plan.outputs.ports_sha }}
       image_sha256: ${{ steps.plan.outputs.image_sha256 }}
+      worker_tools_sha256: ${{ steps.plan.outputs.worker_tools_sha256 }}
       jail_object: ${{ steps.plan.outputs.jail_object }}
       package_train: ${{ steps.plan.outputs.package_train }}
       abi: ${{ steps.plan.outputs.abi }}
@@ -79,6 +80,7 @@ jobs:
       freebsd_sha: ${{ needs.plan.outputs.freebsd_sha }}
       ports_sha: ${{ needs.plan.outputs.ports_sha }}
       image_sha256: ${{ needs.plan.outputs.image_sha256 }}
+      worker_tools_sha256: ${{ needs.plan.outputs.worker_tools_sha256 }}
       jail_object: ${{ needs.plan.outputs.jail_object }}
       package_train: ${{ needs.plan.outputs.package_train }}
       generation: ${{ needs.plan.outputs.generation }}

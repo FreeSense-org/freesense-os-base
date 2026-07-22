@@ -14,6 +14,7 @@ on:
       freebsd_sha: {type: string, required: true}
       ports_sha: {type: string, required: true}
       image_sha256: {type: string, required: true}
+      worker_tools_sha256: {type: string, required: true}
       jail_object: {type: string, required: true}
       package_train: {type: string, required: true}
       generation: {type: string, required: true}
@@ -51,6 +52,7 @@ jobs:
       FREEBSD_SHA: ${{ inputs.freebsd_sha }}
       PORTS_SHA: ${{ inputs.ports_sha }}
       IMAGE_SHA256: ${{ inputs.image_sha256 }}
+      WORKER_TOOLS_SHA256: ${{ inputs.worker_tools_sha256 }}
       JAIL_OBJECT: ${{ inputs.jail_object }}
       PACKAGE_TRAIN: ${{ inputs.package_train }}
       GENERATION: ${{ inputs.generation }}

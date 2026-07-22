@@ -94,6 +94,7 @@ jobs:
       freebsd_sha: ${{ steps.plan.outputs.freebsd_sha }}
       ports_sha: ${{ steps.plan.outputs.ports_sha }}
       image_sha256: ${{ steps.plan.outputs.image_sha256 }}
+      worker_tools_sha256: ${{ steps.plan.outputs.worker_tools_sha256 }}
       jail_object: ${{ steps.plan.outputs.jail_object }}
       package_train: ${{ steps.plan.outputs.package_train }}
       public_base_url: ${{ steps.plan.outputs.public_base_url }}
@@ -128,6 +129,7 @@ jobs:
       freebsd_sha: ${{ needs.iso-plan.outputs.freebsd_sha }}
       ports_sha: ${{ needs.iso-plan.outputs.ports_sha }}
       image_sha256: ${{ needs.iso-plan.outputs.image_sha256 }}
+      worker_tools_sha256: ${{ needs.iso-plan.outputs.worker_tools_sha256 }}
       jail_object: ${{ needs.iso-plan.outputs.jail_object }}
       package_train: ${{ needs.iso-plan.outputs.package_train }}
       generation: ${{ needs.iso-plan.outputs.generation }}

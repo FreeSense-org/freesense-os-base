@@ -18,19 +18,19 @@ decode() { printf '%s' "$1" | base64 -d; }
 for name in AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN R2_ENDPOINT R2_BUCKET \
   FREESENSE_REPO_SIGNING_KEY STAGE FINGERPRINT PLATFORM_ID SYSTEM_ID SOURCE_SHA \
   SYSTEM_SHA PACKAGES_SHA OS_BASE_SHA FREEBSD_SHA PORTS_SHA JAIL_OBJECT PACKAGE_TRAIN \
-  IMAGE_SHA256 GENERATION PUBLIC_BASE_URL CHANNEL CHANNEL_PAYLOAD_SHA256 \
+  IMAGE_SHA256 WORKER_TOOLS_SHA256 GENERATION PUBLIC_BASE_URL CHANNEL CHANNEL_PAYLOAD_SHA256 \
   CHANNEL_PAYLOAD_B64 CHANNEL_SIGNATURE_B64; do
   eval "$name=\$(decode \"\${${name}_B64}\")"
 done
 unset AWS_ACCESS_KEY_ID_B64 AWS_SECRET_ACCESS_KEY_B64 AWS_SESSION_TOKEN_B64
 unset FREESENSE_REPO_SIGNING_KEY_B64
-export AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN
 export HOME=/root PATH="/usr/local/sbin:/usr/local/bin:${PATH}"
 export ASSUME_ALWAYS_YES=yes LC_ALL=C LANG=C TZ=UTC
 umask 022
 case "${STAGE}" in system|packages|iso) : ;; *) echo "invalid build stage" >&2; exit 1 ;; esac
 case "${CHANNEL}" in devel|stable) : ;; *) echo "invalid selected channel" >&2; exit 1 ;; esac
-for value in "${FINGERPRINT}" "${PLATFORM_ID}" "${SYSTEM_ID}" "${IMAGE_SHA256}"; do
+for value in "${FINGERPRINT}" "${PLATFORM_ID}" "${SYSTEM_ID}" "${IMAGE_SHA256}" \
+  "${WORKER_TOOLS_SHA256}"; do
   case "${value}" in ''|*[!0-9a-f]*) echo "invalid SHA-256 build input" >&2; exit 1 ;; esac
   [ "${#value}" -eq 64 ] || { echo "invalid SHA-256 build input" >&2; exit 1; }
 done
@@ -51,28 +51,10 @@ if [ "${STAGE}" = packages ]; then
   RESULT="R2:${R2_BUCKET}/${PREFIX}/artifacts/packages/${PACKAGE_TRAIN}/${FINGERPRINT}"
 fi
 
-phase tools-bootstrap
-env ASSUME_ALWAYS_YES=yes pkg bootstrap -f
-phase tools-install
-set +e
-env ASSUME_ALWAYS_YES=yes pkg install -y \
-  archivers/gtar archivers/zstd devel/git ftp/curl net/rclone \
-  lang/python311 ports-mgmt/poudriere-devel security/openssl textproc/jq textproc/xmlstarlet
-tool_install_status=$?
-set -e
-if [ "${tool_install_status}" -ne 0 ]; then
-  echo "worker tool installation failed with pkg status ${tool_install_status}" >&2
-  exit "${tool_install_status}"
-fi
-for tool in gtar zstd git curl rclone python3.11 poudriere openssl jq xml; do
-  command -v "${tool}" >/dev/null || {
-    echo "worker tool installation did not provide ${tool}" >&2
-    exit 1
-  }
-done
-phase tools-ready
+install_worker_tools
 
 phase storage-config
+export AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN
 RCLONE_CONFIG=/root/.config/rclone/rclone.conf
 export RCLONE_CONFIG
 mkdir -p "$(dirname "${RCLONE_CONFIG}")" /root/work /root/sign
@@ -515,9 +497,10 @@ publish_repository() {
     --arg packages "${PACKAGES_SHA}" --arg freebsd "${FREEBSD_SHA}" \
     --arg ports "${PORTS_SHA}" --arg package_train "${PACKAGE_TRAIN}" \
     --arg os_definition "${OS_BASE_SHA}" --arg worker_image "${IMAGE_SHA256}" \
+    --arg worker_tools "${WORKER_TOOLS_SHA256}" \
     --arg jail_object "${JAIL_OBJECT}" --arg signing_public_key "${derived_fingerprint}" \
     --argjson generation "${GENERATION}" \
-    '{schema_version:"freesense.artifact/v1",stage:$stage,fingerprint:$fingerprint,generation:$generation,inputs:{platform:$platform,system:$system,source:$source,system_ports:$system_ports,freebsd:$freebsd,ports:$ports,package_train:$package_train,os_definition:$os_definition,worker_image:$worker_image,jail_object:$jail_object,signing_public_key:$signing_public_key}} | if $stage == "packages" then .inputs.packages = $packages else . end' \
+    '{schema_version:"freesense.artifact/v1",stage:$stage,fingerprint:$fingerprint,generation:$generation,inputs:{platform:$platform,system:$system,source:$source,system_ports:$system_ports,freebsd:$freebsd,ports:$ports,package_train:$package_train,os_definition:$os_definition,worker_image:$worker_image,worker_tools:$worker_tools,jail_object:$jail_object,signing_public_key:$signing_public_key}} | if $stage == "packages" then .inputs.packages = $packages else . end' \
     >"${directory}/complete.json"
   upload_immutable "${directory}/complete.json" "${RESULT}/complete.json"
   phase repository-complete

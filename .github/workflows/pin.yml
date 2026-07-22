@@ -78,11 +78,22 @@ jobs:
           [[ "${freebsd_sha}" =~ ^[0-9a-f]{40}$ ]]
           packagesite_url=https://pkg.freebsd.org/FreeBSD:16:amd64/latest/packagesite.pkg
           curl "${retry[@]}" -o "${RUNNER_TEMP}/packagesite.pkg" "${packagesite_url}"
-          ports_sha=$(tar --zstd -xOf "${RUNNER_TEMP}/packagesite.pkg" packagesite.yaml | \
-            python3 scripts/select_ports_pin.py)
+          bash scripts/pin-worker-tools.sh \
+            --catalog "${RUNNER_TEMP}/packagesite.pkg" \
+            --freebsd-sha "${freebsd_sha}" \
+            --build-date "${builddate}" \
+            --output "${RUNNER_TEMP}/worker-tools.tar" \
+            --report "${RUNNER_TEMP}/worker-tools.json"
+          ports_sha=$(jq -r .ports_sha "${RUNNER_TEMP}/worker-tools.json")
           [[ "${ports_sha}" =~ ^[0-9a-f]{40}$ ]]
           resolved_ports_sha=$(gh api "repos/freebsd/freebsd-ports/commits/${ports_sha}" --jq .sha)
           [[ "${resolved_ports_sha}" == "${ports_sha}" ]]
+          "${RUNNER_TEMP}/fsbuild" blob put --file "${RUNNER_TEMP}/worker-tools.tar" \
+            --output "${RUNNER_TEMP}/worker-tools-blob.json"
+          [[ "$(jq -r .sha256 "${RUNNER_TEMP}/worker-tools-blob.json")" == \
+            "$(jq -r .bundle_sha256 "${RUNNER_TEMP}/worker-tools.json")" ]]
+          [[ "$(jq -r .size "${RUNNER_TEMP}/worker-tools-blob.json")" == \
+            "$(jq -r .bundle_size "${RUNNER_TEMP}/worker-tools.json")" ]]
 
           base_sha=$(awk -F '\t' '$1=="base.txz" {print $2}' "${RUNNER_TEMP}/MANIFEST")
           [[ "${base_sha}" =~ ^[0-9a-f]{64}$ ]]
@@ -161,21 +172,45 @@ jobs:
             --arg image_upstream_sha256 "${vm_compressed_sha}" \
             --arg image_object "$(jq -r .key "${RUNNER_TEMP}/image-blob.json")" \
             --arg image_sha256 "$(jq -r .sha256 "${RUNNER_TEMP}/image-blob.json")" \
+            --arg tools_object "$(jq -r .key "${RUNNER_TEMP}/worker-tools-blob.json")" \
+            --arg tools_sha256 "$(jq -r .sha256 "${RUNNER_TEMP}/worker-tools-blob.json")" \
             --argjson base_size "$(jq -r .size "${RUNNER_TEMP}/base-blob.json")" \
             --argjson image_size "$(jq -r .size "${RUNNER_TEMP}/image-blob.json")" \
-            '{schema_version:"freesense.freebsd-pin/v2",ready:true,freebsd_source:{commit:$freebsd_sha,revision_prefix:$revision,build_date:$builddate},freebsd_ports:{commit:$ports_sha},jail_seed:{url:$base_url,upstream_sha256:$base_upstream_sha256,object:$base_object,sha256:$base_sha256,size:$base_size},worker_image:{url:$image_url,upstream_compressed_sha256:$image_upstream_sha256,object:$image_object,sha256:$image_sha256,size:$image_size}}' \
+            --argjson tools_size "$(jq -r .size "${RUNNER_TEMP}/worker-tools-blob.json")" \
+            '{schema_version:"freesense.freebsd-pin/v2",ready:true,freebsd_source:{commit:$freebsd_sha,revision_prefix:$revision,build_date:$builddate},freebsd_ports:{commit:$ports_sha},jail_seed:{url:$base_url,upstream_sha256:$base_upstream_sha256,object:$base_object,sha256:$base_sha256,size:$base_size},worker_image:{url:$image_url,upstream_compressed_sha256:$image_upstream_sha256,object:$image_object,sha256:$image_sha256,size:$image_size},worker_tools:{object:$tools_object,sha256:$tools_sha256,size:$tools_size}}' \
             > config/freebsd-16.json
           jq -e '.ready and (.freebsd_source.commit|length)==40' config/freebsd-16.json
           echo "image_sha256=$(jq -r .worker_image.sha256 config/freebsd-16.json)" >>"${GITHUB_OUTPUT}"
+          echo "worker_tools_sha256=$(jq -r .worker_tools.sha256 config/freebsd-16.json)" >>"${GITHUB_OUTPUT}"
 
-      - name: Boot the exact R2 image on the KVM build runner
+      - name: Install pinned tools and probe the exact R2 image
         env:
           FSBUILD: ${{ runner.temp }}/fsbuild
-        run: >-
-          scripts/runner/run-vm.sh
-          --image-sha256 "${{ steps.resolve.outputs.image_sha256 }}"
-          --script scripts/runner/probe.sh
-          --timeout 3600
+          WORKER_TOOLS_SHA256: ${{ steps.resolve.outputs.worker_tools_sha256 }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          public_base_url=$(jq -er .public_base_url config/build-policy.json)
+          [[ "${public_base_url}" =~ ^https://[A-Za-z0-9./_-]+$ ]]
+          [[ "${WORKER_TOOLS_SHA256}" =~ ^[0-9a-f]{64}$ ]]
+          smoke="${RUNNER_TEMP}/pin-smoke.sh"
+          {
+            printf '#!/bin/sh\nset -eu\n'
+            cat scripts/runner/install-worker-tools.sh
+            printf '%s\n' 'phase() { printf "FreeSense phase: %s\\n" "$1"; }'
+            printf '%s\n' 'PATH="/usr/local/sbin:/usr/local/bin:${PATH}"' 'export PATH'
+            printf '%s\n' 'HOME=/root LC_ALL=C LANG=C TZ=UTC ASSUME_ALWAYS_YES=yes' \
+              'export HOME LC_ALL LANG TZ ASSUME_ALWAYS_YES' 'umask 022'
+            printf "PUBLIC_BASE_URL='%s'\n" "${public_base_url}"
+            printf "WORKER_TOOLS_SHA256='%s'\n" "${WORKER_TOOLS_SHA256}"
+            printf '%s\n' 'install_worker_tools'
+            tail -n +2 scripts/runner/probe.sh
+          } >"${smoke}"
+          sh -n "${smoke}"
+          scripts/runner/run-vm.sh \
+            --image-sha256 "${{ steps.resolve.outputs.image_sha256 }}" \
+            --script "${smoke}" \
+            --timeout 3600
 
       - name: Open or update the single pin PR
         shell: bash
@@ -200,7 +235,7 @@ jobs:
           if [[ -z "${number}" ]]; then
             gh pr create --head "${branch}" --base main \
               --title "Pin the current official FreeBSD 16 snapshot" \
-              --body "Automated checksum-verified FreeBSD source, jail seed, and KVM worker-image pin. The fixed branch is reused; pinning never creates tag or branch sprawl."
+              --body "Automated checksum-verified FreeBSD source, jail seed, KVM worker image, and signed-catalog worker-tool closure. The fixed branch is reused; pinning never creates tag or branch sprawl."
           else
             echo "Updated pin PR #${number}"
           fi
@@ -214,6 +249,9 @@ jobs:
           rm -f "${RUNNER_TEMP}/MANIFEST" "${RUNNER_TEMP}/VM-CHECKSUM.SHA256" \
             "${RUNNER_TEMP}/base.txz" "${RUNNER_TEMP}/base-blob.json" \
             "${RUNNER_TEMP}/image-blob.json" "${RUNNER_TEMP}/packagesite.pkg" \
+            "${RUNNER_TEMP}/worker-tools.tar" "${RUNNER_TEMP}/worker-tools.json" \
+            "${RUNNER_TEMP}/worker-tools-blob.json" \
+            "${RUNNER_TEMP}/pin-smoke.sh" \
             "${RUNNER_TEMP}/freebsd-16-worker.qcow2" \
             "${RUNNER_TEMP}"/FreeBSD-16.0-CURRENT-amd64-BASIC-CLOUDINIT-*.qcow2 \
             "${RUNNER_TEMP}"/FreeBSD-16.0-CURRENT-amd64-BASIC-CLOUDINIT-*.qcow2.xz
