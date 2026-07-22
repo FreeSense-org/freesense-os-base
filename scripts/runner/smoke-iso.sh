@@ -72,6 +72,7 @@ run_dir=$(mktemp -d "${RUNNER_TEMP}/freesense-iso-smoke.XXXXXX")
 marker=${run_dir}/complete.json
 iso=${run_dir}/installer.iso
 serial_log=${run_dir}/serial.log
+qemu_log=${run_dir}/qemu.log
 artifact_url=${public_base_url}/artifacts/iso/${fingerprint}
 
 curl --fail --location --silent --show-error --proto '=https' \
@@ -113,7 +114,7 @@ setsid timeout --signal=TERM --kill-after=15s 300s \
   qemu-system-x86_64 -name freesense-iso-smoke \
   -machine q35,accel=kvm -cpu host -smp 2 -m 4096 \
   -boot order=d,strict=on -cdrom "$iso" -nic none -display none \
-  -monitor none -serial "file:${serial_log}" -no-reboot >/dev/null 2>&1 &
+  -monitor none -serial "file:${serial_log}" -no-reboot >"$qemu_log" 2>&1 &
 smoke_pid=$!
 
 ready=""
@@ -142,7 +143,10 @@ fi
 
 if [[ -z $ready ]]; then
   echo "ISO did not reach the FreeSense installer within 300 seconds (QEMU status $qemu_status)" >&2
+  echo "serial output: $(stat -c %s "$serial_log") bytes" >&2
   tail -n 80 "$serial_log" >&2 || true
+  echo "QEMU diagnostics:" >&2
+  tail -n 40 "$qemu_log" >&2 || true
   exit 1
 fi
 
