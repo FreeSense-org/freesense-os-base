@@ -60,6 +60,10 @@ stable_workflow = read(".github/workflows/stable-1.0.yml")
 require("schedule:" not in stable_workflow and "channel seal-stable" in stable_workflow and
         '--release "${{ inputs.release }}"' in stable_workflow,
         "stable 1.0.x is not an explicit checked patch publication")
+release_workflow = read(".github/workflows/release.yml")
+require("retry-stable-1.0-iso" in release_workflow and
+        "recovery operation requires a sealed stable 1.0.x channel" in release_workflow,
+        "the ISO-only stable 1.0 recovery entry point is missing or unguarded")
 require("freebsd_pin_id" in reusable and "product_version" in reusable,
         "reusable builds omit the release or FreeBSD pin identity")
 
@@ -122,6 +126,9 @@ for value in ("FREESENSE_INSTALLER_PATCH_B64", "git apply --check",
               "copy_configxml_from_usb", "fix_fstab"):
     require(value in iso_stage or value in read("scripts/render-worker.py"),
             f"ISO installer payload contract is missing {value!r}")
+require('INSTALLED_VERSION="${INSTALLED_VERSION%%-*}"' in iso_stage and
+        "v1.0 repoc compatibility overlay" in iso_stage,
+        "the sealed 1.0 System repoc compatibility overlay is missing")
 require("name: Reuse completed immutable result" in reusable and
         "name: Verify required System result" in reusable,
         "host-side immutable reuse or prerequisite check is missing")

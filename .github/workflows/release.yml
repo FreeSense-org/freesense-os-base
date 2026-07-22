@@ -1,11 +1,11 @@
-name: Verify, promote, or build ISO
+name: Release control and ISO recovery
 
 on:
   workflow_dispatch:
     inputs:
       operation:
         type: choice
-        options: [verify, iso]
+        options: [verify, iso, retry-stable-1.0-iso]
         default: verify
         required: true
       channel:
@@ -56,7 +56,8 @@ jobs:
           "${RUNNER_TEMP}/channel.key" "${RUNNER_TEMP}/fsbuild"
   iso-plan:
     if: >-
-      (github.event_name == 'workflow_dispatch' && inputs.operation == 'iso') ||
+      (github.event_name == 'workflow_dispatch' &&
+       (inputs.operation == 'iso' || inputs.operation == 'retry-stable-1.0-iso')) ||
       (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success')
     runs-on: ubuntu-24.04
     environment: build-coordinator
@@ -86,14 +87,26 @@ jobs:
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       - name: Read signed selected channel
+        env:
+          SELECTED_CHANNEL: ${{ inputs.operation == 'retry-stable-1.0-iso' && 'stable' || (github.event_name == 'workflow_dispatch' && inputs.channel || 'devel') }}
         run: |
           python3 scripts/channel.py --public-key config/channel-signing-public.pem \
-            --channel "${{ github.event_name == 'workflow_dispatch' && inputs.channel || 'devel' }}" --component system \
+            --channel "${SELECTED_CHANNEL}" --component system \
             --json-output "${RUNNER_TEMP}/system.json"
       - id: plan
         run: >-
           python3 scripts/plan.py iso --system-closure "${RUNNER_TEMP}/system.json"
           --github-output "${GITHUB_OUTPUT}"
+      - name: Restrict recovery operation to sealed 1.0.x
+        if: github.event_name == 'workflow_dispatch' && inputs.operation == 'retry-stable-1.0-iso'
+        env:
+          RELEASE_VERSION: ${{ steps.plan.outputs.release_version }}
+          SELECTED_CHANNEL: ${{ steps.plan.outputs.channel }}
+        run: |
+          case "${SELECTED_CHANNEL}:${RELEASE_VERSION}" in
+            stable:1.0.*) ;;
+            *) echo "recovery operation requires a sealed stable 1.0.x channel" >&2; exit 1 ;;
+          esac
 
   iso:
     needs: iso-plan
