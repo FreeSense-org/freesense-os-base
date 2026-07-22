@@ -4,24 +4,18 @@ configure_source
 fetch_repository system "${SYSTEM_ID}" /root/system-repo
 cd /root/freesense-src
 phase iso-assembly-adapter
-if ! grep -Fq 'LOGFILE="${BUILDER_LOGS}/isoimage.${TARGET}"' \
-  tools/ci/freesense-assemble-iso.sh || \
-  ! grep -Fq 'pkg add /tmp/pkg-bootstrap.pkg' \
-  tools/ci/freesense-assemble-iso.sh || \
-  ! grep -Fq 'pkg-closure.log' \
+if ! grep -Fq 'install -r FreeSenseAssembly -y "$@"' \
   tools/ci/freesense-assemble-iso.sh; then
   [ "${SOURCE_SHA}" = b094eb3c173b675f224c33a0ad2968df98dedb58 ] || {
     echo "unsupported ISO assembler source: ${SOURCE_SHA}" >&2
     exit 1
   }
-  git fetch -q --depth=1 origin db376a9be2474e1e4aaadfae0bbfe9ca9c3bb2c6
-  git restore --source=db376a9be2474e1e4aaadfae0bbfe9ca9c3bb2c6 -- \
+  git fetch -q --depth=1 origin b97a4f0f331d4721328c26cd00afde4d8a900fb5
+  git restore --source=b97a4f0f331d4721328c26cd00afde4d8a900fb5 -- \
     tools/builder_common.sh tools/ci/freesense-assemble-iso.sh
 fi
-grep -Fq 'LOGFILE="${BUILDER_LOGS}/isoimage.${TARGET}"' \
+grep -Fq 'install -r FreeSenseAssembly -y "$@"' \
   tools/ci/freesense-assemble-iso.sh
-grep -Fq 'pkg add /tmp/pkg-bootstrap.pkg' tools/ci/freesense-assemble-iso.sh
-grep -Fq 'pkg-closure.log' tools/ci/freesense-assemble-iso.sh
 phase channel-fetch
 printf '%s' "${CHANNEL_PAYLOAD_B64}" | openssl base64 -d -A >/tmp/channel-payload.json
 printf '%s' "${CHANNEL_SIGNATURE_B64}" | openssl base64 -d -A >/tmp/channel-signature.bin
