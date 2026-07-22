@@ -137,6 +137,7 @@ def system_closure(*, channel_name: str = "devel"):
         "channel": channel_name,
         "generation": 7,
         "package_train": "1.1",
+        "release_version": "1.1.0",
         "payload_sha256": hashlib.sha256(payload).hexdigest(),
         "payload_base64": base64.b64encode(payload).decode(),
         "signature_base64": base64.b64encode(b"test-signature").decode(),
@@ -372,6 +373,7 @@ class PlannerChannelTests(unittest.TestCase):
         self.assertEqual(values["os_base_sha"], "3" * 40)
         self.assertEqual(values["image_sha256"], "6" * 64)
         self.assertEqual(values["worker_tools_sha256"], "9" * 64)
+        self.assertEqual(values["release_version"], "1.1.0")
 
     def test_iso_plan_rejects_pending_channel_pair(self):
         for field, value in (

@@ -92,7 +92,7 @@ jq -e --arg fingerprint "$fingerprint" --arg system "$system" \
   .inputs.channel_payload == $payload and
   (.sha256 | type == "string" and test("^[0-9a-f]{64}$")) and
   (.size | type == "number" and . > 0 and floor == .) and
-  (.file | type == "string" and test("^FreeSense-[0-9]+[.][0-9]+-g[0-9]+-amd64[.]iso$"))
+  (.file | type == "string" and test("^FreeSense-[0-9]+[.][0-9]+[.][0-9]+(-g[0-9]+)?-amd64[.]iso$"))
 ' "$marker" >/dev/null || { echo "published ISO completion marker is invalid" >&2; exit 1; }
 
 filename=$(jq -r .file "$marker")

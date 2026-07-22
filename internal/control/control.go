@@ -25,11 +25,12 @@ import (
 const (
 	GenerationSchema = "freesense.generation/v1"
 	EnvelopeSchema   = "freesense.repositories/v3"
-	PayloadSchema    = "freesense.channels/v2"
+	PayloadSchema    = "freesense.channels/v3"
 	ManifestKey      = "repos.manifest.json"
 )
 
 var fingerprintPattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
+var releaseVersionPattern = regexp.MustCompile(`^([0-9]+)\.([0-9]+)\.([0-9]+)$`)
 
 type Generation struct {
 	SchemaVersion string `json:"schema_version"`
@@ -51,6 +52,7 @@ type Payload struct {
 type Channel struct {
 	Name         string     `json:"name"`
 	Description  string     `json:"description"`
+	Version      string     `json:"version"`
 	PackageTrain string     `json:"package_train"`
 	ABI          string     `json:"abi"`
 	AltABI       string     `json:"altabi"`
@@ -80,29 +82,35 @@ type UpdateOptions struct {
 	FreeBSDPinID      string
 	URL               string
 	Generation        uint64
+	Version           string
 	PackageTrain      string
 	ABI               string
 	AltABI            string
 	PublishedAt       time.Time
 }
 
-// SealStable installs the complete 1.0 System/Packages pair exactly once. The
-// stable channel is intentionally not part of the rolling promotion lifecycle.
+// SealStable publishes one complete immutable 1.0.x System/Packages pair. A
+// later call may advance stable to a strictly newer patch, but can never rewrite
+// a published version or move the channel backwards.
 func SealStable(payload Payload, system, packages UpdateOptions) (Payload, error) {
 	if system.Component != "system" || packages.Component != "packages" {
 		return Payload{}, errors.New("stable release requires System and Packages components")
 	}
 	if system.PackageTrain != "1.0" || packages.PackageTrain != "1.0" {
-		return Payload{}, errors.New("sealed stable release must use package train 1.0")
+		return Payload{}, errors.New("stable release must use package train 1.0")
+	}
+	if system.Version != packages.Version || !strings.HasPrefix(system.Version, "1.0.") ||
+		!releaseVersionPattern.MatchString(system.Version) {
+		return Payload{}, errors.New("stable release version must be an exact matching 1.0.x version")
 	}
 	if system.FreeBSDPinID != packages.FreeBSDPinID ||
 		packages.SystemFingerprint != system.Fingerprint {
 		return Payload{}, errors.New("sealed stable release has incompatible component bindings")
 	}
-	// A v1 channel cannot be mixed into the v2 envelope. Stable 1.0 is the first
-	// v2 release, so replace the legacy development selection rather than
+	// An older channel cannot be mixed into the v3 envelope. Stable 1.0 is the
+	// first v3 release, so replace the legacy development selection rather than
 	// carrying unsigned compatibility assumptions into the new schema.
-	if payload.SchemaVersion == "freesense.channels/v1" {
+	if payload.SchemaVersion == "freesense.channels/v1" || payload.SchemaVersion == "freesense.channels/v2" {
 		payload = Payload{SchemaVersion: PayloadSchema, Channels: map[string]Channel{}}
 	}
 	for _, channel := range payload.Channels {
@@ -135,14 +143,14 @@ func SealStable(payload Payload, system, packages UpdateOptions) (Payload, error
 	}
 	desired := working.Channels["devel"]
 	desired.Name = "stable"
-	desired.Description = "FreeSense 1.0 stable (sealed)"
+	desired.Description = "FreeSense " + system.Version + " stable"
 
 	if payload.Channels == nil {
 		payload.Channels = map[string]Channel{}
 	}
 	if existing, ok := payload.Channels["stable"]; ok {
 		desired.Default = existing.Default
-		if existing.Name == desired.Name && existing.Description == desired.Description &&
+		if existing.Version == desired.Version && existing.Name == desired.Name && existing.Description == desired.Description &&
 			existing.PackageTrain == desired.PackageTrain && existing.ABI == desired.ABI &&
 			existing.AltABI == desired.AltABI && existing.Default == desired.Default &&
 			componentIdentityEqual(existing.System, desired.System) &&
@@ -150,7 +158,12 @@ func SealStable(payload Payload, system, packages UpdateOptions) (Payload, error
 			existing.System.Verified && existing.Packages.Verified {
 			return payload, nil
 		}
-		return Payload{}, errors.New("stable 1.0 is already sealed and cannot be changed")
+		if existing.Version == desired.Version {
+			return Payload{}, errors.New("an immutable stable version cannot be rewritten")
+		}
+		if !stablePatchAdvances(existing.Version, desired.Version) {
+			return Payload{}, errors.New("stable release must advance to a newer 1.0 patch")
+		}
 	}
 	desired.Default = true
 	for _, channel := range payload.Channels {
@@ -267,7 +280,7 @@ func ParseSigned(data []byte, publicKey *rsa.PublicKey) (Payload, error) {
 	if err := json.Unmarshal(raw, &payload); err != nil {
 		return Payload{}, fmt.Errorf("decode signed channel payload: %w", err)
 	}
-	if (payload.SchemaVersion != PayloadSchema && payload.SchemaVersion != "freesense.channels/v1") || payload.Channels == nil {
+	if (payload.SchemaVersion != PayloadSchema && payload.SchemaVersion != "freesense.channels/v2" && payload.SchemaVersion != "freesense.channels/v1") || payload.Channels == nil {
 		return Payload{}, errors.New("signed channel payload has an unsupported schema")
 	}
 	return payload, nil
@@ -294,6 +307,9 @@ func Update(payload Payload, options UpdateOptions) (Payload, error) {
 	}
 	if !regexp.MustCompile(`^[0-9]+\.[0-9]+$`).MatchString(options.PackageTrain) || options.ABI == "" || options.AltABI == "" {
 		return Payload{}, errors.New("package train and ABI fields are required")
+	}
+	if !releaseVersionPattern.MatchString(options.Version) || !strings.HasPrefix(options.Version, options.PackageTrain+".") {
+		return Payload{}, errors.New("release version must be exact and belong to the package train")
 	}
 	expectedPath := fmt.Sprintf("/v1/artifacts/system/%s/amd64", options.Fingerprint)
 	if options.Component == "packages" {
@@ -336,6 +352,7 @@ func Update(payload Payload, options UpdateOptions) (Payload, error) {
 	}
 	channel.Name = "devel"
 	channel.Description = "Development version"
+	channel.Version = options.Version
 	channel.PackageTrain = options.PackageTrain
 	channel.ABI = options.ABI
 	channel.AltABI = options.AltABI
@@ -407,79 +424,34 @@ func Verify(payload Payload, component, fingerprint string) (Payload, error) {
 }
 
 func Promote(payload Payload, component string, now time.Time, soak time.Duration) (Payload, error) {
-	devel, ok := payload.Channels["devel"]
-	if !ok {
-		return Payload{}, errors.New("devel channel does not exist")
-	}
-	target, err := componentOf(&devel, component)
-	if err != nil {
-		return Payload{}, err
-	}
-	if target == nil || !target.Verified {
-		return Payload{}, errors.New("current devel component has not passed integration verification")
-	}
-	if component == "packages" {
-		if err := validatePackageBinding(devel, target); err != nil {
-			return Payload{}, err
-		}
-	} else {
-		if err := validatePackageBinding(devel, devel.Packages); err != nil {
-			return Payload{}, errors.New("system promotion requires a complete matching package release")
-		}
-		if !devel.Packages.Verified {
-			return Payload{}, errors.New("system promotion requires verified matching packages")
-		}
-		if now.UTC().Before(devel.Packages.PublishedAt.Add(soak)) {
-			return Payload{}, errors.New("system promotion requires matching packages to complete their soak")
-		}
-	}
-	if now.UTC().Before(target.PublishedAt.Add(soak)) {
-		return Payload{}, errors.New("current devel component has not completed its soak")
-	}
-	stable := payload.Channels["stable"]
-	stableCompatibilityMatches := channelCompatibilityEqual(stable, devel)
-	stable.Name = "stable"
-	stable.Description = "Stable version"
-	stable.PackageTrain = devel.PackageTrain
-	stable.ABI = devel.ABI
-	stable.AltABI = devel.AltABI
-	stable.Default = false
-	copy := *target
-	if component == "system" {
-		keepPackages := stable.Packages != nil &&
-			stable.Packages.Verified &&
-			stable.System != nil &&
-			componentIdentityEqual(stable.System, target) &&
-			stableCompatibilityMatches &&
-			stable.Packages.FreeBSDPinID == target.FreeBSDPinID
-		stable.System = &copy
-		if !keepPackages {
-			stable.Packages = nil
-		}
-	} else {
-		if stable.System == nil || !stable.System.Verified || !componentIdentityEqual(stable.System, devel.System) {
-			return Payload{}, errors.New("matching devel system must be promoted before its packages")
-		}
-		if !stableCompatibilityMatches {
-			return Payload{}, errors.New("matching devel channel metadata must be promoted before its packages")
-		}
-		stable.Packages = &copy
-	}
-	payload.Channels["stable"] = stable
-	return payload, nil
+	return Payload{}, errors.New("component promotion is disabled; publish a checked immutable 1.0.x pair")
 }
 
 func channelMetadataMatches(channel Channel, options UpdateOptions) bool {
 	return channel.Name == "devel" &&
 		channel.Description == "Development version" &&
+		channel.Version == options.Version &&
 		channel.PackageTrain == options.PackageTrain &&
 		channel.ABI == options.ABI &&
 		channel.AltABI == options.AltABI &&
 		channel.Default
 }
 
-func channelCompatibilityEqual(left, right Channel) bool {
-	return left.PackageTrain == right.PackageTrain && left.ABI == right.ABI && left.AltABI == right.AltABI
+func stablePatchAdvances(current, next string) bool {
+	currentMatch := releaseVersionPattern.FindStringSubmatch(current)
+	nextMatch := releaseVersionPattern.FindStringSubmatch(next)
+	if len(currentMatch) != 4 || len(nextMatch) != 4 || currentMatch[1] != "1" || currentMatch[2] != "0" ||
+		nextMatch[1] != "1" || nextMatch[2] != "0" {
+		return false
+	}
+	var currentPatch, nextPatch int
+	if _, err := fmt.Sscanf(currentMatch[3], "%d", &currentPatch); err != nil {
+		return false
+	}
+	if _, err := fmt.Sscanf(nextMatch[3], "%d", &nextPatch); err != nil {
+		return false
+	}
+	return nextPatch > currentPatch
 }
 
 func componentIdentityMatches(component *Component, fingerprint, systemFingerprint, freeBSDPinID,

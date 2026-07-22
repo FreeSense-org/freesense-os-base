@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Resolve the one immutable FreeSense 1.0 release from its checked lock."""
+"""Resolve one immutable FreeSense 1.0.x release from its checked lock."""
 
 from __future__ import annotations
 
@@ -15,17 +15,23 @@ from plan import fingerprint, recipe_digest
 ROOT = Path(__file__).resolve().parents[1]
 SHA = re.compile(r"^[0-9a-f]{40}$")
 SHA256 = re.compile(r"^[0-9a-f]{64}$")
+RELEASE = re.compile(r"^1\.0\.[0-9]+$")
 
 
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--os-base-sha", required=True)
+    parser.add_argument("--release", required=True)
     parser.add_argument("--github-output", type=Path)
     args = parser.parse_args()
-    lock = json.loads((ROOT / "config/releases/1.0.json").read_text(encoding="utf-8"))
+    if not RELEASE.fullmatch(args.release):
+        raise SystemExit("--release must be an exact 1.0.x version")
+    lock = json.loads((ROOT / "config/releases" / f"{args.release}.json").read_text(encoding="utf-8"))
     policy = json.loads((ROOT / "config/build-policy.json").read_text(encoding="utf-8"))
     if lock.get("schema_version") != "freesense.release-lock/v1" or not lock.get("sealed"):
-        raise SystemExit("1.0 release lock is not sealed")
+        raise SystemExit("release lock is not sealed")
+    if lock.get("release") != args.release or lock.get("product_version") != f"{args.release}-RELEASE":
+        raise SystemExit("release lock version does not match the requested release")
     for key in ("source_sha", "system_ports_sha", "packages_sha", "freebsd_source_sha", "freebsd_ports_sha"):
         if not SHA.fullmatch(lock.get(key, "")):
             raise SystemExit(f"invalid release input {key}")
@@ -74,6 +80,7 @@ def main() -> int:
         "freebsd_sha": lock["freebsd_source_sha"], "ports_sha": lock["freebsd_ports_sha"],
         "image_sha256": lock["worker_image_sha256"], "worker_tools_sha256": lock["worker_tools_sha256"],
         "jail_object": lock["jail_object"], "package_train": lock["package_train"],
+        "release_version": lock["release"],
         "product_version": lock["product_version"], "abi": policy["abi"], "altabi": policy["altabi"],
         "public_base_url": policy["public_base_url"],
     }

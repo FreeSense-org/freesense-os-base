@@ -36,10 +36,10 @@ for value in "${FINGERPRINT}" "${PLATFORM_ID}" "${SYSTEM_ID}" "${IMAGE_SHA256}" 
 done
 case "${FREEBSD_PIN_ID}" in ''|*[!0-9a-f]*) echo "invalid FreeBSD pin identity" >&2; exit 1 ;; esac
 [ "${#FREEBSD_PIN_ID}" -eq 64 ] || { echo "invalid FreeBSD pin identity" >&2; exit 1; }
-case "${PRODUCT_VERSION}" in
-  1.0.0-RELEASE|1.1.0-DEVELOPMENT) : ;;
-  *) echo "invalid product version" >&2; exit 1 ;;
-esac
+printf '%s\n' "${PRODUCT_VERSION}" | grep -Eq '^(1\.0\.[0-9]+-RELEASE|1\.1\.0-DEVELOPMENT)$' || {
+  echo "invalid product version" >&2
+  exit 1
+}
 if [ "${STAGE}" = iso ]; then
   case "${CHANNEL_PAYLOAD_SHA256}" in ''|*[!0-9a-f]*)
     echo "ISO requires the exact signed channel payload" >&2; exit 1 ;;

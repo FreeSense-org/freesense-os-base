@@ -223,7 +223,7 @@ describe("least-privilege role policies", () => {
       [],
     ],
     ["pin-writer", 20700, ["v1/inputs/sha256/"], []],
-    ["channel-writer", 4500, [], ["v1/repos.manifest.json"]],
+    ["channel-writer", 4500, [], ["v1/repos.manifest.json", "v1/releases.json"]],
     ["broker-smoke", 900, [], [`v1/smoke/broker/${"a".repeat(40)}.json`]],
   ];
 
@@ -293,6 +293,33 @@ describe("automatic package-chain identity", () => {
       assert.deepEqual(await response.json(), { error: "access_denied" });
     });
   }
+});
+
+describe("stable patch workflow identity", () => {
+  for (const role of ["coordinator", "channel-writer"]) {
+    it(`allows ${role} for a direct stable workflow dispatch`, async () => {
+      const response = await request(
+        role,
+        claimsFor(role, {
+          workflow_ref: protocol.workflows.stable,
+          job_workflow_ref: protocol.workflows.stable,
+          event_name: "workflow_dispatch",
+        }),
+      );
+      assert.equal(response.status, 200);
+    });
+  }
+
+  it("allows stable to call the reusable artifact writer", async () => {
+    const response = await request(
+      "artifact-writer",
+      claimsFor("artifact-writer", {
+        workflow_ref: protocol.workflows.stable,
+        event_name: "workflow_dispatch",
+      }),
+    );
+    assert.equal(response.status, 200);
+  });
 });
 
 describe("identity boundaries", () => {

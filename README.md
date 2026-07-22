@@ -24,10 +24,10 @@ The only mutable object is `v1/repos.manifest.json`: one RSA-signed document tha
 maps `devel` and `stable` to exact repository URLs. The appliance verifies that
 signature before changing its pkg configuration.
 
-`stable-1.0.yml` is a manual, one-time seal. It consumes
-`config/releases/1.0.json`, builds the locked 1.0 System and optional repositories,
-publishes both as a verified `stable` pair, refuses any changed reseal, and
-assembles the stable ISO. Rolling workflows never promote into or modify 1.0.
+`stable-1.0.yml` manually publishes an exact checked 1.0.x lock such as
+`config/releases/1.0.0.json`. Each patch is immutable once published. The
+`stable` pointer may move only to a higher 1.0 patch and always moves as one
+verified System/Packages pair. Rolling workflows never promote 1.1 into stable.
 
 `release.yml` verifies a complete development pair and assembles an ISO from an
 exact selected System repository. During a FreeBSD pin rollover, a newly

@@ -62,7 +62,7 @@ def main() -> int:
 
     payload = json.loads(payload_bytes)
     payload_schema = payload.get("schema_version") if isinstance(payload, dict) else ""
-    if payload_schema not in {"freesense.channels/v1", "freesense.channels/v2"}:
+    if payload_schema not in {"freesense.channels/v1", "freesense.channels/v2", "freesense.channels/v3"}:
         raise SystemExit("unsupported signed channel payload")
     try:
         channel = payload["channels"][args.channel]
@@ -74,6 +74,9 @@ def main() -> int:
     package_train = channel.get("package_train", "")
     if not isinstance(package_train, str) or not re.fullmatch(r"[0-9]+\.[0-9]+", package_train):
         raise SystemExit("selected channel has an invalid package train")
+    release_version = channel.get("version", "")
+    if payload_schema == "freesense.channels/v3" and not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", release_version):
+        raise SystemExit("selected channel has an invalid release version")
     fingerprint = component.get("fingerprint", "")
     if not SHA256.fullmatch(fingerprint):
         raise SystemExit("selected channel component has an invalid fingerprint")
@@ -99,12 +102,13 @@ def main() -> int:
         "abi": channel["abi"],
         "altabi": channel["altabi"],
         "channel": args.channel,
+        "release_version": release_version,
         "payload_sha256": hashlib.sha256(payload_bytes).hexdigest(),
         "payload_base64": envelope["payload"],
         "signature_base64": envelope["signature"],
     }
     declared_pin_id = component.get("freebsd_pin_id", "")
-    if payload_schema == "freesense.channels/v2" and not SHA256.fullmatch(declared_pin_id):
+    if payload_schema in {"freesense.channels/v2", "freesense.channels/v3"} and not SHA256.fullmatch(declared_pin_id):
         raise SystemExit("selected channel component has an invalid FreeBSD pin identity")
     if args.component == "packages":
         system_fingerprint = component.get("system_fingerprint", "")
@@ -138,7 +142,8 @@ def main() -> int:
                 or packages_generation <= 0
                 or not isinstance(packages_verified, bool)
                 or selected_packages.get("url") != expected_packages_url
-                or (payload_schema == "freesense.channels/v2" and packages_pin_id != declared_pin_id)
+                or (payload_schema in {"freesense.channels/v2", "freesense.channels/v3"}
+                    and packages_pin_id != declared_pin_id)
             ):
                 raise SystemExit("selected channel packages conflict with its System")
             values["packages_fingerprint"] = packages_fingerprint

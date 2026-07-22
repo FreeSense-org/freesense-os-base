@@ -122,6 +122,7 @@ jobs:
         run: |
           key=$(mktemp); trap 'rm -f "$key"' EXIT; chmod 600 "$key"; printf '%s' "${SIGNING_KEY}" >"$key"
           "${RUNNER_TEMP}/fsbuild" channel update --component system \
+            --version "1.1.0" \
             --fingerprint "${{ needs.plan.outputs.system }}" \
             --url "${{ needs.plan.outputs.public_base_url }}/artifacts/system/${{ needs.plan.outputs.system }}/amd64" \
             --generation "${{ needs.plan.outputs.generation }}" --package-train "${{ needs.plan.outputs.package_train }}" \
