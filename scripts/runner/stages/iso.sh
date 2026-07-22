@@ -7,18 +7,21 @@ phase iso-assembly-adapter
 if ! grep -Fq 'LOGFILE="${BUILDER_LOGS}/isoimage.${TARGET}"' \
   tools/ci/freesense-assemble-iso.sh || \
   ! grep -Fq 'pkg add /tmp/pkg-bootstrap.pkg' \
+  tools/ci/freesense-assemble-iso.sh || \
+  ! grep -Fq 'pkg-closure.log' \
   tools/ci/freesense-assemble-iso.sh; then
   [ "${SOURCE_SHA}" = b094eb3c173b675f224c33a0ad2968df98dedb58 ] || {
     echo "unsupported ISO assembler source: ${SOURCE_SHA}" >&2
     exit 1
   }
-  git fetch -q --depth=1 origin cc192dca3b40f5009c57e221032fe07c3f8e8e2b
-  git restore --source=cc192dca3b40f5009c57e221032fe07c3f8e8e2b -- \
+  git fetch -q --depth=1 origin db376a9be2474e1e4aaadfae0bbfe9ca9c3bb2c6
+  git restore --source=db376a9be2474e1e4aaadfae0bbfe9ca9c3bb2c6 -- \
     tools/builder_common.sh tools/ci/freesense-assemble-iso.sh
 fi
 grep -Fq 'LOGFILE="${BUILDER_LOGS}/isoimage.${TARGET}"' \
   tools/ci/freesense-assemble-iso.sh
 grep -Fq 'pkg add /tmp/pkg-bootstrap.pkg' tools/ci/freesense-assemble-iso.sh
+grep -Fq 'pkg-closure.log' tools/ci/freesense-assemble-iso.sh
 phase channel-fetch
 printf '%s' "${CHANNEL_PAYLOAD_B64}" | openssl base64 -d -A >/tmp/channel-payload.json
 printf '%s' "${CHANNEL_SIGNATURE_B64}" | openssl base64 -d -A >/tmp/channel-signature.bin
