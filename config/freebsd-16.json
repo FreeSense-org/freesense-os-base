@@ -2,25 +2,25 @@
   "schema_version": "freesense.freebsd-pin/v2",
   "ready": true,
   "freebsd_source": {
-    "commit": "60382b4a04fa39e9bf65b964b1b7b4bed6eaa56a",
-    "revision_prefix": "60382b4a04fa",
-    "build_date": "20260713"
+    "commit": "7fc2c9f688efb12beddd58a01628157e32b632b0",
+    "revision_prefix": "7fc2c9f688ef",
+    "build_date": "20260720"
   },
   "freebsd_ports": {
-    "commit": "a70c5c3fd44b49eb692a4703fe91a62b37c58ce7"
+    "commit": "0cd7b5a3f54a52042f1482e004e2ce70fe6c2275"
   },
   "jail_seed": {
     "url": "https://download.freebsd.org/snapshots/amd64/16.0-CURRENT/base.txz",
-    "upstream_sha256": "2663464742f93e8b7d0142db9d1b40b1e1d173922f3cbadd2dbbfed739d29776",
-    "object": "inputs/sha256/2663464742f93e8b7d0142db9d1b40b1e1d173922f3cbadd2dbbfed739d29776",
-    "sha256": "2663464742f93e8b7d0142db9d1b40b1e1d173922f3cbadd2dbbfed739d29776",
-    "size": 174355080
+    "upstream_sha256": "37144a5ca7535e1d535133185d0f23ccf7ee8dfb7a476f71e421ad7865bc7b00",
+    "object": "inputs/sha256/37144a5ca7535e1d535133185d0f23ccf7ee8dfb7a476f71e421ad7865bc7b00",
+    "sha256": "37144a5ca7535e1d535133185d0f23ccf7ee8dfb7a476f71e421ad7865bc7b00",
+    "size": 174216896
   },
   "worker_image": {
     "url": "https://download.freebsd.org/snapshots/VM-IMAGES/16.0-CURRENT/amd64/Latest/FreeBSD-16.0-CURRENT-amd64-BASIC-CLOUDINIT-ufs.qcow2.xz",
-    "upstream_compressed_sha256": "8e7afe7baf899bc5ba62bf5af2b7932c3c92adfebf3e7f4412529fb6205f6015",
-    "object": "inputs/sha256/51c6f809d43b22930415d284565c9d4405d197a71d2c123008fdcc6d1ec403e7",
-    "sha256": "51c6f809d43b22930415d284565c9d4405d197a71d2c123008fdcc6d1ec403e7",
-    "size": 1030946816
+    "upstream_compressed_sha256": "6461d0f589e4c27923ad92dada13b84158bacca47114bd2b6d3897651f12191c",
+    "object": "inputs/sha256/09eb8662dd1c3f1154b5f23d068205efded5193825a5daa7e2c2b096f71c9a07",
+    "sha256": "09eb8662dd1c3f1154b5f23d068205efded5193825a5daa7e2c2b096f71c9a07",
+    "size": 1031274496
   }
 }
