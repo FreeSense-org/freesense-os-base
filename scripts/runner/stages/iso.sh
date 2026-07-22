@@ -3,12 +3,6 @@ fetch_input "${JAIL_OBJECT}" /root/jail-base.txz
 configure_source
 fetch_repository system "${SYSTEM_ID}" /root/system-repo
 cd /root/freesense-src
-phase iso-assembly-adapter
-if [ "${SOURCE_SHA}" = b094eb3c173b675f224c33a0ad2968df98dedb58 ]; then
-  git fetch -q --depth=1 origin dac445e382738d4c5f47edd05d871a2908085e37
-  git restore --source=dac445e382738d4c5f47edd05d871a2908085e37 -- \
-    tools/builder_common.sh tools/ci/freesense-assemble-iso.sh
-fi
 grep -Fqx '# FREESENSE_ISO_ASSEMBLY_API=2' \
   tools/ci/freesense-assemble-iso.sh || {
   echo "unsupported ISO assembler source: ${SOURCE_SHA}" >&2

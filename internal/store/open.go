@@ -52,19 +52,14 @@ func Open(rawURL string) (Backend, error) {
 				"AWS_SESSION_TOKEN is required for S3 access in GitHub Actions and temporary-credential mode",
 			)
 		}
-		exclusiveDelete := os.Getenv("FSBUILD_EXCLUSIVE_DELETE")
-		if exclusiveDelete != "" && exclusiveDelete != "true" {
-			return nil, errors.New("FSBUILD_EXCLUSIVE_DELETE must be exactly true when set")
-		}
 		return NewS3(S3Config{
-			Endpoint:        firstEnvironment("FSBUILD_S3_ENDPOINT", "AWS_ENDPOINT_URL_S3", "AWS_ENDPOINT_URL"),
-			Region:          firstEnvironmentDefault("auto", "FSBUILD_S3_REGION", "AWS_REGION", "AWS_DEFAULT_REGION"),
-			Bucket:          parsed.Host,
-			Prefix:          strings.Trim(parsed.Path, "/"),
-			AccessKeyID:     os.Getenv("AWS_ACCESS_KEY_ID"),
-			SecretKey:       os.Getenv("AWS_SECRET_ACCESS_KEY"),
-			SessionToken:    sessionToken,
-			ExclusiveDelete: exclusiveDelete == "true",
+			Endpoint:     firstEnvironment("FSBUILD_S3_ENDPOINT", "AWS_ENDPOINT_URL_S3", "AWS_ENDPOINT_URL"),
+			Region:       firstEnvironmentDefault("auto", "FSBUILD_S3_REGION", "AWS_REGION", "AWS_DEFAULT_REGION"),
+			Bucket:       parsed.Host,
+			Prefix:       strings.Trim(parsed.Path, "/"),
+			AccessKeyID:  os.Getenv("AWS_ACCESS_KEY_ID"),
+			SecretKey:    os.Getenv("AWS_SECRET_ACCESS_KEY"),
+			SessionToken: sessionToken,
 		})
 	default:
 		return nil, fmt.Errorf("unsupported store URL scheme %q", parsed.Scheme)

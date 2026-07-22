@@ -234,15 +234,6 @@ func TestS3ConditionalContract(t *testing.T) {
 			writer.Header().Set("ETag", `"`+currentETag+`"`)
 			writer.Header().Set("x-amz-meta-fsbuild-sha256", currentSHA256)
 			_, _ = writer.Write(data)
-		case http.MethodDelete:
-			if request.Header.Get("If-Match") != "" {
-				http.Error(writer, "conditional delete is not supported by R2", http.StatusBadRequest)
-				return
-			}
-			data = nil
-			currentETag = ""
-			currentSHA256 = ""
-			writer.WriteHeader(http.StatusNoContent)
 		default:
 			writer.WriteHeader(http.StatusMethodNotAllowed)
 		}
@@ -252,8 +243,8 @@ func TestS3ConditionalContract(t *testing.T) {
 	backend, err := NewS3(S3Config{
 		Endpoint: server.URL, Region: "auto", Bucket: "bucket", Prefix: "prefix",
 		AccessKeyID: "access", SecretKey: "secret",
-		SessionToken: "temporary-session", ExclusiveDelete: true,
-		Client: server.Client(),
+		SessionToken: "temporary-session",
+		Client:       server.Client(),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -274,22 +265,14 @@ func TestS3ConditionalContract(t *testing.T) {
 	if _, created, err := backend.PutIfAbsent(ctx, "object", BytesContent([]byte("ignored"))); err != nil || created {
 		t.Fatalf("PutIfAbsent retry created=%v err=%v", created, err)
 	}
-	updated, err := backend.CompareAndSwap(ctx, "object", info.ETag, BytesContent([]byte("second")))
+	second := BytesContent([]byte("second"))
+	_, err = backend.CompareAndSwap(ctx, "object", info.ETag, second)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := backend.DeleteIfMatch(ctx, "object", info.ETag); err != ErrPrecondition {
-		t.Fatalf("stale DeleteIfMatch error = %v", err)
-	}
 	if object, err := backend.Get(ctx, "object"); err != nil ||
-		string(object.Data) != "second" {
-		t.Fatalf("stale delete changed object = %#v, err=%v", object, err)
-	}
-	if err := backend.DeleteIfMatch(ctx, "object", updated.ETag); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := backend.Head(ctx, "object"); err != ErrNotFound {
-		t.Fatalf("Head after delete error = %v", err)
+		string(object.Data) != "second" || object.SHA256 != second.SHA256 {
+		t.Fatalf("object after CompareAndSwap = %#v, err=%v", object, err)
 	}
 }
 
@@ -326,102 +309,6 @@ func TestS3ErrorIncludesBoundedXMLCodeAndMessage(t *testing.T) {
 			"400 Bad Request (InvalidArgument: request shape is unsupported)",
 		) {
 		t.Fatalf("S3 error = %v", err)
-	}
-}
-
-func TestS3DeleteRequiresExclusiveWorkflowLease(t *testing.T) {
-	backend, err := NewS3(S3Config{
-		Endpoint: "https://example.invalid", Region: "auto", Bucket: "bucket",
-		AccessKeyID: "access", SecretKey: "secret",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	err = backend.DeleteIfMatch(context.Background(), "object", "etag")
-	if err == nil || !strings.Contains(err.Error(), "exclusive storage-maintenance lease") {
-		t.Fatalf("delete without exclusive lease error = %v", err)
-	}
-}
-
-func TestS3ListUsesBucketRootAndStripsConfiguredPrefix(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		if request.Header.Get("Authorization") == "" {
-			http.Error(writer, "unsigned", http.StatusUnauthorized)
-			return
-		}
-		if request.Method != http.MethodGet || request.URL.Path != "/bucket" {
-			http.Error(writer, "wrong list request path", http.StatusBadRequest)
-			return
-		}
-		if request.URL.Query().Get("list-type") != "2" ||
-			request.URL.Query().Get("prefix") != "prefix/cas/" {
-			http.Error(writer, "wrong list query", http.StatusBadRequest)
-			return
-		}
-		writer.Header().Set("Content-Type", "application/xml")
-		_, _ = io.WriteString(writer, `<ListBucketResult>
-<IsTruncated>false</IsTruncated>
-<Contents>
-<Key>prefix/cas/object</Key>
-<LastModified>2026-07-17T12:00:00Z</LastModified>
-<ETag>"abc123"</ETag>
-<Size>5</Size>
-</Contents>
-</ListBucketResult>`)
-	}))
-	defer server.Close()
-	backend, err := NewS3(S3Config{
-		Endpoint: server.URL, Region: "auto", Bucket: "bucket", Prefix: "prefix",
-		AccessKeyID: "access", SecretKey: "secret", Client: server.Client(),
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	objects, err := backend.List(context.Background(), "cas/")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(objects) != 1 || objects[0].Key != "cas/object" ||
-		objects[0].ETag != "abc123" || objects[0].Size != 5 {
-		t.Fatalf("list objects = %#v", objects)
-	}
-}
-
-func TestS3RootListPreservesConfiguredNamespaceBoundary(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		if request.Method != http.MethodGet ||
-			request.URL.Path != "/bucket" ||
-			request.URL.Query().Get("list-type") != "2" ||
-			request.URL.Query().Get("prefix") != "v1/" {
-			http.Error(writer, "root list escaped configured namespace", http.StatusBadRequest)
-			return
-		}
-		writer.Header().Set("Content-Type", "application/xml")
-		_, _ = io.WriteString(writer, `<ListBucketResult>
-<IsTruncated>false</IsTruncated>
-<Contents>
-<Key>v1/smoke/object</Key>
-<LastModified>2026-07-17T12:00:00Z</LastModified>
-<ETag>"abc123"</ETag>
-<Size>5</Size>
-</Contents>
-</ListBucketResult>`)
-	}))
-	defer server.Close()
-	backend, err := NewS3(S3Config{
-		Endpoint: server.URL, Region: "auto", Bucket: "bucket",
-		Prefix: "v1", AccessKeyID: "access",
-		SecretKey: "secret", Client: server.Client(),
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	objects, err := backend.List(context.Background(), "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(objects) != 1 || objects[0].Key != "smoke/object" {
-		t.Fatalf("root list objects = %#v", objects)
 	}
 }
 

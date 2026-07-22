@@ -40,9 +40,6 @@ func (m *memoryStore) PutIfAbsent(_ context.Context, key string, content store.C
 func (m *memoryStore) CompareAndSwap(context.Context, string, string, store.Content) (store.ObjectInfo, error) {
 	return store.ObjectInfo{}, errors.New("unused")
 }
-func (m *memoryStore) DeleteIfMatch(context.Context, string, string) error {
-	return errors.New("unused")
-}
 
 func TestGenerationReservationIsStableAcrossRetries(t *testing.T) {
 	backend := newMemoryStore()

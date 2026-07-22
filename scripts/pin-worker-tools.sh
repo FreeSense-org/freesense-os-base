@@ -96,12 +96,8 @@ LC_ALL=C tar --sort=name --format=pax --mtime="$bundle_mtime" \
   -cf "$output_part" -C "$bundle_root" .
 mv "$output_part" "$output"
 
-bundle_sha256=$(sha256sum "$output" | awk '{print $1}')
-bundle_size=$(stat -c %s "$output")
 jq -n \
-  --arg bundle_sha256 "$bundle_sha256" \
   --arg ports_sha "$ports_sha" \
-  --argjson bundle_size "$bundle_size" \
-  '{schema_version:"freesense.worker-tools-pin/v1",bundle_sha256:$bundle_sha256,bundle_size:$bundle_size,ports_sha:$ports_sha}' \
+  '{schema_version:"freesense.worker-tools-pin/v1",ports_sha:$ports_sha}' \
   >"$report_part"
 mv "$report_part" "$report"

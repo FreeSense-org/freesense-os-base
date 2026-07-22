@@ -1,19 +1,13 @@
 {
   "schema_version": "freesense.build-policy/v1",
-  "architecture": "amd64",
   "package_train": "1.1",
   "abi": "FreeBSD:16:amd64",
   "altabi": "freebsd:16:x86:64",
   "public_base_url": "https://pkg.freesense.org/v1",
-  "store_prefix": "v1",
   "stable_soak_hours": 168,
   "runner": {
     "vcpus": 12,
     "memory_mib": 32768,
     "disk_gib": 160
-  },
-  "retention": {
-    "unreferenced_days": 14,
-    "devel_generations": 2
   }
 }
