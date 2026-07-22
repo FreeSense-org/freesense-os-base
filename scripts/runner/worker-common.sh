@@ -387,6 +387,65 @@ fetch_input() {
   phase input-ready
 }
 
+verify_repository() (
+  set -eu
+  set -o pipefail
+  repository=$1
+  archive=${repository}/packagesite.pkg
+  work=$(mktemp -d /tmp/freesense-repository.XXXXXX)
+  trap 'rm -rf "${work}"' EXIT
+  trap 'exit 129' HUP
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+
+  [ -s "${archive}" ] || {
+    echo "repository has no signed package catalog" >&2
+    return 1
+  }
+  [ -s /root/sign/repo.pub ] || {
+    echo "trusted repository public key is missing" >&2
+    return 1
+  }
+  tar -xpf "${archive}" -C "${work}" packagesite.yaml packagesite.yaml.sig
+  for file in packagesite.yaml packagesite.yaml.sig; do
+    [ -f "${work}/${file}" ] && [ ! -L "${work}/${file}" ] || {
+      echo "signed repository catalog member is invalid: ${file}" >&2
+      return 1
+    }
+  done
+  digest=$(sha256 -q "${work}/packagesite.yaml")
+  printf '%s' "${digest}" | openssl dgst -sha256 -verify /root/sign/repo.pub \
+    -signature "${work}/packagesite.yaml.sig" >/dev/null
+
+  jq -Rr '
+    select(length > 0) | fromjson |
+    if ((.repopath | type) == "string" and
+        (.repopath | test("^All/[^/]+[.]pkg$")) and
+        ((.repopath | test("[\\t\\r\\n]")) | not) and
+        (.sum | type) == "string" and
+        (.sum | test("^[0-9a-f]{64}$")))
+    then [.repopath, .sum] | @tsv
+    else error("invalid signed package catalog record")
+    end
+  ' "${work}/packagesite.yaml" | LC_ALL=C sort >"${work}/expected"
+  [ -s "${work}/expected" ] || {
+    echo "signed package catalog is empty" >&2
+    return 1
+  }
+
+  : >"${work}/actual"
+  for package in "${repository}"/All/*.pkg; do
+    [ -f "${package}" ] || continue
+    printf 'All/%s\t%s\n' "${package##*/}" "$(sha256 -q "${package}")" \
+      >>"${work}/actual"
+  done
+  LC_ALL=C sort -o "${work}/actual" "${work}/actual"
+  cmp -s "${work}/expected" "${work}/actual" || {
+    echo "repository packages do not match the signed catalog" >&2
+    return 1
+  }
+)
+
 fetch_repository() {
   kind=$1 id=$2 destination=$3
   part="${destination}.part"
@@ -400,6 +459,9 @@ fetch_repository() {
     "${part}/complete.json"
   jq -e --arg fingerprint "${id}" '.fingerprint == $fingerprint' \
     "${part}/complete.json" >/dev/null
+  phase repository-verify
+  verify_repository "${part}"
+  phase repository-verified
   mv "${part}" "${destination}"
   phase repository-ready
 }

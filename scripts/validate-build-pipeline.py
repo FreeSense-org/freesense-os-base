@@ -132,6 +132,8 @@ for required in (
     "tool_install_status", "FreeSense phase failed:", "${destination}.part",
     "--error-on-no-transfer", "immutable input checksum mismatch", "/root/sign/repo.pub",
     "DATESTRING", "BUILTDATESTRING", "trusted package fingerprint",
+    "verify_repository()", "packagesite.yaml.sig", "invalid signed package catalog record",
+    "repository packages do not match the signed catalog",
 ):
     if required not in common:
         raise SystemExit(f"worker failure contract is missing {required!r}")
