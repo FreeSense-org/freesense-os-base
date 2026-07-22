@@ -322,6 +322,7 @@ def main() -> int:
             ROOT / "scripts/runner/install-worker-tools.sh",
             ROOT / "scripts/runner/worker-common.sh",
             ROOT / "scripts/runner/stages/iso.sh",
+            ROOT / "patches/0005-installer.patch",
         ]),
     })
     identifiers = {"platform": platform, "system": system, "packages": packages, "iso": iso}
