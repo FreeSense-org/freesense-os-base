@@ -149,12 +149,6 @@ configure_source() {
     echo "trusted package fingerprint does not match the repository signing key" >&2
     return 1
   fi
-  packages_url=""
-  packages_fingerprint=""
-  if [ "${STAGE}" = packages ]; then
-    packages_url="${PUBLIC_BASE_URL}/artifacts/packages/${PACKAGE_TRAIN}/${FINGERPRINT}/amd64"
-    packages_fingerprint="${FINGERPRINT}"
-  fi
   cat >>build.conf <<EOF
 export PRODUCT_NAME_SUFFIX=""
 export POUDRIERE_BRANCH=main
@@ -165,10 +159,7 @@ export FREESENSE_PORTS_COMMIT="${PORTS_SHA}"
 export FREESENSE_PACKAGE_TRAIN="${PACKAGE_TRAIN}"
 export PRODUCT_REVISION="${GENERATION}"
 export FREESENSE_DIST_WORLD_ARCHIVE="/root/jail-base.txz"
-export FREESENSE_SYSTEM_REPO_URL="${PUBLIC_BASE_URL}/artifacts/system/${SYSTEM_ID}/amd64"
 export FREESENSE_SYSTEM_FINGERPRINT="${SYSTEM_ID}"
-export FREESENSE_PACKAGES_REPO_URL="${packages_url}"
-export FREESENSE_PACKAGES_FINGERPRINT="${packages_fingerprint}"
 export FREESENSE_CHANNEL_PUBLIC_KEY_FILE="/root/sign/channel-public.pem"
 export DO_NOT_SIGN_PKG_REPO=1
 export FREESENSE_MAKE_JOBS_NUMBER_LIMIT=4

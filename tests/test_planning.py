@@ -29,6 +29,7 @@ def load_script(name: str, relative: str):
 plan = load_script("freesense_plan", "scripts/plan.py")
 channel = load_script("freesense_channel", "scripts/channel.py")
 FINGERPRINT = "a" * 64
+PACKAGES_FINGERPRINT = "b" * 64
 
 
 class Response(io.BytesIO):
@@ -39,7 +40,13 @@ class Response(io.BytesIO):
         self.close()
 
 
-def signed_envelope(component: str = "system", *, system_fingerprint: str | None = None):
+def signed_envelope(
+    component: str = "system",
+    *,
+    system_fingerprint: str | None = None,
+    include_packages: bool = False,
+    verified: bool = False,
+):
     artifact_path = f"{component}/{FINGERPRINT}"
     if component == "packages":
         artifact_path = f"packages/1.1/{FINGERPRINT}"
@@ -48,11 +55,23 @@ def signed_envelope(component: str = "system", *, system_fingerprint: str | None
         "url": f"https://pkg.freesense.org/v1/artifacts/{artifact_path}/amd64",
         "generation": 7,
         "published_at": "2026-07-21T00:00:00Z",
-        "verified": False,
+        "verified": verified,
     }
     if system_fingerprint is not None:
         selected["system_fingerprint"] = system_fingerprint
     components = {component: selected}
+    if component == "system" and include_packages:
+        components["packages"] = {
+            "fingerprint": PACKAGES_FINGERPRINT,
+            "system_fingerprint": FINGERPRINT,
+            "url": (
+                "https://pkg.freesense.org/v1/artifacts/packages/1.1/"
+                f"{PACKAGES_FINGERPRINT}/amd64"
+            ),
+            "generation": 8,
+            "published_at": "2026-07-21T00:05:00Z",
+            "verified": verified,
+        }
     if component == "packages" and system_fingerprint is not None:
         components["system"] = {
             "fingerprint": system_fingerprint,
@@ -132,7 +151,10 @@ def system_closure(*, channel_name: str = "devel"):
         "artifact_signing_public_key_sha256": hashlib.sha256(
             (ROOT / "config/channel-signing-public.pem").read_bytes()
         ).hexdigest(),
-        "packages_fingerprint": "",
+        "packages_fingerprint": PACKAGES_FINGERPRINT,
+        "packages_generation": 8,
+        "packages_verified": "true",
+        "verified": "true",
     }
 
 
@@ -288,6 +310,32 @@ class PlannerChannelTests(unittest.TestCase):
         self.assertEqual(values["artifact_worker_tools_sha256"], "f" * 64)
         self.assertEqual(values["packages_fingerprint"], "")
 
+    def test_system_channel_reader_exports_verified_packages_binding(self):
+        envelope, _ = signed_envelope("system", include_packages=True, verified=True)
+        marker = completion_marker()
+        responses = iter((envelope, json.dumps(marker).encode()))
+
+        with tempfile.TemporaryDirectory() as directory:
+            key = Path(directory, "channel.pem")
+            output = Path(directory, "output.json")
+            key.write_text("test")
+            argv = [
+                "channel.py", "--public-key", str(key), "--channel", "devel",
+                "--component", "system", "--json-output", str(output),
+            ]
+            with mock.patch.object(sys, "argv", argv), mock.patch.object(
+                channel.urllib.request,
+                "urlopen",
+                side_effect=lambda *_args, **_kwargs: Response(next(responses)),
+            ), mock.patch.object(subprocess, "run"), redirect_stdout(io.StringIO()):
+                self.assertEqual(channel.main(), 0)
+            values = json.loads(output.read_text())
+
+        self.assertEqual(values["verified"], "true")
+        self.assertEqual(values["packages_fingerprint"], PACKAGES_FINGERPRINT)
+        self.assertEqual(values["packages_generation"], 8)
+        self.assertEqual(values["packages_verified"], "true")
+
     def test_iso_plan_uses_selected_system_closure_without_remote_resolution(self):
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory, "output")
@@ -308,6 +356,23 @@ class PlannerChannelTests(unittest.TestCase):
         self.assertEqual(values["os_base_sha"], "3" * 40)
         self.assertEqual(values["image_sha256"], "6" * 64)
         self.assertEqual(values["worker_tools_sha256"], "9" * 64)
+
+    def test_iso_plan_rejects_pending_channel_pair(self):
+        for field, value in (
+            ("verified", "false"),
+            ("packages_fingerprint", ""),
+            ("packages_verified", "false"),
+            ("packages_generation", 0),
+        ):
+            with self.subTest(field=field), tempfile.TemporaryDirectory() as directory:
+                closure = system_closure()
+                closure[field] = value
+                closure_path = Path(directory, "system.json")
+                closure_path.write_text(json.dumps(closure))
+                argv = ["plan.py", "iso", "--system-closure", str(closure_path)]
+                with mock.patch.object(sys, "argv", argv), redirect_stdout(io.StringIO()):
+                    with self.assertRaisesRegex(SystemExit, "not a verified System/Packages pair"):
+                        plan.main()
 
     def test_packages_inherit_published_system_closure(self):
         with tempfile.TemporaryDirectory() as directory:

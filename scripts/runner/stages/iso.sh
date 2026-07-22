@@ -20,8 +20,10 @@ jq -e --arg channel "${CHANNEL}" --arg system "${SYSTEM_ID}" \
    .channels[$channel].package_train == $train and
    .channels[$channel].system.fingerprint == $system and
    .channels[$channel].system.generation == $generation and
-   (.channels[$channel].packages == null or
-    .channels[$channel].packages.system_fingerprint == $system)' \
+   .channels[$channel].system.verified == true and
+   (.channels[$channel].packages | type) == "object" and
+   .channels[$channel].packages.verified == true and
+   .channels[$channel].packages.system_fingerprint == $system' \
   /tmp/channel-payload.json >/dev/null
 export FREESENSE_ASSEMBLY_CHANNEL="${CHANNEL}"
 export FREESENSE_ASSEMBLY_CHANNEL_PAYLOAD=/tmp/channel-payload.json

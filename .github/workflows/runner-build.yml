@@ -30,7 +30,7 @@ jobs:
     concurrency:
       group: freesense-kvm-host
       cancel-in-progress: false
-    timeout-minutes: 345
+    timeout-minutes: 360
     environment: build
     permissions:
       contents: read
@@ -116,7 +116,18 @@ jobs:
           FSBUILD: ${{ runner.temp }}/fsbuild
         run: >-
           scripts/runner/run-vm.sh --image-sha256 "${IMAGE_SHA256}"
-          --script "${RUNNER_TEMP}/worker.sh" --timeout 19800
+          --script "${RUNNER_TEMP}/worker.sh" --timeout 18000
+      - name: Boot-check completed ISO
+        if: inputs.stage == 'iso'
+        run: >-
+          bash scripts/runner/smoke-iso.sh
+          --public-base-url "${PUBLIC_BASE_URL}"
+          --fingerprint "${FINGERPRINT}"
+          --system "${SYSTEM_ID}"
+          --generation "${GENERATION}"
+          --channel "${CHANNEL}"
+          --package-train "${PACKAGE_TRAIN}"
+          --channel-payload "${CHANNEL_PAYLOAD_SHA256}"
       - name: Clean sensitive runner files
         if: always()
         run: >-
