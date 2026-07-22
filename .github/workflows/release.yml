@@ -5,7 +5,7 @@ on:
     inputs:
       operation:
         type: choice
-        options: [verify, iso, retry-stable-1.0-iso]
+        options: [verify, iso, retry-stable-1.0-iso, sync-downloads]
         default: verify
         required: true
       channel:
@@ -98,6 +98,46 @@ jobs:
         run: >-
           bash scripts/verify-release.sh "${RUNNER_TEMP}/channel.pub"
           "${RUNNER_TEMP}/channel.key" "${RUNNER_TEMP}/fsbuild"
+
+  sync-downloads:
+    if: github.event_name == 'workflow_dispatch' && inputs.operation == 'sync-downloads'
+    runs-on: ubuntu-24.04
+    environment: channel-publisher
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with: {go-version-file: go.mod, cache: false}
+      - run: go build -trimpath -o "${RUNNER_TEMP}/fsbuild" ./cmd/fsbuild
+      - name: Acquire download-index writer
+        env:
+          R2_CREDENTIAL_BROKER_URL: ${{ vars.R2_CREDENTIAL_BROKER_URL }}
+          R2_CREDENTIAL_BROKER_AUDIENCE: ${{ vars.R2_CREDENTIAL_BROKER_AUDIENCE }}
+          R2_BUCKET: ${{ vars.R2_BUILD_BUCKET }}
+          R2_ENDPOINT: ${{ vars.R2_ENDPOINT }}
+        run: >-
+          "${RUNNER_TEMP}/fsbuild" credentials acquire --broker-url "${R2_CREDENTIAL_BROKER_URL}"
+          --audience "${R2_CREDENTIAL_BROKER_AUDIENCE}" --role channel-writer
+          --expected-bucket "${R2_BUCKET}" --expected-prefix v1 --expected-endpoint "${R2_ENDPOINT}"
+          --github-env "${GITHUB_ENV}"
+      - name: Migrate the checked legacy feed into independent channel files
+        env:
+          R2_BUCKET: ${{ vars.R2_BUILD_BUCKET }}
+          R2_ENDPOINT: ${{ vars.R2_ENDPOINT }}
+        run: |
+          set -euo pipefail
+          output="${RUNNER_TEMP}/releases"
+          python3 scripts/migrate_downloads.py --output-dir "${output}"
+          for channel in stable devel; do
+            file="${output}/${channel}.json"
+            [[ -f "${file}" ]] || continue
+            aws s3 cp "${file}" "s3://${R2_BUCKET}/v1/releases/${channel}.json" \
+              --endpoint-url "${R2_ENDPOINT}" --no-progress --content-type application/json \
+              --cache-control 'public, max-age=60, must-revalidate'
+            curl --fail --silent --show-error --location \
+              "https://pkg.freesense.org/v1/releases/${channel}.json?run=${GITHUB_RUN_ID}" \
+              --output "${RUNNER_TEMP}/${channel}.published.json"
+            diff <(jq -S . "${file}") <(jq -S . "${RUNNER_TEMP}/${channel}.published.json")
+          done
   iso-plan:
     needs: release_gate
     if: >-
@@ -215,7 +255,8 @@ jobs:
             --generation "${{ needs.iso-plan.outputs.generation }}" \
             --source "${{ needs.iso-plan.outputs.source_sha }}" --ports "${{ needs.iso-plan.outputs.ports_sha }}" \
             --os-definition "${GITHUB_SHA}" --freebsd "${{ needs.iso-plan.outputs.freebsd_sha }}" \
-            --output "${RUNNER_TEMP}/releases.json"
-          aws s3 cp "${RUNNER_TEMP}/releases.json" "s3://${R2_BUCKET}/v1/releases.json" \
+            --output "${RUNNER_TEMP}/${{ needs.iso-plan.outputs.channel }}.json"
+          aws s3 cp "${RUNNER_TEMP}/${{ needs.iso-plan.outputs.channel }}.json" \
+            "s3://${R2_BUCKET}/v1/releases/${{ needs.iso-plan.outputs.channel }}.json" \
             --endpoint-url "${R2_ENDPOINT}" --no-progress --content-type application/json \
             --cache-control 'public, max-age=60, must-revalidate'

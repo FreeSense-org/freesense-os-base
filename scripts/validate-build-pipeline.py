@@ -71,6 +71,14 @@ for value in ("Require an upstream publication and complete release pair",
             f"automatic ISO publication gating is missing {value!r}")
 require('expected_system = values["built_against_system"]' in read("scripts/channel.py"),
         "rebound optional packages are not verified against their build System")
+for value in ("sync-downloads", "scripts/migrate_downloads.py",
+              "/v1/releases/${{ needs.iso-plan.outputs.channel }}.json"):
+    require(value in release_workflow,
+            f"independent download publication is missing {value!r}")
+require("/v1/releases/stable.json" in stable_workflow,
+        "stable publication does not write its independent download document")
+require("s3://${R2_BUCKET}/v1/releases.json" not in release_workflow + stable_workflow,
+        "release workflows still overwrite the combined legacy download index")
 require("freebsd_pin_id" in reusable and "product_version" in reusable,
         "reusable builds omit the release or FreeBSD pin identity")
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build the public website download index from a boot-tested ISO marker."""
+"""Build one canonical channel download document from a boot-tested ISO marker."""
 
 from __future__ import annotations
 
@@ -15,6 +15,8 @@ import urllib.request
 SHA = re.compile(r"^[0-9a-f]{40}$")
 SHA256 = re.compile(r"^[0-9a-f]{64}$")
 VERSION = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+$")
+ISO_FILE = re.compile(r"^FreeSense-[A-Za-z0-9.-]+-amd64\.iso$")
+DOWNLOAD_SCHEMA = "freesense.download/v1"
 
 
 def version_tuple(value: str) -> tuple[int, int, int]:
@@ -32,6 +34,35 @@ def fetch_json(url: str, missing=None):
         if error.code == 404:
             return missing
         raise
+
+
+def validate_download(release, channel: str, base_url: str) -> None:
+    if (not isinstance(release, dict) or release.get("schema_version") != DOWNLOAD_SCHEMA
+            or release.get("channel") != channel
+            or not VERSION.fullmatch(release.get("version", ""))
+            or not SHA256.fullmatch(release.get("fingerprint", ""))
+            or not SHA256.fullmatch(release.get("system", ""))
+            or not isinstance(release.get("generation"), int) or release["generation"] <= 0
+            or not ISO_FILE.fullmatch(release.get("iso", ""))
+            or not SHA256.fullmatch(release.get("sha256", ""))
+            or not isinstance(release.get("size"), int) or release["size"] <= 0
+            or not isinstance(release.get("published_at"), str)):
+        raise SystemExit(f"existing {channel} download document is invalid")
+    artifact_url = f"{base_url}/artifacts/iso/{release['fingerprint']}"
+    if (release.get("marker_url") != artifact_url + "/complete.json"
+            or release.get("url") != artifact_url + "/" + release["iso"]):
+        raise SystemExit(f"existing {channel} download document has non-canonical URLs")
+    provenance = release.get("provenance")
+    if (not isinstance(provenance, dict)
+            or any(not SHA.fullmatch(provenance.get(name, ""))
+                   for name in ("source", "ports", "os_definition", "freebsd"))):
+        raise SystemExit(f"existing {channel} download document has invalid provenance")
+    if channel == "stable" and (not release["version"].startswith("1.0.")
+            or release.get("support_tier") != "supported"):
+        raise SystemExit("stable download document violates the 1.0.x policy")
+    if channel == "devel" and (not release["version"].startswith("1.1.")
+            or release.get("support_tier") != "development"):
+        raise SystemExit("development download document violates the 1.1.x policy")
 
 
 def main() -> int:
@@ -73,29 +104,29 @@ def main() -> int:
             or not isinstance(marker.get("file"), str)):
         raise SystemExit("boot-tested ISO marker does not match the release")
 
-    index_url = f"{args.base_url}/releases.json"
-    index = fetch_json(index_url, missing={
-        "schema_version": "freesense.downloads/v1", "generated": None,
-        "channels": {"stable": None, "devel": None},
-    })
-    if (not isinstance(index, dict) or index.get("schema_version") != "freesense.downloads/v1"
-            or not isinstance(index.get("channels"), dict)):
-        raise SystemExit("existing download index is invalid")
-    existing = index["channels"].get(args.channel)
-    if isinstance(existing, dict) and VERSION.fullmatch(existing.get("version", "")):
+    release_url = f"{args.base_url}/releases/{args.channel}.json"
+    existing = fetch_json(release_url, missing=None)
+    if existing is not None:
+        validate_download(existing, args.channel, args.base_url)
         current_version = version_tuple(existing["version"])
-        if args.channel == "stable" and requested_version < current_version:
-            raise SystemExit("stable download index cannot move backwards")
+        if requested_version < current_version:
+            raise SystemExit(f"{args.channel} download cannot move backwards")
         if (args.channel == "stable" and requested_version == current_version
                 and existing.get("fingerprint") != args.fingerprint):
             raise SystemExit("an immutable stable download cannot be rewritten")
+        if (args.channel == "devel" and requested_version == current_version
+                and args.generation < existing["generation"]):
+            raise SystemExit("development download generation cannot move backwards")
+        if (args.channel == "devel" and requested_version == current_version
+                and args.generation == existing["generation"]
+                and existing.get("fingerprint") != args.fingerprint):
+            raise SystemExit("an immutable development generation cannot be rewritten")
 
     release_id = args.version if args.channel == "stable" else f"{args.version}-g{args.generation}"
     display_name = (f"FreeSense {args.version} Stable" if args.channel == "stable"
                     else f"FreeSense {args.version} Development — Generation {args.generation}")
-    index["channels"].setdefault("stable", None)
-    index["channels"].setdefault("devel", None)
-    index["channels"][args.channel] = {
+    release = {
+        "schema_version": DOWNLOAD_SCHEMA,
         "version": args.version,
         "release_id": release_id,
         "display_name": display_name,
@@ -115,9 +146,12 @@ def main() -> int:
             "os_definition": args.os_definition, "freebsd": args.freebsd,
         },
     }
-    index["generated"] = index["channels"][args.channel]["published_at"]
-    index.pop("temporary", None)
-    args.output.write_text(json.dumps(index, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    if (existing is not None and existing["version"] == args.version
+            and existing["generation"] == args.generation
+            and existing["fingerprint"] == args.fingerprint):
+        release["published_at"] = existing["published_at"]
+    validate_download(release, args.channel, args.base_url)
+    args.output.write_text(json.dumps(release, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return 0
 
 
