@@ -99,9 +99,12 @@ func SealStable(payload Payload, system, packages UpdateOptions) (Payload, error
 		packages.SystemFingerprint != system.Fingerprint {
 		return Payload{}, errors.New("sealed stable release has incompatible component bindings")
 	}
-	// A v1 channel cannot be mixed into the v2 envelope. The rolling 1.1
-	// publication performs that migration first; fail closed if sealing is
-	// attempted before it has completed.
+	// A v1 channel cannot be mixed into the v2 envelope. Stable 1.0 is the first
+	// v2 release, so replace the legacy development selection rather than
+	// carrying unsigned compatibility assumptions into the new schema.
+	if payload.SchemaVersion == "freesense.channels/v1" {
+		payload = Payload{SchemaVersion: PayloadSchema, Channels: map[string]Channel{}}
+	}
 	for _, channel := range payload.Channels {
 		if channel.System != nil && !fingerprintPattern.MatchString(channel.System.FreeBSDPinID) {
 			return Payload{}, errors.New("existing channels must migrate to FreeBSD pin identities before sealing stable")
@@ -133,12 +136,12 @@ func SealStable(payload Payload, system, packages UpdateOptions) (Payload, error
 	desired := working.Channels["devel"]
 	desired.Name = "stable"
 	desired.Description = "FreeSense 1.0 stable (sealed)"
-	desired.Default = false
 
 	if payload.Channels == nil {
 		payload.Channels = map[string]Channel{}
 	}
 	if existing, ok := payload.Channels["stable"]; ok {
+		desired.Default = existing.Default
 		if existing.Name == desired.Name && existing.Description == desired.Description &&
 			existing.PackageTrain == desired.PackageTrain && existing.ABI == desired.ABI &&
 			existing.AltABI == desired.AltABI && existing.Default == desired.Default &&
@@ -148,6 +151,13 @@ func SealStable(payload Payload, system, packages UpdateOptions) (Payload, error
 			return payload, nil
 		}
 		return Payload{}, errors.New("stable 1.0 is already sealed and cannot be changed")
+	}
+	desired.Default = true
+	for _, channel := range payload.Channels {
+		if channel.Default {
+			desired.Default = false
+			break
+		}
 	}
 	payload.SchemaVersion = PayloadSchema
 	payload.Channels["stable"] = desired
@@ -363,6 +373,14 @@ func Update(payload Payload, options UpdateOptions) (Payload, error) {
 	}
 	payload.SchemaVersion = PayloadSchema
 	payload.Channels[options.Channel] = channel
+	// The first stable seal is initially the default. As soon as rolling 1.1 is
+	// published, devel becomes the one default without changing stable artifacts.
+	for name, other := range payload.Channels {
+		if name != options.Channel && other.Default {
+			other.Default = false
+			payload.Channels[name] = other
+		}
+	}
 	return payload, nil
 }
 

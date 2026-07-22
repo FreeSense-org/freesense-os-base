@@ -122,7 +122,7 @@ func TestStableReleaseCanBeSealedOnlyOnce(t *testing.T) {
 		t.Fatal(err)
 	}
 	stable := payload.Channels["stable"]
-	if stable.Default || stable.System == nil || stable.Packages == nil ||
+	if !stable.Default || stable.System == nil || stable.Packages == nil ||
 		!stable.System.Verified || !stable.Packages.Verified {
 		t.Fatalf("sealed stable channel is incomplete: %#v", stable)
 	}
@@ -137,6 +137,50 @@ func TestStableReleaseCanBeSealedOnlyOnce(t *testing.T) {
 	changed.URL = "https://pkg.freesense.org/v1/artifacts/packages/1.0/" + changed.Fingerprint + "/amd64"
 	if _, err := SealStable(payload, system, changed); err == nil {
 		t.Fatal("changed stable release was accepted")
+	}
+
+	rolling, err := Update(payload, updateOptions(
+		"system",
+		"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+		"",
+		3,
+		now.Add(2*time.Hour),
+	))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !rolling.Channels["devel"].Default || rolling.Channels["stable"].Default {
+		t.Fatal("rolling devel did not become the single default channel")
+	}
+}
+
+func TestStableSealReplacesLegacyV1DevelopmentChannel(t *testing.T) {
+	now := time.Date(2026, 7, 22, 12, 0, 0, 0, time.UTC)
+	legacy := Payload{
+		SchemaVersion: "freesense.channels/v1",
+		Channels: map[string]Channel{
+			"devel": {Name: "devel", Default: true, System: &Component{
+				Fingerprint: "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+			}},
+		},
+	}
+	systemFingerprint := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	packagesFingerprint := "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	system := updateOptions("system", systemFingerprint, "", 1, now)
+	system.PackageTrain = "1.0"
+	packages := updateOptions("packages", packagesFingerprint, systemFingerprint, 2, now)
+	packages.PackageTrain = "1.0"
+	packages.URL = "https://pkg.freesense.org/v1/artifacts/packages/1.0/" + packagesFingerprint + "/amd64"
+
+	sealed, err := SealStable(legacy, system, packages)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := sealed.Channels["devel"]; ok {
+		t.Fatal("legacy v1 devel channel survived the v2 stable seal")
+	}
+	if !sealed.Channels["stable"].Default {
+		t.Fatal("stable is not the initial v2 default channel")
 	}
 }
 
