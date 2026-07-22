@@ -198,10 +198,15 @@ def main() -> int:
     }, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
     expected_system = fingerprint
     if args.component == "packages":
-        expected_system = values["system_fingerprint"]
+        # A package repository remains compatible with later System builds from
+        # the same FreeBSD pin. Its channel binding follows the selected System,
+        # while the immutable marker records the System used for the build.
+        expected_system = values["built_against_system"]
         required_sha["packages"] = inputs.get("packages", "")
     if (
         inputs.get("system") != expected_system
+        or (args.component == "packages"
+            and inputs.get("built_against_system", inputs.get("system")) != expected_system)
         or any(not SHA.fullmatch(value) for value in required_sha.values())
         or any(not SHA256.fullmatch(value) for value in required_sha256.values())
         or not re.fullmatch(r"inputs/sha256/[0-9a-f]{64}", inputs.get("jail_object", ""))

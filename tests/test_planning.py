@@ -44,6 +44,7 @@ def signed_envelope(
     component: str = "system",
     *,
     system_fingerprint: str | None = None,
+    built_against_system: str | None = None,
     include_packages: bool = False,
     verified: bool = False,
     schema: str = "freesense.channels/v1",
@@ -60,6 +61,8 @@ def signed_envelope(
     }
     if system_fingerprint is not None:
         selected["system_fingerprint"] = system_fingerprint
+    if built_against_system is not None:
+        selected["built_against_system"] = built_against_system
     components = {component: selected}
     if component == "system" and include_packages:
         components["packages"] = {
@@ -121,6 +124,7 @@ def completion_marker(component: str = "system", *, system_fingerprint: str = FI
     }
     if component == "packages":
         inputs["packages"] = "6" * 40
+        inputs["built_against_system"] = system_fingerprint
     return {
         "schema_version": "freesense.artifact/v1",
         "stage": component,
@@ -295,6 +299,37 @@ class PlannerChannelTests(unittest.TestCase):
                     ), mock.patch.object(subprocess, "run"), redirect_stdout(io.StringIO()):
                 with self.assertRaisesRegex(SystemExit, "conflicts with its channel entry"):
                     channel.main()
+
+    def test_packages_channel_reader_accepts_same_pin_system_rebind(self):
+        current_system = "b" * 64
+        build_system = "c" * 64
+        envelope, _ = signed_envelope(
+            "packages",
+            system_fingerprint=current_system,
+            built_against_system=build_system,
+        )
+        marker = completion_marker("packages", system_fingerprint=build_system)
+        responses = iter((envelope, json.dumps(marker).encode()))
+
+        with tempfile.TemporaryDirectory() as directory:
+            key = Path(directory, "channel.pem")
+            output = Path(directory, "output.json")
+            key.write_text("test")
+            argv = [
+                "channel.py", "--public-key", str(key), "--channel", "devel",
+                "--component", "packages", "--json-output", str(output),
+            ]
+            with mock.patch.object(sys, "argv", argv), \
+                    mock.patch.object(
+                        channel.urllib.request,
+                        "urlopen",
+                        side_effect=lambda *_args, **_kwargs: Response(next(responses)),
+                    ), mock.patch.object(subprocess, "run"), redirect_stdout(io.StringIO()):
+                self.assertEqual(channel.main(), 0)
+            values = json.loads(output.read_text())
+
+        self.assertEqual(values["system_fingerprint"], current_system)
+        self.assertEqual(values["built_against_system"], build_system)
 
     def test_system_channel_reader_validates_and_exports_exact_closure(self):
         envelope, _ = signed_envelope("system")

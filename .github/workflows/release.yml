@@ -17,10 +17,54 @@ on:
     workflows: [System, Optional packages]
     types: [completed]
 
-permissions: {contents: read, id-token: write}
+permissions: {contents: read, actions: read, id-token: write}
 concurrency: {group: release-control, cancel-in-progress: false}
 
 jobs:
+  release_gate:
+    if: github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-24.04
+    permissions: {contents: read, actions: read}
+    outputs:
+      ready: ${{ steps.gate.outputs.ready }}
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - id: gate
+        name: Require an upstream publication and complete release pair
+        env:
+          GH_TOKEN: ${{ github.token }}
+          UPSTREAM_RUN_ID: ${{ github.event.workflow_run.id }}
+          REPOSITORY: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t publish_states < <(
+            gh api "repos/${REPOSITORY}/actions/runs/${UPSTREAM_RUN_ID}/jobs" --paginate \
+              --jq '.jobs[] | select(.name == "publish") | .conclusion'
+          )
+          if (( ${#publish_states[@]} != 1 )) || [[ "${publish_states[0]}" != success ]]; then
+            echo "ready=false" >>"${GITHUB_OUTPUT}"
+            echo "The upstream check did not publish a new component; no ISO release is needed."
+            exit 0
+          fi
+
+          public_base_url=$(jq -er .public_base_url config/build-policy.json)
+          python3 scripts/channel.py --public-key config/channel-signing-public.pem \
+            --url "${public_base_url}/repos.manifest.json?workflow_run=${UPSTREAM_RUN_ID}" \
+            --channel devel --component system --json-output "${RUNNER_TEMP}/system.json"
+          if jq -e '
+            .verified == "true" and
+            .packages_verified == "true" and
+            (.packages_generation | type == "number" and . > 0) and
+            (.packages_fingerprint | test("^[0-9a-f]{64}$"))
+          ' "${RUNNER_TEMP}/system.json" >/dev/null; then
+            echo "ready=true" >>"${GITHUB_OUTPUT}"
+            echo "The newly published channel is a complete verified release pair."
+          else
+            echo "ready=false" >>"${GITHUB_OUTPUT}"
+            echo "The new System is waiting for optional packages from the same FreeBSD pin."
+          fi
+
   control:
     if: github.event_name == 'workflow_dispatch' && inputs.operation == 'verify'
     runs-on: ubuntu-24.04
@@ -55,10 +99,13 @@ jobs:
           bash scripts/verify-release.sh "${RUNNER_TEMP}/channel.pub"
           "${RUNNER_TEMP}/channel.key" "${RUNNER_TEMP}/fsbuild"
   iso-plan:
+    needs: release_gate
     if: >-
-      (github.event_name == 'workflow_dispatch' &&
+      always() &&
+      ((github.event_name == 'workflow_dispatch' &&
        (inputs.operation == 'iso' || inputs.operation == 'retry-stable-1.0-iso')) ||
-      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success')
+       (github.event_name == 'workflow_run' &&
+        needs.release_gate.result == 'success' && needs.release_gate.outputs.ready == 'true'))
     runs-on: ubuntu-24.04
     environment: build-coordinator
     outputs:

@@ -64,6 +64,13 @@ release_workflow = read(".github/workflows/release.yml")
 require("retry-stable-1.0-iso" in release_workflow and
         "recovery operation requires a sealed stable 1.0.x channel" in release_workflow,
         "the ISO-only stable 1.0 recovery entry point is missing or unguarded")
+for value in ("Require an upstream publication and complete release pair",
+              'select(.name == "publish")', "packages_verified",
+              "needs.release_gate.outputs.ready == 'true'"):
+    require(value in release_workflow,
+            f"automatic ISO publication gating is missing {value!r}")
+require('expected_system = values["built_against_system"]' in read("scripts/channel.py"),
+        "rebound optional packages are not verified against their build System")
 require("freebsd_pin_id" in reusable and "product_version" in reusable,
         "reusable builds omit the release or FreeBSD pin identity")
 
