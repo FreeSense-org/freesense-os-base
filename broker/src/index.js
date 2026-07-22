@@ -410,11 +410,19 @@ function directWorkflow(claims, workflow, events) {
   );
 }
 
+function buildEntryEvent(claims) {
+  return (
+    ["workflow_dispatch", "schedule"].includes(claims.event_name) ||
+    (claims.workflow_ref === PACKAGES_WORKFLOW &&
+      claims.event_name === "workflow_run")
+  );
+}
+
 function entryWorkflow(claims) {
   return (
     BUILD_ENTRY_WORKFLOWS.includes(claims.workflow_ref) &&
     directJobWorkflow(claims, claims.workflow_ref) &&
-    ["workflow_dispatch", "schedule"].includes(claims.event_name)
+    buildEntryEvent(claims)
   );
 }
 
@@ -424,7 +432,7 @@ function artifactWorkflow(claims) {
     claims.job_workflow_ref === RUNNER_BUILD_WORKFLOW &&
     SHA_PATTERN.test(claims.job_workflow_sha ?? "") &&
     claims.job_workflow_sha === claims.workflow_sha &&
-    ["workflow_dispatch", "schedule"].includes(claims.event_name)
+    buildEntryEvent(claims)
   );
 }
 

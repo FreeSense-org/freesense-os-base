@@ -251,6 +251,50 @@ describe("least-privilege role policies", () => {
   }
 });
 
+describe("automatic package-chain identity", () => {
+  const packageEntry = {
+    workflow_ref: protocol.workflows.packages,
+    job_workflow_ref: protocol.workflows.packages,
+    event_name: "workflow_run",
+  };
+
+  for (const role of ["coordinator", "channel-writer"]) {
+    it(`allows ${role} only for the direct package workflow_run`, async () => {
+      const response = await request(role, claimsFor(role, packageEntry));
+      assert.equal(response.status, 200);
+    });
+  }
+
+  it("allows the package workflow_run to call the reusable artifact writer", async () => {
+    const response = await request(
+      "artifact-writer",
+      claimsFor("artifact-writer", {
+        workflow_ref: protocol.workflows.packages,
+        event_name: "workflow_run",
+      }),
+    );
+    assert.equal(response.status, 200);
+  });
+
+  for (const role of ["coordinator", "artifact-writer", "channel-writer"]) {
+    it(`rejects ${role} workflow_run access from the System workflow`, async () => {
+      const response = await request(
+        role,
+        claimsFor(role, {
+          workflow_ref: protocol.workflows.system,
+          job_workflow_ref:
+            role === "artifact-writer"
+              ? protocol.workflows.runnerBuild
+              : protocol.workflows.system,
+          event_name: "workflow_run",
+        }),
+      );
+      assert.equal(response.status, 403);
+      assert.deepEqual(await response.json(), { error: "access_denied" });
+    });
+  }
+});
+
 describe("identity boundaries", () => {
   const rejected = [
     ["wrong repository id", { repository_id: "9" }],
