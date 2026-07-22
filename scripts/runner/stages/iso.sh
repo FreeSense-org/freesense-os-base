@@ -19,11 +19,13 @@ transformed=/tmp/freesense-assemble-iso.sh
 test "$(grep -Ec '^[[:space:]]*install_assembly_channel$' "${assembler}")" = 1
 cat >"${overlay}" <<'EOF'
 
-	# The sealed 1.0.0 System package predates lifecycle-suffix normalization.
-	# Patch both image roots in place so the ISO can validate 1.0.0-RELEASE and
-	# the installed appliance retains the same forward-update behavior. Future
-	# packages already carrying this line are left byte-for-byte unchanged.
+	# The source repository follows the rolling version, but this image is bound
+	# to the explicit checked release input. The sealed 1.0.0 System package also
+	# predates lifecycle-suffix normalization, so patch both image roots before
+	# validating the baked channel. Future fixed scripts remain unchanged.
 	for _repoc_root in "${FINAL_CHROOT_DIR}" "${INSTALLER_CHROOT_DIR}"; do
+		printf '%s\n' "${PRODUCT_VERSION}" >"${_repoc_root}/etc/version"
+		chmod 0644 "${_repoc_root}/etc/version"
 		for _repoc_name in "${PRODUCT_NAME}-repoc" "${PRODUCT_NAME}-repoc-static"; do
 			_repoc="${_repoc_root}/usr/local/sbin/${_repoc_name}"
 			test -x "${_repoc}" || {
@@ -106,6 +108,11 @@ grep -Fqx 'console="comconsole,vidconsole"' \
 grep -Fq 'INSTALLED_VERSION="${INSTALLED_VERSION%%-*}"' \
   "${assembler}" || {
   echo "ISO v1.0 repoc compatibility overlay was not applied" >&2
+  exit 1
+}
+grep -Fq '"${_repoc_root}/etc/version"' \
+  "${assembler}" || {
+  echo "ISO release version stamp was not applied" >&2
   exit 1
 }
 phase channel-fetch

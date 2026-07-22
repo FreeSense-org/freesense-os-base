@@ -129,6 +129,11 @@ configure_source() {
   cd /root/freesense-src
   cp build.conf.sample build.conf
 
+  # The source repository follows the rolling train, while a checked stable
+  # build may intentionally target an older 1.0.x release. Bind packaged
+  # version files to the explicit build input rather than the branch marker.
+  printf '%s\n' "${PRODUCT_VERSION}" >src/etc/version
+
   FREESENSE_SOURCE_COMMIT_TIME=$(git show -s --format=%ct "${SOURCE_SHA}")
   case "${FREESENSE_SOURCE_COMMIT_TIME}" in
     ''|*[!0-9]*) echo "source commit timestamp is invalid" >&2; return 1 ;;
