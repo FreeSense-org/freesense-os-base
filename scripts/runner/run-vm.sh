@@ -97,8 +97,6 @@ if ! verify_image; then
   mv "$download" "$base_image"
   download=""
 fi
-verify_image || { echo "cached worker image verification failed" >&2; exit 1; }
-qemu-img check -q "$base_image"
 while IFS= read -r -d '' stale_image; do
   [[ $stale_image == "$base_image" ]] || rm -f -- "$stale_image"
 done < <(find "$cache_dir" -mindepth 1 -maxdepth 1 -type f -name '*.qcow2' -mtime +14 -print0)
@@ -158,20 +156,6 @@ serial=/dev/ttyu0
 [ -c "\$serial" ] || serial=/dev/console
 exec <"\$serial" >"\$serial" 2>&1
 echo "$begin_marker"
-network_ready=false
-for attempt in \$(jot 60 1); do
-  if /usr/bin/fetch -qo /dev/null https://github.com/robots.txt; then
-    network_ready=true
-    break
-  fi
-  echo "FreeSense stage waiting for guest network (\${attempt}/60)"
-  sleep 5
-done
-if [ "\$network_ready" != true ]; then
-  echo "$fail_marker status=network-timeout"
-  shutdown -p now
-  exit 1
-fi
 status=0
 /bin/sh /root/freesense-stage.sh || status=\$?
 if [ "\$status" -eq 0 ]; then

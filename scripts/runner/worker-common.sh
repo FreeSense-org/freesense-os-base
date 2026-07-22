@@ -83,25 +83,43 @@ upload_immutable() {
 clone_exact() {
   url=$1 destination=$2 commit=$3
   rm -rf "${destination}"
-  git clone -q --filter=blob:none --no-checkout "${url}" "${destination}"
+  mkdir -p "${destination}"
+  git -C "${destination}" init -q
+  git -C "${destination}" remote add origin "${url}"
   git -C "${destination}" fetch -q --depth=1 origin "${commit}"
-  git -C "${destination}" checkout -q --detach "${commit}"
+  git -C "${destination}" checkout -q --detach FETCH_HEAD
   test "$(git -C "${destination}" rev-parse HEAD)" = "${commit}"
 }
 
 configure_source() {
+  os_definition_dir=
   phase clone-source
   clone_exact https://github.com/FreeSense-org/freesense.git /root/freesense-src "${SOURCE_SHA}"
-  phase clone-system-ports
-  clone_exact https://github.com/FreeSense-org/freesense-system-ports.git /root/freesense-system-ports "${SYSTEM_SHA}"
-  phase clone-os-definition
-  clone_exact https://github.com/FreeSense-org/freesense-os-base.git /root/os-definition "${OS_BASE_SHA}"
-  if [ "${STAGE}" = packages ]; then
-    phase clone-optional-packages
-    clone_exact https://github.com/FreeSense-org/freesense-packages.git /root/freesense-packages "${PACKAGES_SHA}"
-  fi
+  case "${STAGE}" in
+    system)
+      phase clone-system-ports
+      clone_exact https://github.com/FreeSense-org/freesense-system-ports.git \
+        /root/freesense-system-ports "${SYSTEM_SHA}"
+      phase clone-os-definition
+      clone_exact https://github.com/FreeSense-org/freesense-os-base.git \
+        /root/os-definition "${OS_BASE_SHA}"
+      os_definition_dir=/root/os-definition
+      ;;
+    packages)
+      phase clone-system-ports
+      clone_exact https://github.com/FreeSense-org/freesense-system-ports.git \
+        /root/freesense-system-ports "${SYSTEM_SHA}"
+      phase clone-optional-packages
+      clone_exact https://github.com/FreeSense-org/freesense-packages.git \
+        /root/freesense-packages "${PACKAGES_SHA}"
+      ;;
+    iso) : ;;
+  esac
   phase configure-source
-  sed -i '' "s/^UPSTREAM_REF=.*/UPSTREAM_REF=\"${FREEBSD_SHA}\"/" /root/os-definition/manifest.env
+  if [ "${STAGE}" = system ]; then
+    sed -i '' "s/^UPSTREAM_REF=.*/UPSTREAM_REF=\"${FREEBSD_SHA}\"/" \
+      /root/os-definition/manifest.env
+  fi
   cd /root/freesense-src
   cp build.conf.sample build.conf
 
@@ -142,7 +160,7 @@ export PRODUCT_NAME_SUFFIX=""
 export POUDRIERE_BRANCH=main
 export POUDRIERE_PORTS_GIT_URL="https://github.com/freebsd/freebsd-ports.git"
 export POUDRIERE_PORTS_GIT_BRANCH="main"
-export FREEBSD_SRC_PATCHES_DIR="/root/os-definition"
+export FREEBSD_SRC_PATCHES_DIR="${os_definition_dir}"
 export FREESENSE_PORTS_COMMIT="${PORTS_SHA}"
 export FREESENSE_PACKAGE_TRAIN="${PACKAGE_TRAIN}"
 export PRODUCT_REVISION="${GENERATION}"
@@ -154,7 +172,6 @@ export FREESENSE_PACKAGES_FINGERPRINT="${packages_fingerprint}"
 export FREESENSE_CHANNEL_PUBLIC_KEY_FILE="/root/sign/channel-public.pem"
 export DO_NOT_SIGN_PKG_REPO=1
 export FREESENSE_MAKE_JOBS_NUMBER_LIMIT=4
-export FREESENSE_USE_PACKAGE_FETCH=1
 EOF
   phase source-ready
 }
@@ -171,7 +188,6 @@ BASEFS=/usr/local/poudriere
 POUDRIERE_DATA=/usr/local/poudriere/data
 RESOLV_CONF=/etc/resolv.conf
 DISTFILES_CACHE=/usr/ports/distfiles
-PACKAGE_FETCH_URL=pkg+https://pkg.FreeBSD.org/\${ABI}
 CHECK_CHANGED_OPTIONS=verbose
 CHECK_CHANGED_DEPS=yes
 PARALLEL_JOBS=3
@@ -190,11 +206,6 @@ BUILDER_HOSTNAME=freesense-builder
 EOF
   chmod 644 "${temporary}"
   mv -f "${temporary}" "${config}"
-  for setting in NO_ZFS=yes PARALLEL_JOBS=3 ALLOW_MAKE_JOBS=yes \
-    USE_TMPFS=wrkdir TMPFS_LIMIT=4 PKG_REPRODUCIBLE=yes \
-    PRESERVE_TIMESTAMP=yes BUILDER_HOSTNAME=freesense-builder; do
-    grep -qx "${setting}" "${config}"
-  done
 }
 
 package_metadata() {
@@ -475,11 +486,20 @@ sign_repository() {
   directory=$1
   phase repository-sign
   test -s /root/sign/repo.key
-  fetch -qo /root/sign/sign.sh \
-    https://raw.githubusercontent.com/freebsd/pkg/2678d2b6a8ca3cf80cb4dbc8da557a2998e1b5c0/scripts/sign.sh
-  sed -i '' 's+ repo\.+ /root/sign/repo.+g' /root/sign/sign.sh
+  cat >/root/sign/sign.sh <<'EOF'
+#!/bin/sh
+set -e
+read -t 2 sum
+[ -n "${sum}" ]
+echo SIGNATURE
+printf '%s' "${sum}" | /usr/bin/openssl dgst -sign /root/sign/repo.key -sha256 -binary
+echo
+echo CERT
+cat /root/sign/repo.pub
+echo END
+EOF
   chmod 700 /root/sign/sign.sh
-  pkg repo "${directory}" signing_command: /root/sign/sign.sh /root/sign/repo.key
+  pkg repo "${directory}" signing_command: /root/sign/sign.sh
   phase repository-signed
 }
 

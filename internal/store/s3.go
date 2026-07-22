@@ -19,15 +19,14 @@ import (
 )
 
 type S3Config struct {
-	Endpoint        string
-	Region          string
-	Bucket          string
-	Prefix          string
-	AccessKeyID     string
-	SecretKey       string
-	SessionToken    string
-	ExclusiveDelete bool
-	Client          *http.Client
+	Endpoint     string
+	Region       string
+	Bucket       string
+	Prefix       string
+	AccessKeyID  string
+	SecretKey    string
+	SessionToken string
+	Client       *http.Client
 }
 
 // Cloudflare R2 keeps conditional single-part PUT atomic but caps each request
@@ -159,70 +158,8 @@ func (s3 *S3) head(ctx context.Context, key string, requireMetadata bool) (Objec
 	}
 	return ObjectInfo{
 		Key: key, Size: response.ContentLength,
-		ETag:         normalizeETag(response.Header.Get("ETag")),
-		SHA256:       digest,
-		LastModified: parseHTTPTime(response.Header.Get("Last-Modified")),
+		ETag: normalizeETag(response.Header.Get("ETag")), SHA256: digest,
 	}, nil
-}
-
-func (s3 *S3) List(ctx context.Context, prefix string) ([]ObjectInfo, error) {
-	prefix = strings.TrimPrefix(prefix, "/")
-	if strings.Contains(prefix, `\`) || strings.Contains(prefix, "..") {
-		return nil, fmt.Errorf("invalid list prefix %q", prefix)
-	}
-	physicalPrefix := path.Join(s3.config.Prefix, prefix)
-	if physicalPrefix != "" &&
-		(prefix == "" || strings.HasSuffix(prefix, "/")) {
-		physicalPrefix += "/"
-	}
-	var result []ObjectInfo
-	continuation := ""
-	for {
-		query := url.Values{"list-type": {"2"}, "prefix": {physicalPrefix}}
-		if continuation != "" {
-			query.Set("continuation-token", continuation)
-		}
-		response, err := s3.doQuery(ctx, http.MethodGet, "", "", Content{}, query)
-		if err != nil {
-			return nil, err
-		}
-		var page struct {
-			Truncated bool   `xml:"IsTruncated"`
-			Next      string `xml:"NextContinuationToken"`
-			Contents  []struct {
-				Key          string    `xml:"Key"`
-				Size         int64     `xml:"Size"`
-				ETag         string    `xml:"ETag"`
-				LastModified time.Time `xml:"LastModified"`
-			} `xml:"Contents"`
-		}
-		decodeErr := xml.NewDecoder(response.Body).Decode(&page)
-		closeErr := response.Body.Close()
-		if decodeErr != nil {
-			return nil, fmt.Errorf("decode S3 listing: %w", decodeErr)
-		}
-		if closeErr != nil {
-			return nil, closeErr
-		}
-		for _, object := range page.Contents {
-			key := object.Key
-			if s3.config.Prefix != "" {
-				key = strings.TrimPrefix(key, strings.Trim(s3.config.Prefix, "/")+"/")
-			}
-			result = append(result, ObjectInfo{
-				Key: key, Size: object.Size, ETag: normalizeETag(object.ETag),
-				LastModified: object.LastModified.UTC(),
-			})
-		}
-		if !page.Truncated {
-			break
-		}
-		if page.Next == "" {
-			return nil, errors.New("S3 listing is truncated without a continuation token")
-		}
-		continuation = page.Next
-	}
-	return result, nil
 }
 
 func (s3 *S3) PutIfAbsent(ctx context.Context, key string, content Content) (ObjectInfo, bool, error) {
@@ -283,33 +220,6 @@ func (s3 *S3) CompareAndSwap(ctx context.Context, key, expectedETag string, cont
 	return info, nil
 }
 
-func (s3 *S3) DeleteIfMatch(ctx context.Context, key, expectedETag string) error {
-	if expectedETag == "" {
-		return errors.New("expected ETag is required")
-	}
-	if !s3.config.ExclusiveDelete {
-		return errors.New("S3 deletion requires an exclusive storage-maintenance lease")
-	}
-	current, err := s3.Head(ctx, key)
-	if errors.Is(err, ErrNotFound) {
-		return ErrPrecondition
-	}
-	if err != nil {
-		return err
-	}
-	if current.ETag != expectedETag {
-		return ErrPrecondition
-	}
-	// R2 documents DeleteObject but not conditional DeleteObject. The caller
-	// must hold the repository-wide storage workflow lease, so after the
-	// verified HEAD an unconditional delete cannot race another writer.
-	response, err := s3.do(ctx, http.MethodDelete, key, "", Content{})
-	if err != nil {
-		return err
-	}
-	return response.Body.Close()
-}
-
 // PresignGet returns a query-signed GET URL for one exact object. It signs
 // only the host header and uses UNSIGNED-PAYLOAD, matching the S3 presigned URL
 // contract supported by Cloudflare R2. The caller must verify the object with
@@ -360,9 +270,8 @@ func (s3 *S3) PresignGet(key string, validity time.Duration) (string, error) {
 
 func (s3 *S3) objectURL(key string) url.URL {
 	requestURL := *s3.endpoint
-	segments := []string{strings.Trim(requestURL.Path, "/"), s3.config.Bucket}
-	if key != "" {
-		segments = append(segments, s3.config.Prefix, key)
+	segments := []string{
+		strings.Trim(requestURL.Path, "/"), s3.config.Bucket, s3.config.Prefix, key,
 	}
 	requestURL.Path = "/" + path.Join(segments...)
 	requestURL.RawQuery = ""
@@ -380,13 +289,8 @@ func (s3 *S3) doQuery(
 	content Content,
 	query url.Values,
 ) (*http.Response, error) {
-	if key != "" {
-		if err := ValidateKey(key); err != nil {
-			return nil, err
-		}
-	}
-	if key == "" && method != http.MethodGet {
-		return nil, errors.New("empty S3 object key is valid only for listing")
+	if err := ValidateKey(key); err != nil {
+		return nil, err
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, ctx.Err()
@@ -786,14 +690,6 @@ func compactS3ErrorField(value string) string {
 		value = string(runes[:maxS3ErrorFieldRunes]) + "..."
 	}
 	return value
-}
-
-func parseHTTPTime(value string) time.Time {
-	parsed, err := http.ParseTime(value)
-	if err != nil {
-		return time.Time{}
-	}
-	return parsed.UTC()
 }
 
 func optionalResponseSHA256(response *http.Response, key string) (string, error) {

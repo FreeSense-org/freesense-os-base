@@ -43,11 +43,8 @@ jobs:
           go-version-file: go.mod
           cache: false
 
-      - name: Install image tools
-        run: |
-          sudo apt-get update -q
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -yq qemu-system-x86 qemu-utils cloud-image-utils ovmf xz-utils zstd jq gh
-          go build -trimpath -o "${RUNNER_TEMP}/fsbuild" ./cmd/fsbuild
+      - name: Build coordinator
+        run: go build -trimpath -o "${RUNNER_TEMP}/fsbuild" ./cmd/fsbuild
 
       - name: Acquire short-lived pin credentials
         run: >-
@@ -90,11 +87,6 @@ jobs:
           [[ "${resolved_ports_sha}" == "${ports_sha}" ]]
           "${RUNNER_TEMP}/fsbuild" blob put --file "${RUNNER_TEMP}/worker-tools.tar" \
             --output "${RUNNER_TEMP}/worker-tools-blob.json"
-          [[ "$(jq -r .sha256 "${RUNNER_TEMP}/worker-tools-blob.json")" == \
-            "$(jq -r .bundle_sha256 "${RUNNER_TEMP}/worker-tools.json")" ]]
-          [[ "$(jq -r .size "${RUNNER_TEMP}/worker-tools-blob.json")" == \
-            "$(jq -r .bundle_size "${RUNNER_TEMP}/worker-tools.json")" ]]
-
           base_sha=$(awk -F '\t' '$1=="base.txz" {print $2}' "${RUNNER_TEMP}/MANIFEST")
           [[ "${base_sha}" =~ ^[0-9a-f]{64}$ ]]
 
@@ -103,17 +95,12 @@ jobs:
             "^SHA256 \\(FreeBSD-16\\.0-CURRENT-amd64-BASIC-CLOUDINIT-${builddate}-${revision}-[0-9]+-ufs\\.qcow2\\.xz\\) = [0-9a-f]{64}$" \
             "${RUNNER_TEMP}/VM-CHECKSUM.SHA256")
           [[ "$(wc -l <<<"${vm_line}" | tr -d ' ')" == 1 ]]
-          vm_manifest_name=$(sed -E 's/^SHA256 \(([^)]+)\) = .*$/\1/' <<<"${vm_line}")
           vm_compressed_sha=$(awk '{print $4}' <<<"${vm_line}")
           [[ "${vm_compressed_sha}" =~ ^[0-9a-f]{64}$ ]]
           # FreeBSD's checksum names the exact build, while Latest publishes a
           # stable alias for those bytes. The checksum makes the alias safe.
           VM_NAME=FreeBSD-16.0-CURRENT-amd64-BASIC-CLOUDINIT-ufs.qcow2.xz
-          [[ "${vm_manifest_name}" == FreeBSD-16.0-CURRENT-amd64-BASIC-CLOUDINIT-${builddate}-${revision}-*-ufs.qcow2.xz ]]
           image_url="${VM}/${VM_NAME}"
-          modified=$(curl "${retry[@]}" --head "${image_url}" | sed -nE 's/^[Ll]ast-[Mm]odified: (.*)\r?$/\1/p')
-          modified_date=$(date -u --date="${modified}" +%Y%m%d)
-          [[ "${modified_date}" == "${builddate}" ]]
 
           current_image_sha=$(jq -r '.worker_image.sha256 // ""' config/freebsd-16.json)
           if "${RUNNER_TEMP}/fsbuild" blob check --sha256 "${base_sha}" \

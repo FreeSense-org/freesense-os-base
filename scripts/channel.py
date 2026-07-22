@@ -125,37 +125,54 @@ def main() -> int:
             values["packages_fingerprint"] = packages_fingerprint
         else:
             raise SystemExit("selected channel packages are invalid")
-        marker_url = url.removesuffix("/amd64") + "/complete.json"
-        try:
-            marker = json.loads(fetch_bytes(marker_url))
-            inputs = marker["inputs"]
-        except (KeyError, TypeError, ValueError) as error:
-            raise SystemExit("selected System completion marker is invalid") from error
-        required_sha = {
-            "source": inputs.get("source", ""),
-            "system_ports": inputs.get("system_ports", ""),
-            "freebsd": inputs.get("freebsd", ""),
-            "ports": inputs.get("ports", ""),
-            "os_definition": inputs.get("os_definition", ""),
-        }
-        required_sha256 = {
-            "platform": inputs.get("platform", ""),
-            "worker_image": inputs.get("worker_image", ""),
-            "worker_tools": inputs.get("worker_tools", ""),
-            "signing_public_key": inputs.get("signing_public_key", ""),
-        }
-        if (
-            marker.get("schema_version") != "freesense.artifact/v1"
-            or marker.get("stage") != "system"
-            or marker.get("fingerprint") != fingerprint
-            or marker.get("generation") != generation
-            or inputs.get("system") != fingerprint
-            or inputs.get("package_train") != channel.get("package_train")
-            or any(not SHA.fullmatch(value) for value in required_sha.values())
-            or any(not SHA256.fullmatch(value) for value in required_sha256.values())
-            or not re.fullmatch(r"inputs/sha256/[0-9a-f]{64}", inputs.get("jail_object", ""))
-        ):
-            raise SystemExit("selected System completion marker conflicts with its channel entry")
+
+    marker_url = url.removesuffix("/amd64") + "/complete.json"
+    try:
+        marker = json.loads(fetch_bytes(marker_url))
+        inputs = marker["inputs"]
+    except (KeyError, TypeError, ValueError) as error:
+        raise SystemExit(f"selected {args.component} completion marker is invalid") from error
+    if (
+        not isinstance(marker, dict)
+        or not isinstance(inputs, dict)
+        or marker.get("schema_version") != "freesense.artifact/v1"
+        or marker.get("stage") != args.component
+        or marker.get("fingerprint") != fingerprint
+        or marker.get("generation") != generation
+        or inputs.get("package_train") != package_train
+    ):
+        raise SystemExit(
+            f"selected {args.component} completion marker conflicts with its channel entry"
+        )
+
+    required_sha = {
+        "source": inputs.get("source", ""),
+        "system_ports": inputs.get("system_ports", ""),
+        "freebsd": inputs.get("freebsd", ""),
+        "ports": inputs.get("ports", ""),
+        "os_definition": inputs.get("os_definition", ""),
+    }
+    required_sha256 = {
+        "platform": inputs.get("platform", ""),
+        "worker_image": inputs.get("worker_image", ""),
+        "worker_tools": inputs.get("worker_tools", ""),
+        "signing_public_key": inputs.get("signing_public_key", ""),
+    }
+    expected_system = fingerprint
+    if args.component == "packages":
+        expected_system = values["system_fingerprint"]
+        required_sha["packages"] = inputs.get("packages", "")
+    if (
+        inputs.get("system") != expected_system
+        or any(not SHA.fullmatch(value) for value in required_sha.values())
+        or any(not SHA256.fullmatch(value) for value in required_sha256.values())
+        or not re.fullmatch(r"inputs/sha256/[0-9a-f]{64}", inputs.get("jail_object", ""))
+    ):
+        raise SystemExit(
+            f"selected {args.component} completion marker conflicts with its channel entry"
+        )
+
+    if args.component == "system":
         values.update({
             "artifact_platform": required_sha256["platform"],
             "artifact_source_sha": required_sha["source"],
@@ -168,7 +185,8 @@ def main() -> int:
             "artifact_jail_object": inputs["jail_object"],
             "artifact_signing_public_key_sha256": required_sha256["signing_public_key"],
         })
-    print(json.dumps(values, indent=2, sort_keys=True))
+    if not args.json_output and not args.github_output:
+        print(json.dumps(values, indent=2, sort_keys=True))
     if args.json_output:
         args.json_output.write_text(json.dumps(values, sort_keys=True) + "\n", encoding="utf-8")
     if args.github_output:

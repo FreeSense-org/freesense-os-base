@@ -47,14 +47,16 @@ jobs:
           --audience "${R2_CREDENTIAL_BROKER_AUDIENCE}" --role channel-writer
           --expected-bucket "${R2_BUCKET}" --expected-prefix v1 --expected-endpoint "${R2_ENDPOINT}"
           --github-env "${GITHUB_ENV}"
-      - name: Verify current development repositories
-        if: github.event_name == 'schedule' || inputs.operation == 'verify'
+      - name: Verify complete development repositories
+        id: verify
         env: {R2_BUCKET: "${{ vars.R2_BUILD_BUCKET }}", FSBUILD_STORE_PREFIX: v1}
         run: >-
           bash scripts/verify-release.sh "${RUNNER_TEMP}/channel.pub"
           "${RUNNER_TEMP}/channel.key" "${RUNNER_TEMP}/fsbuild"
       - name: Promote verified components after seven days
-        if: github.event_name == 'schedule' || inputs.operation == 'promote'
+        if: >-
+          (github.event_name == 'schedule' || inputs.operation == 'promote') &&
+          steps.verify.outputs.ready == 'true'
         env: {R2_BUCKET: "${{ vars.R2_BUILD_BUCKET }}", FSBUILD_STORE_PREFIX: v1}
         run: |
           set -euo pipefail

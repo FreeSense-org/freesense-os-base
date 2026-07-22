@@ -30,17 +30,10 @@ type Object struct {
 }
 
 type ObjectInfo struct {
-	Key          string
-	Size         int64
-	ETag         string
-	SHA256       string
-	LastModified time.Time
-}
-
-// Lister is implemented by stores that support reachability collection.
-// Keeping it separate from Backend lets small test doubles remain minimal.
-type Lister interface {
-	List(ctx context.Context, prefix string) ([]ObjectInfo, error)
+	Key    string
+	Size   int64
+	ETag   string
+	SHA256 string
 }
 
 // GetURLSigner is implemented by remote stores that can grant a short-lived,
@@ -120,7 +113,6 @@ type Backend interface {
 	Head(ctx context.Context, key string) (ObjectInfo, error)
 	PutIfAbsent(ctx context.Context, key string, content Content) (ObjectInfo, bool, error)
 	CompareAndSwap(ctx context.Context, key, expectedETag string, content Content) (ObjectInfo, error)
-	DeleteIfMatch(ctx context.Context, key, expectedETag string) error
 }
 
 // ArtifactReader is implemented by backends that need different compatibility

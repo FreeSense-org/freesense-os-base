@@ -67,20 +67,6 @@ jobs:
         with:
           go-version-file: go.mod
           cache: false
-      - name: Ensure KVM tools
-        shell: bash
-        run: |
-          set -euo pipefail
-          missing=()
-          for tool in qemu-system-x86_64 qemu-img cloud-localds; do
-            command -v "${tool}" >/dev/null || missing+=("${tool}")
-          done
-          if ((${#missing[@]})); then
-            sudo apt-get update -q
-            sudo DEBIAN_FRONTEND=noninteractive apt-get install -yq qemu-system-x86 qemu-utils cloud-image-utils ovmf
-          fi
-          test -r /dev/kvm && test -w /dev/kvm
-          test "$(nproc)" -ge 12
       - run: go build -trimpath -o "${RUNNER_TEMP}/fsbuild" ./cmd/fsbuild
       - name: Verify repository signing trust root
         env: {SIGNING_KEY: "${{ secrets.FREESENSE_PKG_SIGNING_KEY }}"}

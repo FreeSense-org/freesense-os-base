@@ -84,6 +84,32 @@ def signed_envelope(component: str = "system", *, system_fingerprint: str | None
     return json.dumps(envelope).encode(), payload_bytes
 
 
+def completion_marker(component: str = "system", *, system_fingerprint: str = FINGERPRINT):
+    inputs = {
+        "platform": "b" * 64,
+        "system": system_fingerprint,
+        "source": "1" * 40,
+        "system_ports": "2" * 40,
+        "freebsd": "3" * 40,
+        "ports": "4" * 40,
+        "package_train": "1.1",
+        "os_definition": "5" * 40,
+        "worker_image": "c" * 64,
+        "worker_tools": "f" * 64,
+        "jail_object": "inputs/sha256/" + "d" * 64,
+        "signing_public_key": "e" * 64,
+    }
+    if component == "packages":
+        inputs["packages"] = "6" * 40
+    return {
+        "schema_version": "freesense.artifact/v1",
+        "stage": component,
+        "fingerprint": FINGERPRINT,
+        "generation": 7,
+        "inputs": inputs,
+    }
+
+
 def system_closure(*, channel_name: str = "devel"):
     payload = b'{"schema_version":"freesense.channels/v1"}'
     return {
@@ -181,11 +207,13 @@ class PlannerChannelTests(unittest.TestCase):
 
     def test_channel_reader_exports_payload_identity_and_system_binding(self):
         envelope, payload = signed_envelope("packages", system_fingerprint="b" * 64)
+        marker = completion_marker("packages", system_fingerprint="b" * 64)
         requests = []
+        responses = iter((envelope, json.dumps(marker).encode()))
 
         def open_request(request, timeout):
             requests.append((request, timeout))
-            return Response(envelope)
+            return Response(next(responses))
 
         with tempfile.TemporaryDirectory() as directory:
             key = Path(directory, "channel.pem")
@@ -201,34 +229,37 @@ class PlannerChannelTests(unittest.TestCase):
                     mock.patch.object(subprocess, "run"), redirect_stdout(io.StringIO()):
                 self.assertEqual(channel.main(), 0)
             values = dict(line.split("=", 1) for line in output.read_text().splitlines())
-        self.assertEqual(requests[0][0].get_header("User-agent"), channel.USER_AGENT)
+        self.assertEqual(len(requests), 2)
+        self.assertTrue(all(request.get_header("User-agent") == channel.USER_AGENT for request, _ in requests))
         self.assertEqual(values["payload_sha256"], hashlib.sha256(payload).hexdigest())
         self.assertEqual(base64.b64decode(values["payload_base64"]), payload)
         self.assertEqual(base64.b64decode(values["signature_base64"]), b"test-signature")
         self.assertEqual(values["system_fingerprint"], "b" * 64)
 
+    def test_packages_channel_reader_rejects_marker_for_another_system(self):
+        envelope, _ = signed_envelope("packages", system_fingerprint="b" * 64)
+        marker = completion_marker("packages", system_fingerprint="c" * 64)
+        responses = iter((envelope, json.dumps(marker).encode()))
+
+        with tempfile.TemporaryDirectory() as directory:
+            key = Path(directory, "channel.pem")
+            key.write_text("test")
+            argv = [
+                "channel.py", "--public-key", str(key), "--channel", "devel",
+                "--component", "packages",
+            ]
+            with mock.patch.object(sys, "argv", argv), \
+                    mock.patch.object(
+                        channel.urllib.request,
+                        "urlopen",
+                        side_effect=lambda *_args, **_kwargs: Response(next(responses)),
+                    ), mock.patch.object(subprocess, "run"), redirect_stdout(io.StringIO()):
+                with self.assertRaisesRegex(SystemExit, "conflicts with its channel entry"):
+                    channel.main()
+
     def test_system_channel_reader_validates_and_exports_exact_closure(self):
         envelope, _ = signed_envelope("system")
-        marker = {
-            "schema_version": "freesense.artifact/v1",
-            "stage": "system",
-            "fingerprint": FINGERPRINT,
-            "generation": 7,
-            "inputs": {
-                "platform": "b" * 64,
-                "system": FINGERPRINT,
-                "source": "1" * 40,
-                "system_ports": "2" * 40,
-                "freebsd": "3" * 40,
-                "ports": "4" * 40,
-                "package_train": "1.1",
-                "os_definition": "5" * 40,
-                "worker_image": "c" * 64,
-                "worker_tools": "f" * 64,
-                "jail_object": "inputs/sha256/" + "d" * 64,
-                "signing_public_key": "e" * 64,
-            },
-        }
+        marker = completion_marker()
         requests = []
         responses = iter((envelope, json.dumps(marker).encode()))
 

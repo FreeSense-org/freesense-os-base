@@ -28,15 +28,16 @@ func TestLocalConditionalOperations(t *testing.T) {
 		t.Fatalf("CompareAndSwap wrong ETag error = %v", err)
 	}
 	second := BytesContent([]byte("second"))
-	updated, err := local.CompareAndSwap(ctx, "objects/test", info.ETag, second)
+	_, err = local.CompareAndSwap(ctx, "objects/test", info.ETag, second)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := local.DeleteIfMatch(ctx, "objects/test", updated.ETag); err != nil {
+	object, err := local.Get(ctx, "objects/test")
+	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := local.Get(ctx, "objects/test"); !errors.Is(err, ErrNotFound) {
-		t.Fatalf("Get after delete error = %v", err)
+	if string(object.Data) != "second" || object.SHA256 != second.SHA256 {
+		t.Fatalf("object after CompareAndSwap = %#v", object)
 	}
 }
 

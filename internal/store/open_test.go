@@ -17,7 +17,6 @@ func TestOpenRequiresSessionTokenInGitHubActions(t *testing.T) {
 	}
 
 	t.Setenv("AWS_SESSION_TOKEN", "temporary-session")
-	t.Setenv("FSBUILD_EXCLUSIVE_DELETE", "true")
 	backend, err := Open("s3://bucket/prefix")
 	if err != nil {
 		t.Fatal(err)
@@ -28,15 +27,6 @@ func TestOpenRequiresSessionTokenInGitHubActions(t *testing.T) {
 	}
 	if s3.config.SessionToken != "temporary-session" {
 		t.Fatalf("session token = %q", s3.config.SessionToken)
-	}
-	if !s3.config.ExclusiveDelete {
-		t.Fatal("exclusive delete mode was not preserved")
-	}
-
-	t.Setenv("FSBUILD_EXCLUSIVE_DELETE", "yes")
-	if _, err := Open("s3://bucket/prefix"); err == nil ||
-		!strings.Contains(err.Error(), "must be exactly true") {
-		t.Fatalf("invalid exclusive delete mode error = %v", err)
 	}
 }
 

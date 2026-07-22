@@ -9,7 +9,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 )
 
@@ -81,49 +80,8 @@ func (local *Local) Head(ctx context.Context, key string) (ObjectInfo, error) {
 	}
 	return ObjectInfo{
 		Key: key, Size: info.Size(), ETag: hex.EncodeToString(hash.Sum(nil)),
-		SHA256:       hex.EncodeToString(hash.Sum(nil)),
-		LastModified: info.ModTime().UTC(),
+		SHA256: hex.EncodeToString(hash.Sum(nil)),
 	}, nil
-}
-
-func (local *Local) List(ctx context.Context, prefix string) ([]ObjectInfo, error) {
-	prefix = strings.TrimPrefix(filepath.ToSlash(prefix), "/")
-	if strings.Contains(prefix, `\`) || strings.Contains(prefix, "..") {
-		return nil, fmt.Errorf("invalid list prefix %q", prefix)
-	}
-	var result []ObjectInfo
-	err := filepath.WalkDir(local.root, func(filename string, entry os.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			return walkErr
-		}
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		relative, err := filepath.Rel(local.root, filename)
-		if err != nil {
-			return err
-		}
-		key := filepath.ToSlash(relative)
-		if entry.IsDir() {
-			if key == ".fsbuild-locks" {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		if prefix != "" && !strings.HasPrefix(key, prefix) {
-			return nil
-		}
-		info, err := local.Head(ctx, key)
-		if err != nil {
-			return err
-		}
-		result = append(result, info)
-		return nil
-	})
-	if err != nil {
-		return nil, err
-	}
-	return result, nil
 }
 
 func (local *Local) PutIfAbsent(ctx context.Context, key string, content Content) (ObjectInfo, bool, error) {
@@ -188,35 +146,6 @@ func (local *Local) CompareAndSwap(ctx context.Context, key, expectedETag string
 	return ObjectInfo{
 		Key: key, Size: content.Size, ETag: content.SHA256, SHA256: content.SHA256,
 	}, nil
-}
-
-func (local *Local) DeleteIfMatch(ctx context.Context, key, expectedETag string) error {
-	if expectedETag == "" {
-		return errors.New("expected ETag is required")
-	}
-	filename, err := local.filename(key)
-	if err != nil {
-		return err
-	}
-	unlock, err := local.lock(ctx, key)
-	if err != nil {
-		return err
-	}
-	defer unlock()
-	current, err := local.Head(ctx, key)
-	if err != nil {
-		if errors.Is(err, ErrNotFound) {
-			return ErrPrecondition
-		}
-		return err
-	}
-	if current.ETag != expectedETag {
-		return ErrPrecondition
-	}
-	if err := os.Remove(filename); err != nil {
-		return fmt.Errorf("delete object %q: %w", key, err)
-	}
-	return nil
 }
 
 func (local *Local) filename(key string) (string, error) {

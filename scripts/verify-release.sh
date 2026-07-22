@@ -12,34 +12,47 @@ private_key=$2
 fsbuild=$3
 
 rm -f "${RUNNER_TEMP}/system.out" "${RUNNER_TEMP}/packages.out"
-for component in system packages; do
-  python3 "${root}/scripts/channel.py" --public-key "${public_key}" \
-    --channel devel --component "${component}" \
-    --github-output "${RUNNER_TEMP}/${component}.out"
-done
+python3 "${root}/scripts/channel.py" --public-key "${public_key}" \
+  --channel devel --component system \
+  --github-output "${RUNNER_TEMP}/system.out"
 
 system_fingerprint=$(sed -n 's/^fingerprint=//p' "${RUNNER_TEMP}/system.out")
+packages_fingerprint=$(sed -n 's/^packages_fingerprint=//p' "${RUNNER_TEMP}/system.out")
+if [[ -z "${packages_fingerprint}" ]]; then
+  echo "devel Packages are pending for the selected System."
+  if [[ -n "${GITHUB_OUTPUT:-}" ]]; then
+    echo "ready=false" >>"${GITHUB_OUTPUT}"
+  fi
+  exit 0
+fi
+
+python3 "${root}/scripts/channel.py" --public-key "${public_key}" \
+  --channel devel --component packages \
+  --github-output "${RUNNER_TEMP}/packages.out"
+
 packages_system=$(sed -n 's/^system_fingerprint=//p' "${RUNNER_TEMP}/packages.out")
+selected_packages=$(sed -n 's/^fingerprint=//p' "${RUNNER_TEMP}/packages.out")
 test -n "${system_fingerprint}"
 test "${packages_system}" = "${system_fingerprint}"
+test "${selected_packages}" = "${packages_fingerprint}"
 
 for component in system packages; do
   output="${RUNNER_TEMP}/${component}.out"
-  fingerprint=$(sed -n 's/^fingerprint=//p' "${output}")
   url=$(sed -n 's/^url=//p' "${output}")
-  marker=$(curl -fsS --retry 5 --retry-all-errors --proto '=https' \
-    --user-agent 'FreeSense-build/1' "${url%/amd64}/complete.json")
-  jq -e --arg component "${component}" --arg fingerprint "${fingerprint}" \
-    --arg system "${system_fingerprint}" \
-    '.schema_version == "freesense.artifact/v1" and
-     .stage == $component and .fingerprint == $fingerprint and
-     ($component != "packages" or .inputs.system == $system)' \
-    <<<"${marker}" >/dev/null
   for catalog in meta.conf packagesite.pkg; do
     curl -fsS --retry 5 --retry-all-errors --proto '=https' \
       --user-agent 'FreeSense-build/1' --range 0-0 --output /dev/null \
       "${url}/${catalog}"
   done
+done
+
+for component in system packages; do
+  output="${RUNNER_TEMP}/${component}.out"
+  fingerprint=$(sed -n 's/^fingerprint=//p' "${output}")
   "${fsbuild}" channel verify --component "${component}" \
     --fingerprint "${fingerprint}" --private-key "${private_key}"
 done
+
+if [[ -n "${GITHUB_OUTPUT:-}" ]]; then
+  echo "ready=true" >>"${GITHUB_OUTPUT}"
+fi
