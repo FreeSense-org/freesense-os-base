@@ -19,6 +19,38 @@ transformed=/tmp/freesense-assemble-iso.sh
 test "$(grep -Ec '^[[:space:]]*install_assembly_channel$' "${assembler}")" = 1
 cat >"${overlay}" <<'EOF'
 
+	# The sealed 1.0.0 System package predates lifecycle-suffix normalization.
+	# Patch both image roots in place so the ISO can validate 1.0.0-RELEASE and
+	# the installed appliance retains the same forward-update behavior. Future
+	# packages already carrying this line are left byte-for-byte unchanged.
+	for _repoc_root in "${FINAL_CHROOT_DIR}" "${INSTALLER_CHROOT_DIR}"; do
+		for _repoc_name in "${PRODUCT_NAME}-repoc" "${PRODUCT_NAME}-repoc-static"; do
+			_repoc="${_repoc_root}/usr/local/sbin/${_repoc_name}"
+			test -x "${_repoc}" || {
+				echo ">>> ERROR: ISO compatibility overlay is missing ${_repoc_name}" >&2
+				return 1
+			}
+			if grep -Fq 'INSTALLED_VERSION="${INSTALLED_VERSION%%-*}"' "${_repoc}"; then
+				continue
+			fi
+			_repoc_tmp="${_repoc}.iso.$$"
+			awk '
+				{ print }
+				$0 == "[ -n \"${INSTALLED_VERSION}\" ] || INSTALLED_VERSION=\"0.0.0\"" {
+					print "INSTALLED_VERSION=\"${INSTALLED_VERSION%%-*}\""
+					found = 1
+				}
+				END { if (!found) exit 42 }
+			' "${_repoc}" >"${_repoc_tmp}" || {
+				rm -f "${_repoc_tmp}"
+				echo ">>> ERROR: could not apply the v1.0 repoc compatibility overlay" >&2
+				return 1
+			}
+			install -o root -g wheel -m 0555 "${_repoc_tmp}" "${_repoc}"
+			rm -f "${_repoc_tmp}"
+		done
+	done
+
 	: "${FREESENSE_ASSEMBLY_INSTALLER_OVERLAY:?installer overlay is required}"
 	_installer_overlay="${FREESENSE_ASSEMBLY_INSTALLER_OVERLAY}"
 	mkdir -p "${INSTALLER_CHROOT_DIR}/usr/libexec/bsdinstall"
@@ -58,17 +90,22 @@ comconsole_speed="115200"
 CONSOLE_EOF
 EOF
 awk -v overlay="${overlay}" '
-  { print }
   /^[[:space:]]*install_assembly_channel$/ {
     while ((getline line < overlay) > 0) print line
     close(overlay)
   }
+  { print }
 ' "${assembler}" >"${transformed}"
 cat "${transformed}" >"${assembler}"
 rm -f "${overlay}" "${transformed}"
 grep -Fqx 'console="comconsole,vidconsole"' \
   "${assembler}" || {
   echo "ISO console overlay was not applied" >&2
+  exit 1
+}
+grep -Fq 'INSTALLED_VERSION="${INSTALLED_VERSION%%-*}"' \
+  "${assembler}" || {
+  echo "ISO v1.0 repoc compatibility overlay was not applied" >&2
   exit 1
 }
 phase channel-fetch
