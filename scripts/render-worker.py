@@ -14,9 +14,10 @@ FIELDS = (
     "R2_ENDPOINT", "R2_BUCKET", "FREESENSE_REPO_SIGNING_KEY",
     "STAGE", "FINGERPRINT", "PLATFORM_ID", "SYSTEM_ID", "SOURCE_SHA",
     "SYSTEM_SHA", "PACKAGES_SHA", "OS_BASE_SHA", "FREEBSD_SHA", "PORTS_SHA",
-    "IMAGE_SHA256", "JAIL_OBJECT", "PACKAGE_TRAIN", "GENERATION", "PUBLIC_BASE_URL",
+    "IMAGE_SHA256", "WORKER_TOOLS_SHA256", "JAIL_OBJECT", "PACKAGE_TRAIN", "GENERATION", "PUBLIC_BASE_URL",
     "CHANNEL", "CHANNEL_PAYLOAD_SHA256", "CHANNEL_PAYLOAD_B64", "CHANNEL_SIGNATURE_B64",
 )
+ROOT = Path(__file__).resolve().parents[1]
 
 
 def main() -> int:
@@ -31,7 +32,11 @@ def main() -> int:
     stage = os.environ["STAGE"]
     if stage not in {"system", "packages", "iso"}:
         raise SystemExit(f"invalid stage: {stage}")
-    parts = [args.common, args.stages / f"{stage}.sh"]
+    parts = [
+        ROOT / "scripts/runner/install-worker-tools.sh",
+        args.common,
+        args.stages / f"{stage}.sh",
+    ]
     lines = ["#!/bin/sh", "set -eu"]
     for name in FIELDS:
         encoded = base64.b64encode(os.environ[name].encode()).decode("ascii")

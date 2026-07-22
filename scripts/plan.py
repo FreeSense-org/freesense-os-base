@@ -132,6 +132,7 @@ def main() -> int:
     system_freebsd_sha = closure.get("artifact_freebsd_sha", "")
     system_ports_sha = closure.get("artifact_ports_sha", "")
     system_image_sha256 = closure.get("artifact_image_sha256", "")
+    system_worker_tools_sha256 = closure.get("artifact_worker_tools_sha256", "")
     system_jail_object = closure.get("artifact_jail_object", "")
     system_signing_public_key_sha256 = closure.get("artifact_signing_public_key_sha256", "")
     current_packages_fingerprint = closure.get("packages_fingerprint", "")
@@ -142,6 +143,15 @@ def main() -> int:
     policy = json.loads((ROOT / "config/build-policy.json").read_text())
     if lock.get("schema_version") != "freesense.freebsd-pin/v2" or not lock.get("ready"):
         raise SystemExit("FreeBSD lock is not ready")
+    worker_tools = lock.get("worker_tools", {})
+    worker_tools_lock_sha256 = (
+        worker_tools.get("sha256", "") if isinstance(worker_tools, dict) else ""
+    )
+    if args.kind == "system" and (
+        not SHA256.fullmatch(worker_tools_lock_sha256)
+        or worker_tools.get("object") != "inputs/sha256/" + worker_tools_lock_sha256
+    ):
+        raise SystemExit("FreeBSD lock has no pinned worker-tool bundle; run Pin FreeBSD")
 
     artifact_policy = {
         key: policy[key]
@@ -152,6 +162,7 @@ def main() -> int:
     ).hexdigest()
     patch_files = [ROOT / "apply.sh", ROOT / "manifest.env", *sorted((ROOT / "patches").glob("*.patch"))]
     platform_recipe = recipe_digest([
+        ROOT / "scripts/runner/install-worker-tools.sh",
         ROOT / "scripts/runner/worker-common.sh",
         ROOT / "scripts/runner/stages/system.sh",
         *patch_files,
@@ -170,6 +181,7 @@ def main() -> int:
             "freebsd_ports": lock["freebsd_ports"]["commit"],
             "jail_seed": lock["jail_seed"]["sha256"],
             "worker_image": lock["worker_image"]["sha256"],
+            "worker_tools": worker_tools_lock_sha256,
             "source": latest_source_sha,
             "system_ports": latest_system_sha,
             "package_train": policy["package_train"],
@@ -188,6 +200,7 @@ def main() -> int:
             "package_train": policy["package_train"],
             "recipe": recipe_digest([
                 ROOT / "scripts/render-worker.py",
+                ROOT / "scripts/runner/install-worker-tools.sh",
                 ROOT / "scripts/runner/worker-common.sh",
                 ROOT / "scripts/runner/stages/system.sh",
             ]),
@@ -206,6 +219,7 @@ def main() -> int:
             "System": system_id,
             "platform": system_platform_id,
             "image": system_image_sha256,
+            "worker tools": system_worker_tools_sha256,
             "signing key": system_signing_public_key_sha256,
         }
         if any(not isinstance(value, str) or not SHA.fullmatch(value) for value in sha_inputs.values()):
@@ -244,6 +258,7 @@ def main() -> int:
         freebsd_sha = system_freebsd_sha
         ports_sha = system_ports_sha
         image_sha256 = system_image_sha256
+        worker_tools_sha256 = system_worker_tools_sha256
         jail_object = system_jail_object
         platform = system_platform_id
         system = system_id
@@ -255,6 +270,7 @@ def main() -> int:
         freebsd_sha = lock["freebsd_source"]["commit"]
         ports_sha = lock["freebsd_ports"]["commit"]
         image_sha256 = lock["worker_image"]["sha256"]
+        worker_tools_sha256 = worker_tools_lock_sha256
         jail_object = lock["jail_seed"]["object"]
         platform = desired_platform
         system = desired_system
@@ -269,6 +285,7 @@ def main() -> int:
         "package_train": selected_package_train,
         "recipe": recipe_digest([
             ROOT / "scripts/render-worker.py",
+            ROOT / "scripts/runner/install-worker-tools.sh",
             ROOT / "scripts/runner/worker-common.sh",
             ROOT / "scripts/runner/stages/packages.sh",
         ]),
@@ -289,7 +306,12 @@ def main() -> int:
         "signing_public_key": signing_public_key_sha256,
         "runner_policy": policy["runner"],
         "runner_recipe": runner_recipe,
-        "recipe": recipe_digest([ROOT / "scripts/render-worker.py", ROOT / "scripts/runner/worker-common.sh", ROOT / "scripts/runner/stages/iso.sh"]),
+        "recipe": recipe_digest([
+            ROOT / "scripts/render-worker.py",
+            ROOT / "scripts/runner/install-worker-tools.sh",
+            ROOT / "scripts/runner/worker-common.sh",
+            ROOT / "scripts/runner/stages/iso.sh",
+        ]),
     })
     identifiers = {"platform": platform, "system": system, "packages": packages, "iso": iso}
     selected = identifiers[args.kind]
@@ -312,6 +334,7 @@ def main() -> int:
         "freebsd_sha": freebsd_sha,
         "ports_sha": ports_sha,
         "image_sha256": image_sha256,
+        "worker_tools_sha256": worker_tools_sha256,
         "jail_object": jail_object,
         "package_train": selected_package_train,
         "abi": policy["abi"],

@@ -141,6 +141,7 @@ def main() -> int:
         required_sha256 = {
             "platform": inputs.get("platform", ""),
             "worker_image": inputs.get("worker_image", ""),
+            "worker_tools": inputs.get("worker_tools", ""),
             "signing_public_key": inputs.get("signing_public_key", ""),
         }
         if (
@@ -163,6 +164,7 @@ def main() -> int:
             "artifact_ports_sha": required_sha["ports"],
             "artifact_os_base_sha": required_sha["os_definition"],
             "artifact_image_sha256": required_sha256["worker_image"],
+            "artifact_worker_tools_sha256": required_sha256["worker_tools"],
             "artifact_jail_object": inputs["jail_object"],
             "artifact_signing_public_key_sha256": required_sha256["signing_public_key"],
         })

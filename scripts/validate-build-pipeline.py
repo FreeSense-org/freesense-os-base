@@ -28,10 +28,12 @@ pipeline_files = [
     *sorted(WORKFLOWS.glob("*.yml")),
     ROOT / "scripts/plan.py",
     ROOT / "scripts/channel.py",
-    ROOT / "scripts/select_ports_pin.py",
+    ROOT / "scripts/pin-worker-tools.sh",
+    ROOT / "scripts/resolve_worker_tools.py",
     ROOT / "scripts/verify-release.sh",
     ROOT / "scripts/render-worker.py",
     ROOT / "scripts/runner/run-vm.sh",
+    ROOT / "scripts/runner/install-worker-tools.sh",
     ROOT / "scripts/runner/worker-common.sh",
     *sorted((ROOT / "scripts/runner/stages").glob("*.sh")),
     ROOT / "cmd/fsbuild/main.go",
@@ -85,14 +87,18 @@ if "workflow_run:" not in packages_workflow or "workflows: [System]" not in pack
 if "schedule:" in packages_workflow:
     raise SystemExit("optional packages retain a racing fixed schedule")
 pin_workflow = read(".github/workflows/pin.yml")
+pin_contract = pin_workflow + read("scripts/pin-worker-tools.sh")
 for required in (
-    "scripts/select_ports_pin.py",
+    "scripts/resolve_worker_tools.py",
     "repos/freebsd/freebsd-ports/commits/${ports_sha}",
+    "packagesite.yaml.sig", "packagesite.yaml.pub",
 ):
-    if required not in pin_workflow:
+    if required not in pin_contract:
         raise SystemExit(f"FreeBSD ports pin is missing {required!r}")
 
 common = read("scripts/runner/worker-common.sh")
+worker_tools = read("scripts/runner/install-worker-tools.sh")
+worker_runtime = worker_tools + "\n" + common
 system_stage = read("scripts/runner/stages/system.sh")
 packages_stage = read("scripts/runner/stages/packages.sh")
 for stage in ("system", "packages", "iso"):
@@ -129,7 +135,7 @@ for required in (
 if "export DO_NOT_SIGN_PKG_REPO=1" not in common:
     raise SystemExit("runner must bypass the legacy bootstrap signer before applying its own repository signature")
 for required in (
-    "tool_install_status", "FreeSense phase failed:", "${destination}.part",
+    "FreeSense phase failed:", "${destination}.part",
     "--error-on-no-transfer", "immutable input checksum mismatch", "/root/sign/repo.pub",
     "DATESTRING", "BUILTDATESTRING", "trusted package fingerprint",
     "verify_repository()", "packagesite.yaml.sig", "invalid signed package catalog record",
@@ -137,6 +143,25 @@ for required in (
 ):
     if required not in common:
         raise SystemExit(f"worker failure contract is missing {required!r}")
+if re.search(
+    r"(?m)^[ \t]*(?:env[ \t]+[^#\n]*[ \t]+)?"
+    r"pkg[ \t]+(?:update|install|bootstrap)(?:[ \t]|$)",
+    worker_runtime,
+):
+    raise SystemExit("worker still depends on a mutable live package catalogue")
+for required in (
+    "WORKER_TOOLS_SHA256", "/inputs/sha256/${WORKER_TOOLS_SHA256}",
+    'sha256 -q "${worker_tools_archive}"',
+    'pkg add "${worker_tools}/${package}"', "pkg check -d -n -q -a",
+    'test -z "${dependency_issues}"',
+):
+    if required not in worker_runtime:
+        raise SystemExit(f"pinned worker-tool bundle is missing {required!r}")
+if "pkg add -f" in worker_runtime:
+    raise SystemExit("worker-tool installation bypasses package ABI checks")
+if "scripts/runner/install-worker-tools.sh" not in pin_workflow or \
+        "install_worker_tools" not in pin_workflow:
+    raise SystemExit("Pin FreeBSD does not smoke-test the real worker-tool installer")
 for name, stage in (("system", system_stage), ("packages", packages_stage)):
     if source_archive not in stage:
         raise SystemExit(f"{name} does not create the pinned source archive")
@@ -188,10 +213,16 @@ if common.count("upload_immutable \"") != 2 or iso_stage.count("upload_immutable
 planner = read("scripts/plan.py")
 channel_reader = read("scripts/channel.py")
 channel_control = read("internal/control/control.go")
-for required in ("FreeSense-build/1", "error.code == 404", "signing_public_key_sha256", "--system-closure"):
+for required in (
+    "FreeSense-build/1", "error.code == 404", "signing_public_key_sha256",
+    "worker_tools_sha256", "--system-closure",
+):
     if required not in planner:
         raise SystemExit(f"planner channel/trust contract is missing {required!r}")
-for required in ("payload_sha256", "artifact_signing_public_key_sha256", "system_fingerprint"):
+for required in (
+    "payload_sha256", "artifact_signing_public_key_sha256",
+    "artifact_worker_tools_sha256", "system_fingerprint",
+):
     if required not in channel_reader:
         raise SystemExit(f"signed channel reader is missing {required!r}")
 for required in ("SystemFingerprint", "packages publication is not bound", "channel.Packages = nil"):
@@ -224,6 +255,10 @@ if not re.fullmatch(r"[0-9a-f]{40}", lock["freebsd_ports"]["commit"]):
 for item in (lock["jail_seed"], lock["worker_image"]):
     if item["object"] != "inputs/sha256/" + item["sha256"]:
         raise SystemExit("pinned input path is not content addressed")
+if "worker_tools" in lock:
+    item = lock["worker_tools"]
+    if item["object"] != "inputs/sha256/" + item["sha256"]:
+        raise SystemExit("pinned worker-tool path is not content addressed")
 
 broker = read("broker/src/index.js")
 for role in ("coordinator", "artifact-writer", "pin-writer", "channel-writer", "broker-smoke"):

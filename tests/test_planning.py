@@ -101,6 +101,7 @@ def system_closure(*, channel_name: str = "devel"):
         "artifact_freebsd_sha": "4" * 40,
         "artifact_ports_sha": "5" * 40,
         "artifact_image_sha256": "6" * 64,
+        "artifact_worker_tools_sha256": "9" * 64,
         "artifact_jail_object": "inputs/sha256/" + "7" * 64,
         "artifact_signing_public_key_sha256": hashlib.sha256(
             (ROOT / "config/channel-signing-public.pem").read_bytes()
@@ -110,6 +111,47 @@ def system_closure(*, channel_name: str = "devel"):
 
 
 class PlannerChannelTests(unittest.TestCase):
+    def test_system_plan_uses_the_pinned_worker_bundle(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "config").mkdir()
+            (root / "patches").mkdir()
+            (root / "config/freebsd-16.json").write_text(json.dumps({
+                "schema_version": "freesense.freebsd-pin/v2",
+                "ready": True,
+                "freebsd_source": {"commit": "1" * 40},
+                "freebsd_ports": {"commit": "2" * 40},
+                "jail_seed": {
+                    "object": "inputs/sha256/" + "3" * 64,
+                    "sha256": "3" * 64,
+                },
+                "worker_image": {"sha256": "4" * 64},
+                "worker_tools": {
+                    "object": "inputs/sha256/" + "5" * 64,
+                    "sha256": "5" * 64,
+                },
+            }))
+            (root / "config/build-policy.json").write_text(json.dumps({
+                "package_train": "1.1",
+                "abi": "FreeBSD:16:amd64",
+                "altabi": "freebsd:16:x86:64",
+                "public_base_url": "https://pkg.freesense.org/v1",
+                "runner": {"vcpus": 12, "memory_mib": 32768, "disk_gib": 160},
+            }))
+            (root / "config/channel-signing-public.pem").write_bytes(b"test-key")
+            argv = ["plan.py", "system", "--os-base-sha", "6" * 40]
+            with mock.patch.object(sys, "argv", argv), \
+                    mock.patch.object(plan, "ROOT", root), \
+                    mock.patch.object(plan, "recipe_digest", return_value="7" * 64), \
+                    mock.patch.object(plan, "remote_sha", side_effect=("8" * 40, "9" * 40)), \
+                    mock.patch.object(plan, "current_component", return_value=""), \
+                    redirect_stdout(io.StringIO()) as rendered:
+                self.assertEqual(plan.main(), 0)
+        values = json.loads(rendered.getvalue())
+        self.assertEqual(values["worker_tools_sha256"], "5" * 64)
+        self.assertEqual(values["image_sha256"], "4" * 64)
+        self.assertTrue(values["needed"])
+
     def test_current_component_uses_named_client_and_verifies(self):
         envelope, _ = signed_envelope()
         requests = []
@@ -182,6 +224,7 @@ class PlannerChannelTests(unittest.TestCase):
                 "package_train": "1.1",
                 "os_definition": "5" * 40,
                 "worker_image": "c" * 64,
+                "worker_tools": "f" * 64,
                 "jail_object": "inputs/sha256/" + "d" * 64,
                 "signing_public_key": "e" * 64,
             },
@@ -211,6 +254,7 @@ class PlannerChannelTests(unittest.TestCase):
         self.assertEqual(values["artifact_platform"], "b" * 64)
         self.assertEqual(values["artifact_source_sha"], "1" * 40)
         self.assertEqual(values["artifact_jail_object"], "inputs/sha256/" + "d" * 64)
+        self.assertEqual(values["artifact_worker_tools_sha256"], "f" * 64)
         self.assertEqual(values["packages_fingerprint"], "")
 
     def test_iso_plan_uses_selected_system_closure_without_remote_resolution(self):
@@ -232,6 +276,7 @@ class PlannerChannelTests(unittest.TestCase):
         self.assertEqual(values["source_sha"], "1" * 40)
         self.assertEqual(values["os_base_sha"], "3" * 40)
         self.assertEqual(values["image_sha256"], "6" * 64)
+        self.assertEqual(values["worker_tools_sha256"], "9" * 64)
 
     def test_packages_inherit_published_system_closure(self):
         with tempfile.TemporaryDirectory() as directory:

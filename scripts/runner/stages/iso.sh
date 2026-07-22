@@ -80,10 +80,11 @@ upload_immutable "${iso}" "${RESULT}/${name}"
 jq -n --arg fingerprint "${FINGERPRINT}" --arg sha256 "${sha}" --arg file "${name}" \
   --arg system "${SYSTEM_ID}" --arg platform "${PLATFORM_ID}" --arg source "${SOURCE_SHA}" \
   --arg freebsd "${FREEBSD_SHA}" --arg worker_image "${IMAGE_SHA256}" \
+  --arg worker_tools "${WORKER_TOOLS_SHA256}" \
   --arg package_train "${PACKAGE_TRAIN}" --arg channel "${CHANNEL}" \
   --arg channel_payload "${CHANNEL_PAYLOAD_SHA256}" --argjson size "${size}" \
   --argjson generation "${GENERATION}" \
-  '{schema_version:"freesense.iso/v1",fingerprint:$fingerprint,sha256:$sha256,size:$size,file:$file,system:$system,generation:$generation,inputs:{platform:$platform,source:$source,freebsd:$freebsd,worker_image:$worker_image,package_train:$package_train,channel:$channel,channel_payload:$channel_payload}}' \
+  '{schema_version:"freesense.iso/v1",fingerprint:$fingerprint,sha256:$sha256,size:$size,file:$file,system:$system,generation:$generation,inputs:{platform:$platform,source:$source,freebsd:$freebsd,worker_image:$worker_image,worker_tools:$worker_tools,package_train:$package_train,channel:$channel,channel_payload:$channel_payload}}' \
   >/tmp/complete.json
 upload_immutable /tmp/complete.json "${RESULT}/complete.json"
 phase iso-complete
