@@ -23,7 +23,7 @@ def require(condition: bool, message: str) -> None:
 
 expected_workflows = {
     "broker.yml", "ci.yml", "packages.yml", "pin.yml", "release.yml",
-    "runner-build.yml", "system.yml",
+    "runner-build.yml", "stable-1.0.yml", "system.yml",
 }
 workflow_paths = sorted(WORKFLOWS.glob("*.yml"))
 require({path.name for path in workflow_paths} == expected_workflows,
@@ -44,7 +44,7 @@ pin_workflow = read(".github/workflows/pin.yml")
 for workflow in (reusable, pin_workflow):
     require("apt-get" not in workflow,
             "dedicated runners must be provisioned outside build workflows")
-for name in ("system.yml", "packages.yml", "release.yml"):
+for name in ("system.yml", "packages.yml", "release.yml", "stable-1.0.yml"):
     require("uses: ./.github/workflows/runner-build.yml" in read(f".github/workflows/{name}"),
             f"{name} bypasses the reusable KVM executor")
 require("schedule:" in read(".github/workflows/system.yml"),
@@ -54,6 +54,13 @@ require("workflow_run:" in packages_workflow and "workflows: [System]" in packag
         "optional packages are not chained to System")
 require("schedule:" not in packages_workflow,
         "optional packages retain a racing fixed schedule")
+require('cron: "0 6 * * *"' in read(".github/workflows/system.yml"),
+        "the daily System check is not fixed at 06:00 UTC")
+stable_workflow = read(".github/workflows/stable-1.0.yml")
+require("schedule:" not in stable_workflow and "channel seal-stable" in stable_workflow,
+        "stable 1.0 is not an explicit one-time seal")
+require("freebsd_pin_id" in reusable and "product_version" in reusable,
+        "reusable builds omit the release or FreeBSD pin identity")
 
 policy = json.loads(read("config/build-policy.json"))
 require(policy.get("runner") == {"vcpus": 12, "memory_mib": 32768, "disk_gib": 160},

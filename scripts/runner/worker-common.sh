@@ -17,7 +17,7 @@ trap report_phase_failure EXIT
 decode() { printf '%s' "$1" | base64 -d; }
 for name in AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN R2_ENDPOINT R2_BUCKET \
   FREESENSE_REPO_SIGNING_KEY STAGE FINGERPRINT PLATFORM_ID SYSTEM_ID SOURCE_SHA \
-  SYSTEM_SHA PACKAGES_SHA OS_BASE_SHA FREEBSD_SHA PORTS_SHA JAIL_OBJECT PACKAGE_TRAIN \
+  SYSTEM_SHA PACKAGES_SHA OS_BASE_SHA FREEBSD_SHA PORTS_SHA JAIL_OBJECT FREEBSD_PIN_ID PACKAGE_TRAIN PRODUCT_VERSION \
   IMAGE_SHA256 WORKER_TOOLS_SHA256 GENERATION PUBLIC_BASE_URL CHANNEL CHANNEL_PAYLOAD_SHA256 \
   CHANNEL_PAYLOAD_B64 CHANNEL_SIGNATURE_B64; do
   eval "$name=\$(decode \"\${${name}_B64}\")"
@@ -34,6 +34,12 @@ for value in "${FINGERPRINT}" "${PLATFORM_ID}" "${SYSTEM_ID}" "${IMAGE_SHA256}" 
   case "${value}" in ''|*[!0-9a-f]*) echo "invalid SHA-256 build input" >&2; exit 1 ;; esac
   [ "${#value}" -eq 64 ] || { echo "invalid SHA-256 build input" >&2; exit 1; }
 done
+case "${FREEBSD_PIN_ID}" in ''|*[!0-9a-f]*) echo "invalid FreeBSD pin identity" >&2; exit 1 ;; esac
+[ "${#FREEBSD_PIN_ID}" -eq 64 ] || { echo "invalid FreeBSD pin identity" >&2; exit 1; }
+case "${PRODUCT_VERSION}" in
+  1.0.0-RELEASE|1.1.0-DEVELOPMENT) : ;;
+  *) echo "invalid product version" >&2; exit 1 ;;
+esac
 if [ "${STAGE}" = iso ]; then
   case "${CHANNEL_PAYLOAD_SHA256}" in ''|*[!0-9a-f]*)
     echo "ISO requires the exact signed channel payload" >&2; exit 1 ;;
@@ -151,6 +157,7 @@ configure_source() {
   fi
   cat >>build.conf <<EOF
 export PRODUCT_NAME_SUFFIX=""
+export PRODUCT_VERSION="${PRODUCT_VERSION}"
 export POUDRIERE_BRANCH=main
 export POUDRIERE_PORTS_GIT_URL="https://github.com/freebsd/freebsd-ports.git"
 export POUDRIERE_PORTS_GIT_BRANCH="main"
@@ -509,9 +516,10 @@ publish_repository() {
     --arg ports "${PORTS_SHA}" --arg package_train "${PACKAGE_TRAIN}" \
     --arg os_definition "${OS_BASE_SHA}" --arg worker_image "${IMAGE_SHA256}" \
     --arg worker_tools "${WORKER_TOOLS_SHA256}" \
+    --arg freebsd_pin_id "${FREEBSD_PIN_ID}" \
     --arg jail_object "${JAIL_OBJECT}" --arg signing_public_key "${derived_fingerprint}" \
     --argjson generation "${GENERATION}" \
-    '{schema_version:"freesense.artifact/v1",stage:$stage,fingerprint:$fingerprint,generation:$generation,inputs:{platform:$platform,system:$system,source:$source,system_ports:$system_ports,freebsd:$freebsd,ports:$ports,package_train:$package_train,os_definition:$os_definition,worker_image:$worker_image,worker_tools:$worker_tools,jail_object:$jail_object,signing_public_key:$signing_public_key}} | if $stage == "packages" then .inputs.packages = $packages else . end' \
+    '{schema_version:"freesense.artifact/v1",stage:$stage,fingerprint:$fingerprint,generation:$generation,inputs:{platform:$platform,system:$system,source:$source,system_ports:$system_ports,freebsd:$freebsd,ports:$ports,freebsd_pin_id:$freebsd_pin_id,package_train:$package_train,os_definition:$os_definition,worker_image:$worker_image,worker_tools:$worker_tools,jail_object:$jail_object,signing_public_key:$signing_public_key}} | if $stage == "packages" then .inputs.packages = $packages | .inputs.built_against_system = $system else . end' \
     >"${directory}/complete.json"
   upload_immutable "${directory}/complete.json" "${RESULT}/complete.json"
   phase repository-complete

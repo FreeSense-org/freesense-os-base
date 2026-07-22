@@ -1,0 +1,200 @@
+name: Seal FreeSense 1.0
+
+on:
+  workflow_dispatch:
+
+permissions: {contents: read, id-token: write}
+concurrency: {group: stable-1.0-seal, cancel-in-progress: false}
+
+jobs:
+  plan:
+    runs-on: ubuntu-24.04
+    environment: build-coordinator
+    outputs:
+      platform: ${{ steps.plan.outputs.platform }}
+      system: ${{ steps.plan.outputs.system }}
+      packages: ${{ steps.plan.outputs.packages }}
+      system_generation: ${{ steps.system-generation.outputs.generation }}
+      packages_generation: ${{ steps.packages-generation.outputs.generation }}
+      source_sha: ${{ steps.plan.outputs.source_sha }}
+      system_sha: ${{ steps.plan.outputs.system_sha }}
+      packages_sha: ${{ steps.plan.outputs.packages_sha }}
+      os_base_sha: ${{ steps.plan.outputs.os_base_sha }}
+      freebsd_sha: ${{ steps.plan.outputs.freebsd_sha }}
+      ports_sha: ${{ steps.plan.outputs.ports_sha }}
+      image_sha256: ${{ steps.plan.outputs.image_sha256 }}
+      worker_tools_sha256: ${{ steps.plan.outputs.worker_tools_sha256 }}
+      jail_object: ${{ steps.plan.outputs.jail_object }}
+      freebsd_pin_id: ${{ steps.plan.outputs.freebsd_pin_id }}
+      package_train: ${{ steps.plan.outputs.package_train }}
+      product_version: ${{ steps.plan.outputs.product_version }}
+      abi: ${{ steps.plan.outputs.abi }}
+      altabi: ${{ steps.plan.outputs.altabi }}
+      public_base_url: ${{ steps.plan.outputs.public_base_url }}
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with: {go-version-file: go.mod, cache: false}
+      - id: plan
+        run: python3 scripts/stable_plan.py --os-base-sha "${GITHUB_SHA}" --github-output "${GITHUB_OUTPUT}"
+      - run: go build -trimpath -o "${RUNNER_TEMP}/fsbuild" ./cmd/fsbuild
+      - name: Acquire generation coordinator
+        env:
+          R2_CREDENTIAL_BROKER_URL: ${{ vars.R2_CREDENTIAL_BROKER_URL }}
+          R2_CREDENTIAL_BROKER_AUDIENCE: ${{ vars.R2_CREDENTIAL_BROKER_AUDIENCE }}
+          R2_BUCKET: ${{ vars.R2_BUILD_BUCKET }}
+          R2_ENDPOINT: ${{ vars.R2_ENDPOINT }}
+        run: >-
+          "${RUNNER_TEMP}/fsbuild" credentials acquire --broker-url "${R2_CREDENTIAL_BROKER_URL}"
+          --audience "${R2_CREDENTIAL_BROKER_AUDIENCE}" --role coordinator
+          --expected-bucket "${R2_BUCKET}" --expected-prefix v1 --expected-endpoint "${R2_ENDPOINT}"
+          --github-env "${GITHUB_ENV}"
+      - id: system-generation
+        env: {R2_BUCKET: "${{ vars.R2_BUILD_BUCKET }}", FSBUILD_STORE_PREFIX: v1}
+        run: |
+          "${RUNNER_TEMP}/fsbuild" state reserve-generation --fingerprint "${{ steps.plan.outputs.system }}" \
+            --proposed "${GITHUB_RUN_NUMBER}" --output "${RUNNER_TEMP}/generation.json"
+          echo "generation=$(jq -r .generation "${RUNNER_TEMP}/generation.json")" >>"${GITHUB_OUTPUT}"
+      - id: packages-generation
+        env: {R2_BUCKET: "${{ vars.R2_BUILD_BUCKET }}", FSBUILD_STORE_PREFIX: v1}
+        run: |
+          "${RUNNER_TEMP}/fsbuild" state reserve-generation --fingerprint "${{ steps.plan.outputs.packages }}" \
+            --proposed "${GITHUB_RUN_NUMBER}" --output "${RUNNER_TEMP}/generation.json"
+          echo "generation=$(jq -r .generation "${RUNNER_TEMP}/generation.json")" >>"${GITHUB_OUTPUT}"
+
+  system:
+    needs: plan
+    uses: ./.github/workflows/runner-build.yml
+    with:
+      stage: system
+      fingerprint: ${{ needs.plan.outputs.system }}
+      platform_id: ${{ needs.plan.outputs.platform }}
+      system_id: ${{ needs.plan.outputs.system }}
+      source_sha: ${{ needs.plan.outputs.source_sha }}
+      system_sha: ${{ needs.plan.outputs.system_sha }}
+      packages_sha: ${{ needs.plan.outputs.packages_sha }}
+      os_base_sha: ${{ needs.plan.outputs.os_base_sha }}
+      freebsd_sha: ${{ needs.plan.outputs.freebsd_sha }}
+      ports_sha: ${{ needs.plan.outputs.ports_sha }}
+      image_sha256: ${{ needs.plan.outputs.image_sha256 }}
+      worker_tools_sha256: ${{ needs.plan.outputs.worker_tools_sha256 }}
+      jail_object: ${{ needs.plan.outputs.jail_object }}
+      freebsd_pin_id: ${{ needs.plan.outputs.freebsd_pin_id }}
+      product_version: ${{ needs.plan.outputs.product_version }}
+      package_train: ${{ needs.plan.outputs.package_train }}
+      generation: ${{ needs.plan.outputs.system_generation }}
+      public_base_url: ${{ needs.plan.outputs.public_base_url }}
+    secrets: inherit
+
+  packages:
+    needs: [plan, system]
+    uses: ./.github/workflows/runner-build.yml
+    with:
+      stage: packages
+      fingerprint: ${{ needs.plan.outputs.packages }}
+      platform_id: ${{ needs.plan.outputs.platform }}
+      system_id: ${{ needs.plan.outputs.system }}
+      source_sha: ${{ needs.plan.outputs.source_sha }}
+      system_sha: ${{ needs.plan.outputs.system_sha }}
+      packages_sha: ${{ needs.plan.outputs.packages_sha }}
+      os_base_sha: ${{ needs.plan.outputs.os_base_sha }}
+      freebsd_sha: ${{ needs.plan.outputs.freebsd_sha }}
+      ports_sha: ${{ needs.plan.outputs.ports_sha }}
+      image_sha256: ${{ needs.plan.outputs.image_sha256 }}
+      worker_tools_sha256: ${{ needs.plan.outputs.worker_tools_sha256 }}
+      jail_object: ${{ needs.plan.outputs.jail_object }}
+      freebsd_pin_id: ${{ needs.plan.outputs.freebsd_pin_id }}
+      product_version: ${{ needs.plan.outputs.product_version }}
+      package_train: ${{ needs.plan.outputs.package_train }}
+      generation: ${{ needs.plan.outputs.packages_generation }}
+      public_base_url: ${{ needs.plan.outputs.public_base_url }}
+    secrets: inherit
+
+  seal:
+    needs: [plan, system, packages]
+    runs-on: ubuntu-24.04
+    environment: channel-publisher
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with: {go-version-file: go.mod, cache: false}
+      - run: go build -trimpath -o "${RUNNER_TEMP}/fsbuild" ./cmd/fsbuild
+      - name: Acquire channel writer
+        env:
+          R2_CREDENTIAL_BROKER_URL: ${{ vars.R2_CREDENTIAL_BROKER_URL }}
+          R2_CREDENTIAL_BROKER_AUDIENCE: ${{ vars.R2_CREDENTIAL_BROKER_AUDIENCE }}
+          R2_BUCKET: ${{ vars.R2_BUILD_BUCKET }}
+          R2_ENDPOINT: ${{ vars.R2_ENDPOINT }}
+        run: >-
+          "${RUNNER_TEMP}/fsbuild" credentials acquire --broker-url "${R2_CREDENTIAL_BROKER_URL}"
+          --audience "${R2_CREDENTIAL_BROKER_AUDIENCE}" --role channel-writer
+          --expected-bucket "${R2_BUCKET}" --expected-prefix v1 --expected-endpoint "${R2_ENDPOINT}"
+          --github-env "${GITHUB_ENV}"
+      - name: Seal stable channel exactly once
+        env:
+          R2_BUCKET: ${{ vars.R2_BUILD_BUCKET }}
+          FSBUILD_STORE_PREFIX: v1
+          SIGNING_KEY: ${{ secrets.FREESENSE_PKG_SIGNING_KEY }}
+        run: |
+          key=$(mktemp); trap 'rm -f "$key"' EXIT; chmod 600 "$key"; printf '%s' "${SIGNING_KEY}" >"$key"
+          "${RUNNER_TEMP}/fsbuild" channel seal-stable \
+            --system-fingerprint "${{ needs.plan.outputs.system }}" \
+            --system-url "${{ needs.plan.outputs.public_base_url }}/artifacts/system/${{ needs.plan.outputs.system }}/amd64" \
+            --system-generation "${{ needs.plan.outputs.system_generation }}" \
+            --packages-fingerprint "${{ needs.plan.outputs.packages }}" \
+            --packages-url "${{ needs.plan.outputs.public_base_url }}/artifacts/packages/${{ needs.plan.outputs.package_train }}/${{ needs.plan.outputs.packages }}/amd64" \
+            --packages-generation "${{ needs.plan.outputs.packages_generation }}" \
+            --freebsd-pin-id "${{ needs.plan.outputs.freebsd_pin_id }}" \
+            --package-train "${{ needs.plan.outputs.package_train }}" \
+            --abi "${{ needs.plan.outputs.abi }}" --altabi "${{ needs.plan.outputs.altabi }}" \
+            --published-at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --private-key "$key"
+
+  iso-plan:
+    needs: [plan, seal]
+    runs-on: ubuntu-24.04
+    outputs:
+      fingerprint: ${{ steps.plan.outputs.iso }}
+      generation: ${{ steps.plan.outputs.channel_generation }}
+      channel_payload_sha256: ${{ steps.plan.outputs.channel_payload_sha256 }}
+      channel_payload_base64: ${{ steps.plan.outputs.channel_payload_base64 }}
+      channel_signature_base64: ${{ steps.plan.outputs.channel_signature_base64 }}
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - name: Read the newly sealed channel
+        run: |
+          for attempt in 1 2 3 4 5; do
+            python3 scripts/channel.py --public-key config/channel-signing-public.pem \
+              --channel stable --component system --json-output "${RUNNER_TEMP}/system.json" && break
+            test "$attempt" = 5 && exit 1
+            sleep 5
+          done
+      - id: plan
+        run: python3 scripts/plan.py iso --system-closure "${RUNNER_TEMP}/system.json" --github-output "${GITHUB_OUTPUT}"
+
+  iso:
+    needs: [plan, iso-plan]
+    uses: ./.github/workflows/runner-build.yml
+    with:
+      stage: iso
+      fingerprint: ${{ needs.iso-plan.outputs.fingerprint }}
+      platform_id: ${{ needs.plan.outputs.platform }}
+      system_id: ${{ needs.plan.outputs.system }}
+      source_sha: ${{ needs.plan.outputs.source_sha }}
+      system_sha: ${{ needs.plan.outputs.system_sha }}
+      packages_sha: ${{ needs.plan.outputs.packages_sha }}
+      os_base_sha: ${{ needs.plan.outputs.os_base_sha }}
+      freebsd_sha: ${{ needs.plan.outputs.freebsd_sha }}
+      ports_sha: ${{ needs.plan.outputs.ports_sha }}
+      image_sha256: ${{ needs.plan.outputs.image_sha256 }}
+      worker_tools_sha256: ${{ needs.plan.outputs.worker_tools_sha256 }}
+      jail_object: ${{ needs.plan.outputs.jail_object }}
+      freebsd_pin_id: ${{ needs.plan.outputs.freebsd_pin_id }}
+      product_version: ${{ needs.plan.outputs.product_version }}
+      package_train: ${{ needs.plan.outputs.package_train }}
+      generation: ${{ needs.iso-plan.outputs.generation }}
+      public_base_url: ${{ needs.plan.outputs.public_base_url }}
+      channel: stable
+      channel_payload_sha256: ${{ needs.iso-plan.outputs.channel_payload_sha256 }}
+      channel_payload_base64: ${{ needs.iso-plan.outputs.channel_payload_base64 }}
+      channel_signature_base64: ${{ needs.iso-plan.outputs.channel_signature_base64 }}
+    secrets: inherit

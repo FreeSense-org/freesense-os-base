@@ -25,7 +25,7 @@ import (
 const (
 	GenerationSchema = "freesense.generation/v1"
 	EnvelopeSchema   = "freesense.repositories/v3"
-	PayloadSchema    = "freesense.channels/v1"
+	PayloadSchema    = "freesense.channels/v2"
 	ManifestKey      = "repos.manifest.json"
 )
 
@@ -60,12 +60,14 @@ type Channel struct {
 }
 
 type Component struct {
-	Fingerprint       string    `json:"fingerprint"`
-	SystemFingerprint string    `json:"system_fingerprint,omitempty"`
-	URL               string    `json:"url"`
-	Generation        uint64    `json:"generation"`
-	PublishedAt       time.Time `json:"published_at"`
-	Verified          bool      `json:"verified"`
+	Fingerprint        string    `json:"fingerprint"`
+	SystemFingerprint  string    `json:"system_fingerprint,omitempty"`
+	FreeBSDPinID       string    `json:"freebsd_pin_id"`
+	BuiltAgainstSystem string    `json:"built_against_system,omitempty"`
+	URL                string    `json:"url"`
+	Generation         uint64    `json:"generation"`
+	PublishedAt        time.Time `json:"published_at"`
+	Verified           bool      `json:"verified"`
 }
 
 type UpdateOptions struct {
@@ -75,12 +77,81 @@ type UpdateOptions struct {
 	// SystemFingerprint binds a packages component to the exact system it was
 	// built and tested against. It must be empty for system publications.
 	SystemFingerprint string
+	FreeBSDPinID      string
 	URL               string
 	Generation        uint64
 	PackageTrain      string
 	ABI               string
 	AltABI            string
 	PublishedAt       time.Time
+}
+
+// SealStable installs the complete 1.0 System/Packages pair exactly once. The
+// stable channel is intentionally not part of the rolling promotion lifecycle.
+func SealStable(payload Payload, system, packages UpdateOptions) (Payload, error) {
+	if system.Component != "system" || packages.Component != "packages" {
+		return Payload{}, errors.New("stable release requires System and Packages components")
+	}
+	if system.PackageTrain != "1.0" || packages.PackageTrain != "1.0" {
+		return Payload{}, errors.New("sealed stable release must use package train 1.0")
+	}
+	if system.FreeBSDPinID != packages.FreeBSDPinID ||
+		packages.SystemFingerprint != system.Fingerprint {
+		return Payload{}, errors.New("sealed stable release has incompatible component bindings")
+	}
+	// A v1 channel cannot be mixed into the v2 envelope. The rolling 1.1
+	// publication performs that migration first; fail closed if sealing is
+	// attempted before it has completed.
+	for _, channel := range payload.Channels {
+		if channel.System != nil && !fingerprintPattern.MatchString(channel.System.FreeBSDPinID) {
+			return Payload{}, errors.New("existing channels must migrate to FreeBSD pin identities before sealing stable")
+		}
+		if channel.Packages != nil &&
+			(!fingerprintPattern.MatchString(channel.Packages.FreeBSDPinID) ||
+				!fingerprintPattern.MatchString(channel.Packages.BuiltAgainstSystem)) {
+			return Payload{}, errors.New("existing channels must migrate package compatibility before sealing stable")
+		}
+	}
+	working := Payload{Channels: map[string]Channel{}}
+	var err error
+	working, err = Update(working, system)
+	if err != nil {
+		return Payload{}, err
+	}
+	working, err = Verify(working, "system", system.Fingerprint)
+	if err != nil {
+		return Payload{}, err
+	}
+	working, err = Update(working, packages)
+	if err != nil {
+		return Payload{}, err
+	}
+	working, err = Verify(working, "packages", packages.Fingerprint)
+	if err != nil {
+		return Payload{}, err
+	}
+	desired := working.Channels["devel"]
+	desired.Name = "stable"
+	desired.Description = "FreeSense 1.0 stable (sealed)"
+	desired.Default = false
+
+	if payload.Channels == nil {
+		payload.Channels = map[string]Channel{}
+	}
+	if existing, ok := payload.Channels["stable"]; ok {
+		if existing.Name == desired.Name && existing.Description == desired.Description &&
+			existing.PackageTrain == desired.PackageTrain && existing.ABI == desired.ABI &&
+			existing.AltABI == desired.AltABI && existing.Default == desired.Default &&
+			componentIdentityEqual(existing.System, desired.System) &&
+			componentIdentityEqual(existing.Packages, desired.Packages) &&
+			existing.System.Verified && existing.Packages.Verified {
+			return payload, nil
+		}
+		return Payload{}, errors.New("stable 1.0 is already sealed and cannot be changed")
+	}
+	payload.SchemaVersion = PayloadSchema
+	payload.Channels["stable"] = desired
+	return payload, nil
 }
 
 func ReserveGeneration(ctx context.Context, backend store.Backend, fingerprint string, proposed uint64) (Generation, bool, error) {
@@ -186,7 +257,7 @@ func ParseSigned(data []byte, publicKey *rsa.PublicKey) (Payload, error) {
 	if err := json.Unmarshal(raw, &payload); err != nil {
 		return Payload{}, fmt.Errorf("decode signed channel payload: %w", err)
 	}
-	if payload.SchemaVersion != PayloadSchema || payload.Channels == nil {
+	if (payload.SchemaVersion != PayloadSchema && payload.SchemaVersion != "freesense.channels/v1") || payload.Channels == nil {
 		return Payload{}, errors.New("signed channel payload has an unsupported schema")
 	}
 	return payload, nil
@@ -201,6 +272,9 @@ func Update(payload Payload, options UpdateOptions) (Payload, error) {
 	}
 	if !fingerprintPattern.MatchString(options.Fingerprint) || options.Generation == 0 {
 		return Payload{}, errors.New("component identity is invalid")
+	}
+	if !fingerprintPattern.MatchString(options.FreeBSDPinID) {
+		return Payload{}, errors.New("component requires an exact FreeBSD pin identity")
 	}
 	if options.Component == "packages" && !fingerprintPattern.MatchString(options.SystemFingerprint) {
 		return Payload{}, errors.New("packages publication requires an exact system fingerprint binding")
@@ -228,7 +302,8 @@ func Update(payload Payload, options UpdateOptions) (Payload, error) {
 	}
 	channel := payload.Channels[options.Channel]
 	if options.Component == "packages" {
-		if channel.System == nil || channel.System.Fingerprint != options.SystemFingerprint {
+		if channel.System == nil || channel.System.Fingerprint != options.SystemFingerprint ||
+			channel.System.FreeBSDPinID != options.FreeBSDPinID {
 			return Payload{}, errors.New("packages publication is not bound to the current devel system")
 		}
 	}
@@ -238,7 +313,12 @@ func Update(payload Payload, options UpdateOptions) (Payload, error) {
 		if err != nil {
 			return Payload{}, err
 		}
-		if componentIdentityMatches(existing, options.Fingerprint, options.SystemFingerprint, artifactURL, options.Generation) {
+		builtAgainstSystem := ""
+		if options.Component == "packages" {
+			builtAgainstSystem = options.SystemFingerprint
+		}
+		if componentIdentityMatches(existing, options.Fingerprint, options.SystemFingerprint,
+			options.FreeBSDPinID, builtAgainstSystem, artifactURL, options.Generation) {
 			// A retry of the same publication must not restart its soak or discard
 			// successful integration verification.
 			return payload, nil
@@ -253,17 +333,31 @@ func Update(payload Payload, options UpdateOptions) (Payload, error) {
 	component := &Component{
 		Fingerprint:       options.Fingerprint,
 		SystemFingerprint: options.SystemFingerprint,
+		FreeBSDPinID:      options.FreeBSDPinID,
 		URL:               artifactURL,
 		Generation:        options.Generation,
 		PublishedAt:       options.PublishedAt.UTC(),
 		Verified:          false,
 	}
+	if options.Component == "packages" {
+		component.BuiltAgainstSystem = options.SystemFingerprint
+	}
 	if options.Component == "system" {
+		previousSystem := channel.System
+		previousPackages := channel.Packages
 		channel.System = component
-		// Package verification and promotion are meaningful only for the exact
-		// system they were built against. Any non-identical system publication
-		// invalidates the current package selection.
-		channel.Packages = nil
+		// Optional packages are compatible with every System produced from the
+		// same pinned FreeBSD closure. Keep the independently built repository and
+		// move only its selected-system pointer; the original build System remains
+		// recorded separately for auditability.
+		if previousSystem != nil && previousPackages != nil &&
+			previousPackages.FreeBSDPinID == component.FreeBSDPinID {
+			copy := *previousPackages
+			copy.SystemFingerprint = component.Fingerprint
+			channel.Packages = &copy
+		} else {
+			channel.Packages = nil
+		}
 	} else {
 		channel.Packages = component
 	}
@@ -339,7 +433,7 @@ func Promote(payload Payload, component string, now time.Time, soak time.Duratio
 			stable.System != nil &&
 			componentIdentityEqual(stable.System, target) &&
 			stableCompatibilityMatches &&
-			stable.Packages.SystemFingerprint == target.Fingerprint
+			stable.Packages.FreeBSDPinID == target.FreeBSDPinID
 		stable.System = &copy
 		if !keepPackages {
 			stable.Packages = nil
@@ -370,25 +464,34 @@ func channelCompatibilityEqual(left, right Channel) bool {
 	return left.PackageTrain == right.PackageTrain && left.ABI == right.ABI && left.AltABI == right.AltABI
 }
 
-func componentIdentityMatches(component *Component, fingerprint, systemFingerprint, artifactURL string, generation uint64) bool {
+func componentIdentityMatches(component *Component, fingerprint, systemFingerprint, freeBSDPinID,
+	builtAgainstSystem, artifactURL string, generation uint64) bool {
 	return component != nil &&
 		component.Fingerprint == fingerprint &&
 		component.SystemFingerprint == systemFingerprint &&
+		component.FreeBSDPinID == freeBSDPinID &&
+		component.BuiltAgainstSystem == builtAgainstSystem &&
 		component.URL == artifactURL &&
 		component.Generation == generation
 }
 
 func componentIdentityEqual(left, right *Component) bool {
 	return left != nil && right != nil &&
-		componentIdentityMatches(left, right.Fingerprint, right.SystemFingerprint, right.URL, right.Generation)
+		componentIdentityMatches(left, right.Fingerprint, right.SystemFingerprint, right.FreeBSDPinID,
+			right.BuiltAgainstSystem, right.URL, right.Generation)
 }
 
 func validatePackageBinding(channel Channel, packages *Component) error {
-	if packages == nil || !fingerprintPattern.MatchString(packages.SystemFingerprint) {
-		return errors.New("packages component has no valid system fingerprint binding")
+	if packages == nil || !fingerprintPattern.MatchString(packages.SystemFingerprint) ||
+		!fingerprintPattern.MatchString(packages.BuiltAgainstSystem) ||
+		!fingerprintPattern.MatchString(packages.FreeBSDPinID) {
+		return errors.New("packages component has no valid compatibility binding")
 	}
 	if channel.System == nil || channel.System.Fingerprint != packages.SystemFingerprint {
 		return errors.New("packages component is not bound to the channel system")
+	}
+	if channel.System.FreeBSDPinID != packages.FreeBSDPinID {
+		return errors.New("packages component is not bound to the channel FreeBSD pin")
 	}
 	return nil
 }
