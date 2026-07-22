@@ -16,6 +16,7 @@
     "R2_ACCOUNT_ID": "b82cfe18700f7455daff39e87a6a323b",
     "R2_ENDPOINT": "https://b82cfe18700f7455daff39e87a6a323b.r2.cloudflarestorage.com",
     "R2_BUCKET": "freesense-pkg",
+    "R2_DOWNLOAD_BUCKET": "freesense-downloads",
     "BROKER_DEPLOYMENT_ID": "0000000000000000000000000000000000000000.1.1"
   },
   "secrets": {

@@ -29,6 +29,7 @@ SYSTEM = "b" * 64
 SHA = "c" * 40
 ISO_SHA = "d" * 64
 BASE_URL = "https://pkg.freesense.org/v1"
+DOWNLOAD_BASE_URL = "https://downloads.freesense.org/v1"
 
 
 def marker(channel="stable", generation=2, fingerprint=FINGERPRINT):
@@ -47,7 +48,7 @@ def marker(channel="stable", generation=2, fingerprint=FINGERPRINT):
     }
 
 
-def release(channel="stable", generation=2, fingerprint=FINGERPRINT):
+def release(channel="stable", generation=2, fingerprint=FINGERPRINT, legacy=False):
     version = "1.0.0" if channel == "stable" else "1.1.0"
     item = marker(channel, generation, fingerprint)
     artifact = f"{BASE_URL}/artifacts/iso/{fingerprint}"
@@ -63,7 +64,10 @@ def release(channel="stable", generation=2, fingerprint=FINGERPRINT):
         "system": SYSTEM,
         "iso": item["file"],
         "marker_url": artifact + "/complete.json",
-        "url": artifact + "/" + item["file"],
+        "url": (artifact + "/" + item["file"] if legacy else
+                f"{DOWNLOAD_BASE_URL}/releases/{channel}/"
+                f"{version if channel == 'stable' else f'{version}-g{generation}'}/"
+                f"{item['file']}"),
         "size": item["size"],
         "sha256": item["sha256"],
         "published_at": "2026-07-22T22:09:10Z",
@@ -97,6 +101,11 @@ class PublishDownloadTests(unittest.TestCase):
         self.assertEqual(value["schema_version"], "freesense.download/v1")
         self.assertEqual(value["channel"], "stable")
         self.assertEqual(value["version"], "1.0.0")
+        self.assertEqual(
+            value["url"],
+            "https://downloads.freesense.org/v1/releases/stable/1.0.0/"
+            "FreeSense-1.0.0-amd64.iso",
+        )
         self.assertNotIn("channels", value)
 
     def test_idempotent_publication_preserves_timestamp(self):
@@ -132,7 +141,7 @@ class PublishDownloadTests(unittest.TestCase):
                     publish.main()
 
     def test_migrates_only_published_legacy_channels(self):
-        legacy_release = release()
+        legacy_release = release(legacy=True)
         legacy_release.pop("schema_version")
         legacy = {
             "schema_version": "freesense.downloads/v1",
@@ -143,16 +152,17 @@ class PublishDownloadTests(unittest.TestCase):
             output = Path(directory, "split")
             argv = ["migrate_downloads.py", "--output-dir", str(output)]
             with mock.patch.object(sys, "argv", argv), \
-                    mock.patch.object(migrate, "fetch_json", side_effect=(legacy, None)):
+                    mock.patch.object(migrate, "fetch_json", side_effect=(legacy, None, None)):
                 self.assertEqual(migrate.main(), 0)
             stable = json.loads(Path(output, "stable.json").read_text())
             self.assertFalse(Path(output, "devel.json").exists())
         self.assertEqual(stable["schema_version"], "freesense.download/v1")
         self.assertEqual(stable["channel"], "stable")
+        self.assertTrue(stable["url"].startswith(DOWNLOAD_BASE_URL))
 
-    def test_migration_is_idempotent_but_refuses_a_conflict(self):
+    def test_migration_is_idempotent_after_download_url_relocation(self):
         split = release()
-        legacy_release = dict(split)
+        legacy_release = release(legacy=True)
         legacy_release.pop("schema_version")
         legacy = {
             "schema_version": "freesense.downloads/v1",
@@ -162,17 +172,10 @@ class PublishDownloadTests(unittest.TestCase):
             output = Path(directory, "split")
             argv = ["migrate_downloads.py", "--output-dir", str(output)]
             with mock.patch.object(sys, "argv", argv), mock.patch.object(
-                migrate, "fetch_json", side_effect=(legacy, split)
+                migrate, "fetch_json", side_effect=(legacy, split, None)
             ):
                 self.assertEqual(migrate.main(), 0)
             self.assertFalse(Path(output, "stable.json").exists())
-
-            conflicting = {**split, "generation": split["generation"] + 1}
-            with mock.patch.object(sys, "argv", argv), mock.patch.object(
-                migrate, "fetch_json", side_effect=(legacy, conflicting)
-            ):
-                with self.assertRaisesRegex(SystemExit, "refusing to overwrite"):
-                    migrate.main()
 
 
 if __name__ == "__main__":

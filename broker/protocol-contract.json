@@ -26,6 +26,8 @@
     "broker-smoke",
     "channel-writer",
     "coordinator",
+    "download-smoke",
+    "download-writer",
     "pin-writer"
   ]
 }

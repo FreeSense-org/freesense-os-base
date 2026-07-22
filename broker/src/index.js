@@ -88,9 +88,32 @@ const ROLE_DEFINITIONS = Object.freeze({
       ];
     },
   },
+  "download-writer": {
+    environments: ["channel-publisher"],
+    workflow: "download",
+    bucket: "downloads",
+    actions: ["GetObject", "HeadObject", "PutObject"],
+    ttlSeconds: 75 * 60,
+    paths() {
+      return [`${R2_PREFIX}/releases/`];
+    },
+  },
   "broker-smoke": {
     environments: ["broker"],
     workflow: "broker",
+    actions: ["HeadObject", "PutObject"],
+    ttlSeconds: 15 * 60,
+    pathKind: "object",
+    paths(claims) {
+      return [
+        `${R2_PREFIX}/smoke/broker/${claims.sha}.json`,
+      ];
+    },
+  },
+  "download-smoke": {
+    environments: ["broker"],
+    workflow: "broker",
+    bucket: "downloads",
     actions: ["HeadObject", "PutObject"],
     ttlSeconds: 15 * 60,
     pathKind: "object",
@@ -107,6 +130,7 @@ const REQUIRED_CONFIGURATION = Object.freeze([
   "R2_ACCOUNT_ID",
   "R2_ENDPOINT",
   "R2_BUCKET",
+  "R2_DOWNLOAD_BUCKET",
   "BROKER_DEPLOYMENT_ID",
   "R2_PARENT_ACCESS_KEY_ID",
   "R2_PARENT_SECRET_ACCESS_KEY",
@@ -214,11 +238,10 @@ function readConfiguration(env) {
   ) {
     throw new BrokerError(503, "broker_unavailable");
   }
-  if (
-    !/^[A-Za-z0-9][A-Za-z0-9._-]{1,126}[A-Za-z0-9]$/u.test(
-      env.R2_BUCKET,
-    )
-  ) {
+  const bucketPattern = /^[A-Za-z0-9][A-Za-z0-9._-]{1,126}[A-Za-z0-9]$/u;
+  if (!bucketPattern.test(env.R2_BUCKET)
+      || !bucketPattern.test(env.R2_DOWNLOAD_BUCKET)
+      || env.R2_BUCKET === env.R2_DOWNLOAD_BUCKET) {
     throw new BrokerError(503, "broker_unavailable");
   }
   let endpoint;
@@ -247,7 +270,8 @@ function readConfiguration(env) {
     accountId: env.R2_ACCOUNT_ID,
     endpoint: env.R2_ENDPOINT,
     endpointHost: endpoint.host,
-    bucket: env.R2_BUCKET,
+    buildBucket: env.R2_BUCKET,
+    downloadBucket: env.R2_DOWNLOAD_BUCKET,
     deploymentId: env.BROKER_DEPLOYMENT_ID,
     parent: {
       accessKeyId: env.R2_PARENT_ACCESS_KEY_ID,
@@ -433,6 +457,16 @@ function entryWorkflow(claims) {
   );
 }
 
+function downloadWorkflow(claims) {
+  return (
+    directWorkflow(claims, RELEASE_WORKFLOW, [
+      "workflow_dispatch",
+      "workflow_run",
+    ]) ||
+    directWorkflow(claims, STABLE_WORKFLOW, ["workflow_dispatch"])
+  );
+}
+
 function artifactWorkflow(claims) {
   return (
     BUILD_ENTRY_WORKFLOWS.includes(claims.workflow_ref) &&
@@ -459,6 +493,8 @@ function authorizedWorkflow(claims, kind) {
         "workflow_dispatch",
         "schedule",
       ]);
+    case "download":
+      return downloadWorkflow(claims);
     case "broker":
       return directWorkflow(claims, BROKER_WORKFLOW, [
         "push",
@@ -495,6 +531,7 @@ function authorizeRole(claims, role) {
 
   const paths = definition.paths(claims);
   return {
+    bucket: definition.bucket ?? "build",
     actions: [...definition.actions],
     prefixPaths: definition.pathKind === "object" ? [] : paths,
     objectPaths: definition.pathKind === "object" ? paths : [],
@@ -643,12 +680,15 @@ async function createR2Credentials(configuration, policy, now) {
   const nowSeconds = Math.floor(now() / 1000);
   const expiresAt = nowSeconds + policy.ttlSeconds;
   const parent = configuration.parent;
+  const bucket = policy.bucket === "downloads"
+    ? configuration.downloadBucket
+    : configuration.buildBucket;
   const header = {
     alg: "HS256",
     typ: "JWT",
   };
   const payload = {
-    bucket: configuration.bucket,
+    bucket,
     actions: policy.actions,
     paths: {
       prefixPaths: policy.prefixPaths,
@@ -683,7 +723,7 @@ async function createR2Credentials(configuration, policy, now) {
     session_token: btoa(`jwt/${jwt}`),
     endpoint: configuration.endpoint,
     region: REGION,
-    bucket: configuration.bucket,
+    bucket,
     prefix: R2_PREFIX,
     expires_at: new Date(expiresAt * 1000).toISOString(),
   };
