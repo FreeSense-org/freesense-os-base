@@ -8,6 +8,45 @@ grep -Fqx '# FREESENSE_ISO_ASSEMBLY_API=2' \
   echo "unsupported ISO assembler source: ${SOURCE_SHA}" >&2
   exit 1
 }
+# The sealed System repository must remain the sole package input, but the
+# installer boot environment belongs to the ISO recipe.  Overlay dual-console
+# settings here so headless KVM can observe the installer without changing the
+# console default of systems installed from the ISO.
+phase iso-console-overlay
+assembler=tools/ci/freesense-assemble-iso.sh
+overlay=/tmp/freesense-iso-console-overlay
+transformed=/tmp/freesense-assemble-iso.sh
+test "$(grep -Ec '^[[:space:]]*install_assembly_channel$' "${assembler}")" = 1
+cat >"${overlay}" <<'EOF'
+
+	# Keep the graphical installer while also exposing its deterministic boot
+	# readiness marker to headless release smoke tests.
+	cat > "${INSTALLER_CHROOT_DIR}/boot.config" <<'CONSOLE_EOF'
+-S115200 -D
+CONSOLE_EOF
+	cat > "${INSTALLER_CHROOT_DIR}/boot/loader.conf" <<'CONSOLE_EOF'
+autoboot_delay="3"
+kern.cam.boot_delay=10000
+boot_multicons="YES"
+boot_serial="YES"
+console="comconsole,vidconsole"
+comconsole_speed="115200"
+CONSOLE_EOF
+EOF
+awk -v overlay="${overlay}" '
+  { print }
+  /^[[:space:]]*install_assembly_channel$/ {
+    while ((getline line < overlay) > 0) print line
+    close(overlay)
+  }
+' "${assembler}" >"${transformed}"
+cat "${transformed}" >"${assembler}"
+rm -f "${overlay}" "${transformed}"
+grep -Fqx 'console="comconsole,vidconsole"' \
+  "${assembler}" || {
+  echo "ISO console overlay was not applied" >&2
+  exit 1
+}
 phase channel-fetch
 printf '%s' "${CHANNEL_PAYLOAD_B64}" | openssl base64 -d -A >/tmp/channel-payload.json
 printf '%s' "${CHANNEL_SIGNATURE_B64}" | openssl base64 -d -A >/tmp/channel-signature.bin
