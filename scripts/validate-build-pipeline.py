@@ -190,6 +190,8 @@ for required in ("group: freesense-kvm-host", "name: Verify required System resu
 iso_stage = read("scripts/runner/stages/iso.sh")
 if "repos.manifest.json" in iso_stage:
     raise SystemExit("ISO worker refetches the mutable channel alias")
+if 'fetch_input "${JAIL_OBJECT}" /root/jail-base.txz' not in iso_stage:
+    raise SystemExit("ISO worker does not fetch its pinned FreeBSD world seed")
 for required in ("CHANNEL_PAYLOAD_B64", "CHANNEL_SIGNATURE_B64"):
     if required not in iso_stage or required not in reusable:
         raise SystemExit(f"ISO exact channel closure is missing {required!r}")
