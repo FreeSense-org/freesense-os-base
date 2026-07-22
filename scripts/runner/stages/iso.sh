@@ -1,7 +1,21 @@
 # Assemble only from the exact signed system repository selected by the channel.
+fetch_input "${JAIL_OBJECT}" /root/jail-base.txz
 configure_source
 fetch_repository system "${SYSTEM_ID}" /root/system-repo
 cd /root/freesense-src
+phase iso-assembly-adapter
+if ! grep -Fq 'sh "${BUILDER_TOOLS}/ci/freesense-dist-world.sh"' \
+  tools/ci/freesense-assemble-iso.sh; then
+  [ "${SOURCE_SHA}" = b094eb3c173b675f224c33a0ad2968df98dedb58 ] || {
+    echo "unsupported ISO assembler source: ${SOURCE_SHA}" >&2
+    exit 1
+  }
+  git fetch -q --depth=1 origin 0ca05ce56d9bf3f2fc314a7adbf2680f3aefbcf3
+  git restore --source=0ca05ce56d9bf3f2fc314a7adbf2680f3aefbcf3 \
+    -- tools/ci/freesense-assemble-iso.sh
+fi
+grep -Fq 'sh "${BUILDER_TOOLS}/ci/freesense-dist-world.sh"' \
+  tools/ci/freesense-assemble-iso.sh
 phase channel-fetch
 printf '%s' "${CHANNEL_PAYLOAD_B64}" | openssl base64 -d -A >/tmp/channel-payload.json
 printf '%s' "${CHANNEL_SIGNATURE_B64}" | openssl base64 -d -A >/tmp/channel-signature.bin
