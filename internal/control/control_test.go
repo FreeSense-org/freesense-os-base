@@ -54,56 +54,24 @@ func TestGenerationReservationIsStableAcrossRetries(t *testing.T) {
 	}
 }
 
-func TestSignedChannelUpdateVerifyAndPromote(t *testing.T) {
-	key, err := rsa.GenerateKey(rand.Reader, 2048)
-	if err != nil {
-		t.Fatal(err)
-	}
+func TestRollingDevelopmentCannotPromoteToStable(t *testing.T) {
 	now := time.Date(2026, 7, 21, 12, 0, 0, 0, time.UTC)
 	fingerprint := "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 	payload, err := Update(Payload{}, UpdateOptions{
 		Channel: "devel", Component: "system", Fingerprint: fingerprint,
 		FreeBSDPinID: "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
 		URL:          "https://pkg.freesense.org/v1/artifacts/system/" + fingerprint + "/amd64",
-		Generation:   4, PackageTrain: "1.1", ABI: "FreeBSD:16:amd64", AltABI: "freebsd:16:x86:64", PublishedAt: now,
+		Generation:   4, Version: "1.1.0", PackageTrain: "1.1", ABI: "FreeBSD:16:amd64", AltABI: "freebsd:16:x86:64", PublishedAt: now,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	encoded, err := MarshalSigned(payload, key)
+	payload, err = Verify(payload, "system", fingerprint)
 	if err != nil {
 		t.Fatal(err)
 	}
-	decoded, err := ParseSigned(encoded, &key.PublicKey)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := Promote(decoded, "system", now.Add(8*24*time.Hour), 7*24*time.Hour); err == nil {
-		t.Fatal("unverified component promoted")
-	}
-	decoded, err = Verify(decoded, "system", fingerprint)
-	if err != nil {
-		t.Fatal(err)
-	}
-	packageFingerprint := "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
-	decoded, err = Update(decoded, updateOptions("packages", packageFingerprint, fingerprint, 5, now))
-	if err != nil {
-		t.Fatal(err)
-	}
-	decoded, err = Verify(decoded, "packages", packageFingerprint)
-	if err != nil {
-		t.Fatal(err)
-	}
-	decoded, err = Promote(decoded, "system", now.Add(8*24*time.Hour), 7*24*time.Hour)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if decoded.Channels["stable"].System.Fingerprint != fingerprint {
-		t.Fatal("stable did not receive exact tested system")
-	}
-	decoded, err = Promote(decoded, "packages", now.Add(8*24*time.Hour), 7*24*time.Hour)
-	if err != nil {
-		t.Fatal(err)
+	if _, err := Promote(payload, "system", now.Add(8*24*time.Hour), 7*24*time.Hour); err == nil {
+		t.Fatal("rolling 1.1 was promoted into stable")
 	}
 }
 
@@ -113,8 +81,10 @@ func TestStableReleaseCanBeSealedOnlyOnce(t *testing.T) {
 	packagesFingerprint := "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 	system := updateOptions("system", systemFingerprint, "", 1, now)
 	system.PackageTrain = "1.0"
+	system.Version = "1.0.0"
 	packages := updateOptions("packages", packagesFingerprint, systemFingerprint, 2, now)
 	packages.PackageTrain = "1.0"
+	packages.Version = "1.0.0"
 	packages.URL = "https://pkg.freesense.org/v1/artifacts/packages/1.0/" + packagesFingerprint + "/amd64"
 
 	payload, err := SealStable(Payload{}, system, packages)
@@ -168,8 +138,10 @@ func TestStableSealReplacesLegacyV1DevelopmentChannel(t *testing.T) {
 	packagesFingerprint := "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 	system := updateOptions("system", systemFingerprint, "", 1, now)
 	system.PackageTrain = "1.0"
+	system.Version = "1.0.0"
 	packages := updateOptions("packages", packagesFingerprint, systemFingerprint, 2, now)
 	packages.PackageTrain = "1.0"
+	packages.Version = "1.0.0"
 	packages.URL = "https://pkg.freesense.org/v1/artifacts/packages/1.0/" + packagesFingerprint + "/amd64"
 
 	sealed, err := SealStable(legacy, system, packages)
@@ -359,83 +331,36 @@ func TestVerifyPackagesRejectsStaleSystemBinding(t *testing.T) {
 	}
 }
 
-func TestPromotionMaintainsCoherentStablePair(t *testing.T) {
+func TestStablePatchAdvancementIsForwardOnly(t *testing.T) {
 	now := time.Date(2026, 7, 21, 12, 0, 0, 0, time.UTC)
-	systemA := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-	packagesA := "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
-	systemB := "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
-	packagesB := "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
-
-	payload, err := Update(Payload{}, updateOptions("system", systemA, "", 1, now))
+	system := updateOptions("system", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "", 1, now)
+	packages := updateOptions("packages", "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", system.Fingerprint, 2, now)
+	for _, options := range []*UpdateOptions{&system, &packages} {
+		options.Version = "1.0.0"
+		options.PackageTrain = "1.0"
+	}
+	packages.URL = "https://pkg.freesense.org/v1/artifacts/packages/1.0/" + packages.Fingerprint + "/amd64"
+	payload, err := SealStable(Payload{}, system, packages)
 	if err != nil {
 		t.Fatal(err)
 	}
-	payload, err = Verify(payload, "system", systemA)
+	nextSystem, nextPackages := system, packages
+	nextSystem.Version, nextPackages.Version = "1.0.1", "1.0.1"
+	nextSystem.Fingerprint = "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+	nextSystem.URL = artifactURL("system", nextSystem.Fingerprint)
+	nextPackages.Fingerprint = "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+	nextPackages.SystemFingerprint = nextSystem.Fingerprint
+	nextPackages.URL = "https://pkg.freesense.org/v1/artifacts/packages/1.0/" + nextPackages.Fingerprint + "/amd64"
+	payload, err = SealStable(payload, nextSystem, nextPackages)
 	if err != nil {
 		t.Fatal(err)
 	}
-	payload, err = Update(payload, updateOptions("packages", packagesA, systemA, 2, now))
-	if err != nil {
-		t.Fatal(err)
+	if payload.Channels["stable"].Version != "1.0.1" {
+		t.Fatal("stable patch did not advance")
 	}
-	payload, err = Verify(payload, "packages", packagesA)
-	if err != nil {
-		t.Fatal(err)
+	if _, err := SealStable(payload, system, packages); err == nil {
+		t.Fatal("stable rollback was accepted")
 	}
-	promoteAt := now.Add(8 * 24 * time.Hour)
-	if _, err := Promote(payload, "packages", promoteAt, 7*24*time.Hour); err == nil {
-		t.Fatal("packages promoted before their system")
-	}
-	payload, err = Promote(payload, "system", promoteAt, 7*24*time.Hour)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if payload.Channels["stable"].Packages != nil {
-		t.Fatal("initial system promotion retained packages")
-	}
-	payload, err = Promote(payload, "packages", promoteAt, 7*24*time.Hour)
-	if err != nil {
-		t.Fatal(err)
-	}
-	assertStablePair(t, payload, systemA, packagesA)
-
-	secondPublishedAt := promoteAt.Add(time.Hour)
-	systemBOptions := updateOptions("system", systemB, "", 3, secondPublishedAt)
-	systemBOptions.FreeBSDPinID = "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
-	payload, err = Update(payload, systemBOptions)
-	if err != nil {
-		t.Fatal(err)
-	}
-	payload, err = Verify(payload, "system", systemB)
-	if err != nil {
-		t.Fatal(err)
-	}
-	packagesBOptions := updateOptions("packages", packagesB, systemB, 4, secondPublishedAt)
-	packagesBOptions.FreeBSDPinID = systemBOptions.FreeBSDPinID
-	payload, err = Update(payload, packagesBOptions)
-	if err != nil {
-		t.Fatal(err)
-	}
-	payload, err = Verify(payload, "packages", packagesB)
-	if err != nil {
-		t.Fatal(err)
-	}
-	secondPromoteAt := secondPublishedAt.Add(8 * 24 * time.Hour)
-	if _, err := Promote(payload, "packages", secondPromoteAt, 7*24*time.Hour); err == nil {
-		t.Fatal("new packages mixed with the previous stable system")
-	}
-	payload, err = Promote(payload, "system", secondPromoteAt, 7*24*time.Hour)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if payload.Channels["stable"].Packages != nil {
-		t.Fatal("new stable system retained packages bound to the old system")
-	}
-	payload, err = Promote(payload, "packages", secondPromoteAt, 7*24*time.Hour)
-	if err != nil {
-		t.Fatal(err)
-	}
-	assertStablePair(t, payload, systemB, packagesB)
 }
 
 func updateOptions(component, fingerprint, systemFingerprint string, generation uint64, publishedAt time.Time) UpdateOptions {
@@ -447,6 +372,7 @@ func updateOptions(component, fingerprint, systemFingerprint string, generation 
 		FreeBSDPinID:      "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
 		URL:               artifactURL(component, fingerprint),
 		Generation:        generation,
+		Version:           "1.1.0",
 		PackageTrain:      "1.1",
 		ABI:               "FreeBSD:16:amd64",
 		AltABI:            "freebsd:16:x86:64",

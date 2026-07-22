@@ -119,6 +119,7 @@ jobs:
         run: |
           key=$(mktemp); trap 'rm -f "$key"' EXIT; chmod 600 "$key"; printf '%s' "${SIGNING_KEY}" >"$key"
           "${RUNNER_TEMP}/fsbuild" channel update --component packages \
+            --version "1.1.0" \
             --fingerprint "${{ needs.plan.outputs.packages }}" \
             --system-fingerprint "${{ needs.plan.outputs.system }}" \
             --freebsd-pin-id "${{ needs.plan.outputs.freebsd_pin_id }}" \

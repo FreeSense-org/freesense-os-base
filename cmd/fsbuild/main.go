@@ -85,7 +85,7 @@ func commandState(ctx context.Context, args []string) error {
 
 func commandChannel(ctx context.Context, args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: fsbuild channel <update|verify|promote|seal-stable> [options]")
+		return errors.New("usage: fsbuild channel <update|verify|seal-stable> [options]")
 	}
 	flags := newFlagSet("channel " + args[0])
 	component := flags.String("component", "", "system or packages")
@@ -101,6 +101,7 @@ func commandChannel(ctx context.Context, args []string) error {
 		systemFingerprint := flags.String("system-fingerprint", "", "exact system fingerprint required for packages")
 		freeBSDPinID := flags.String("freebsd-pin-id", "", "exact 14-day FreeBSD compatibility pin")
 		packageTrain := flags.String("package-train", "", "major.minor compatibility train")
+		version := flags.String("version", "", "exact release version")
 		abi := flags.String("abi", "FreeBSD:16:amd64", "pkg ABI")
 		altABI := flags.String("altabi", "freebsd:16:x86:64", "pkg alternate ABI")
 		publishedAt := flags.String("published-at", "", "RFC3339 publication time")
@@ -115,7 +116,7 @@ func commandChannel(ctx context.Context, args []string) error {
 			return control.Update(payload, control.UpdateOptions{
 				Channel: "devel", Component: *component, Fingerprint: *fingerprint, SystemFingerprint: *systemFingerprint,
 				FreeBSDPinID: *freeBSDPinID,
-				URL:          *artifactURL, Generation: *generation, PackageTrain: *packageTrain,
+				URL:          *artifactURL, Generation: *generation, Version: *version, PackageTrain: *packageTrain,
 				ABI: *abi, AltABI: *altABI, PublishedAt: when,
 			})
 		}
@@ -126,24 +127,8 @@ func commandChannel(ctx context.Context, args []string) error {
 		mutate = func(payload control.Payload) (control.Payload, error) {
 			return control.Verify(payload, *component, *fingerprint)
 		}
-	case "promote":
-		soak := flags.Duration("soak", 7*24*time.Hour, "required verified soak")
-		nowValue := flags.String("now", "", "RFC3339 evaluation time")
-		if err := parseFlags(flags, args[1:]); err != nil {
-			return err
-		}
-		now := time.Now().UTC()
-		if *nowValue != "" {
-			parsed, err := time.Parse(time.RFC3339, *nowValue)
-			if err != nil {
-				return errors.New("--now must be RFC3339")
-			}
-			now = parsed
-		}
-		mutate = func(payload control.Payload) (control.Payload, error) {
-			return control.Promote(payload, *component, now, *soak)
-		}
 	case "seal-stable":
+		version := flags.String("version", "", "exact immutable 1.0.x release version")
 		systemFingerprint := flags.String("system-fingerprint", "", "sealed System fingerprint")
 		systemURL := flags.String("system-url", "", "immutable System URL")
 		systemGeneration := flags.Uint64("system-generation", 0, "System build generation")
@@ -164,7 +149,7 @@ func commandChannel(ctx context.Context, args []string) error {
 		}
 		mutate = func(payload control.Payload) (control.Payload, error) {
 			common := control.UpdateOptions{
-				Channel: "devel", FreeBSDPinID: *freeBSDPinID, PackageTrain: *packageTrain,
+				Channel: "devel", FreeBSDPinID: *freeBSDPinID, Version: *version, PackageTrain: *packageTrain,
 				ABI: *abi, AltABI: *altABI, PublishedAt: when,
 			}
 			system := common

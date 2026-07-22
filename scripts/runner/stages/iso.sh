@@ -79,7 +79,7 @@ openssl dgst -sha256 -verify /root/sign/channel-public.pem \
 test "$(sha256 -q /tmp/channel-payload.json)" = "${CHANNEL_PAYLOAD_SHA256}"
 jq -e --arg channel "${CHANNEL}" --arg system "${SYSTEM_ID}" \
   --arg train "${PACKAGE_TRAIN}" --argjson generation "${GENERATION}" \
-  '.schema_version == "freesense.channels/v1" and
+  '.schema_version == "freesense.channels/v3" and
    .channels[$channel].package_train == $train and
    .channels[$channel].system.fingerprint == $system and
    .channels[$channel].system.generation == $generation and
@@ -168,7 +168,12 @@ iso=$(find tmp -type f -name '*.iso' -print -quit)
 test -n "${iso}" && test -s "${iso}"
 sha=$(sha256 -q "${iso}")
 size=$(stat -f %z "${iso}")
-name="FreeSense-${PACKAGE_TRAIN}-g${GENERATION}-amd64.iso"
+release_version=${PRODUCT_VERSION%%-*}
+if [ "${CHANNEL}" = stable ]; then
+  name="FreeSense-${release_version}-amd64.iso"
+else
+  name="FreeSense-${release_version}-g${GENERATION}-amd64.iso"
+fi
 phase iso-publish
 upload_immutable "${iso}" "${RESULT}/${name}"
 jq -n --arg fingerprint "${FINGERPRINT}" --arg sha256 "${sha}" --arg file "${name}" \

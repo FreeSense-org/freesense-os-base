@@ -17,9 +17,12 @@ const PACKAGES_WORKFLOW =
   `${GITHUB_REPOSITORY}/.github/workflows/packages.yml@${MAIN_REF}`;
 const RUNNER_BUILD_WORKFLOW =
   `${GITHUB_REPOSITORY}/.github/workflows/runner-build.yml@${MAIN_REF}`;
+const STABLE_WORKFLOW =
+  `${GITHUB_REPOSITORY}/.github/workflows/stable-1.0.yml@${MAIN_REF}`;
 const BUILD_ENTRY_WORKFLOWS = Object.freeze([
   SYSTEM_WORKFLOW,
   PACKAGES_WORKFLOW,
+  STABLE_WORKFLOW,
   `${GITHUB_REPOSITORY}/.github/workflows/release.yml@${MAIN_REF}`,
 ]);
 const PIN_WORKFLOW =
@@ -78,7 +81,7 @@ const ROLE_DEFINITIONS = Object.freeze({
     ttlSeconds: 75 * 60,
     pathKind: "object",
     paths() {
-      return [`${R2_PREFIX}/repos.manifest.json`];
+      return [`${R2_PREFIX}/repos.manifest.json`, `${R2_PREFIX}/releases.json`];
     },
   },
   "broker-smoke": {
@@ -779,6 +782,7 @@ export const protocol = Object.freeze({
     system: SYSTEM_WORKFLOW,
     packages: PACKAGES_WORKFLOW,
     runnerBuild: RUNNER_BUILD_WORKFLOW,
+    stable: STABLE_WORKFLOW,
     pin: PIN_WORKFLOW,
     release: RELEASE_WORKFLOW,
     broker: BROKER_WORKFLOW,

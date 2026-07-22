@@ -85,7 +85,7 @@ def current_component(manifest_url: str, component: str) -> str:
             )
         payload = json.loads(payload_bytes)
         if not isinstance(payload, dict) or payload.get("schema_version") not in {
-            "freesense.channels/v1", "freesense.channels/v2"
+            "freesense.channels/v1", "freesense.channels/v2", "freesense.channels/v3"
         }:
             raise ValueError("unsupported signed channel payload")
         selected = payload.get("channels", {}).get("devel", {}).get(component)
@@ -125,6 +125,7 @@ def main() -> int:
     channel_name = closure.get("channel", "devel")
     channel_generation = closure.get("generation", 0)
     channel_package_train = closure.get("package_train", "")
+    channel_release_version = closure.get("release_version", "")
     channel_payload_sha256 = closure.get("payload_sha256", "")
     channel_payload_base64 = closure.get("payload_base64", "")
     channel_signature_base64 = closure.get("signature_base64", "")
@@ -269,6 +270,8 @@ def main() -> int:
         else:
             if channel_name not in {"devel", "stable"} or not isinstance(channel_generation, int) or channel_generation <= 0:
                 raise SystemExit("selected ISO channel identity is invalid")
+            if not isinstance(channel_release_version, str) or not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", channel_release_version):
+                raise SystemExit("selected ISO release version is invalid")
             if (
                 channel_system_verified != "true"
                 or not SHA256.fullmatch(current_packages_fingerprint)
@@ -336,6 +339,7 @@ def main() -> int:
         "freebsd_ports": ports_sha,
         "worker_image": image_sha256,
         "channel": channel_name,
+        "release_version": channel_release_version if args.kind == "iso" else "1.1.0",
         "package_train": selected_package_train,
         "signing_public_key": signing_public_key_sha256,
         "runner_policy": policy["runner"],
@@ -377,12 +381,15 @@ def main() -> int:
         "public_base_url": policy["public_base_url"],
         "channel": channel_name,
         "channel_generation": channel_generation,
+        "release_version": channel_release_version if args.kind == "iso" else "1.1.0",
         "channel_payload_sha256": channel_payload_sha256,
         "channel_payload_base64": channel_payload_base64,
         "channel_signature_base64": channel_signature_base64,
         "signing_public_key_sha256": signing_public_key_sha256,
         "freebsd_pin_id": freebsd_pin_id,
-        "product_version": "1.1.0-DEVELOPMENT",
+        "product_version": (f"{channel_release_version}-RELEASE"
+                            if args.kind == "iso" and channel_name == "stable"
+                            else "1.1.0-DEVELOPMENT"),
     }
     print(json.dumps(values, indent=2, sort_keys=True))
     if args.github_output:

@@ -57,8 +57,9 @@ require("schedule:" not in packages_workflow,
 require('cron: "0 6 * * *"' in read(".github/workflows/system.yml"),
         "the daily System check is not fixed at 06:00 UTC")
 stable_workflow = read(".github/workflows/stable-1.0.yml")
-require("schedule:" not in stable_workflow and "channel seal-stable" in stable_workflow,
-        "stable 1.0 is not an explicit one-time seal")
+require("schedule:" not in stable_workflow and "channel seal-stable" in stable_workflow and
+        '--release "${{ inputs.release }}"' in stable_workflow,
+        "stable 1.0.x is not an explicit checked patch publication")
 require("freebsd_pin_id" in reusable and "product_version" in reusable,
         "reusable builds omit the release or FreeBSD pin identity")
 

@@ -1,10 +1,16 @@
-name: Seal FreeSense 1.0
+name: Publish FreeSense 1.0.x
 
 on:
   workflow_dispatch:
+    inputs:
+      release:
+        description: Exact checked release lock to publish
+        type: string
+        default: 1.0.0
+        required: true
 
 permissions: {contents: read, id-token: write}
-concurrency: {group: stable-1.0-seal, cancel-in-progress: false}
+concurrency: {group: release-control, cancel-in-progress: false}
 
 jobs:
   plan:
@@ -27,6 +33,7 @@ jobs:
       jail_object: ${{ steps.plan.outputs.jail_object }}
       freebsd_pin_id: ${{ steps.plan.outputs.freebsd_pin_id }}
       package_train: ${{ steps.plan.outputs.package_train }}
+      release_version: ${{ steps.plan.outputs.release_version }}
       product_version: ${{ steps.plan.outputs.product_version }}
       abi: ${{ steps.plan.outputs.abi }}
       altabi: ${{ steps.plan.outputs.altabi }}
@@ -36,7 +43,9 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with: {go-version-file: go.mod, cache: false}
       - id: plan
-        run: python3 scripts/stable_plan.py --os-base-sha "${GITHUB_SHA}" --github-output "${GITHUB_OUTPUT}"
+        run: >-
+          python3 scripts/stable_plan.py --os-base-sha "${GITHUB_SHA}"
+          --release "${{ inputs.release }}" --github-output "${GITHUB_OUTPUT}"
       - run: go build -trimpath -o "${RUNNER_TEMP}/fsbuild" ./cmd/fsbuild
       - name: Acquire generation coordinator
         env:
@@ -130,7 +139,7 @@ jobs:
           --audience "${R2_CREDENTIAL_BROKER_AUDIENCE}" --role channel-writer
           --expected-bucket "${R2_BUCKET}" --expected-prefix v1 --expected-endpoint "${R2_ENDPOINT}"
           --github-env "${GITHUB_ENV}"
-      - name: Seal stable channel exactly once
+      - name: Publish immutable stable patch
         env:
           R2_BUCKET: ${{ vars.R2_BUILD_BUCKET }}
           FSBUILD_STORE_PREFIX: v1
@@ -138,6 +147,7 @@ jobs:
         run: |
           key=$(mktemp); trap 'rm -f "$key"' EXIT; chmod 600 "$key"; printf '%s' "${SIGNING_KEY}" >"$key"
           "${RUNNER_TEMP}/fsbuild" channel seal-stable \
+            --version "${{ needs.plan.outputs.release_version }}" \
             --system-fingerprint "${{ needs.plan.outputs.system }}" \
             --system-url "${{ needs.plan.outputs.public_base_url }}/artifacts/system/${{ needs.plan.outputs.system }}/amd64" \
             --system-generation "${{ needs.plan.outputs.system_generation }}" \
@@ -198,3 +208,40 @@ jobs:
       channel_payload_base64: ${{ needs.iso-plan.outputs.channel_payload_base64 }}
       channel_signature_base64: ${{ needs.iso-plan.outputs.channel_signature_base64 }}
     secrets: inherit
+
+  publish-download:
+    needs: [plan, iso-plan, iso]
+    runs-on: ubuntu-24.04
+    environment: channel-publisher
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with: {go-version-file: go.mod, cache: false}
+      - run: go build -trimpath -o "${RUNNER_TEMP}/fsbuild" ./cmd/fsbuild
+      - name: Acquire download-index writer
+        env:
+          R2_CREDENTIAL_BROKER_URL: ${{ vars.R2_CREDENTIAL_BROKER_URL }}
+          R2_CREDENTIAL_BROKER_AUDIENCE: ${{ vars.R2_CREDENTIAL_BROKER_AUDIENCE }}
+          R2_BUCKET: ${{ vars.R2_BUILD_BUCKET }}
+          R2_ENDPOINT: ${{ vars.R2_ENDPOINT }}
+        run: >-
+          "${RUNNER_TEMP}/fsbuild" credentials acquire --broker-url "${R2_CREDENTIAL_BROKER_URL}"
+          --audience "${R2_CREDENTIAL_BROKER_AUDIENCE}" --role channel-writer
+          --expected-bucket "${R2_BUCKET}" --expected-prefix v1 --expected-endpoint "${R2_ENDPOINT}"
+          --github-env "${GITHUB_ENV}"
+      - name: Publish website release feed after boot smoke
+        env:
+          R2_BUCKET: ${{ vars.R2_BUILD_BUCKET }}
+          R2_ENDPOINT: ${{ vars.R2_ENDPOINT }}
+        run: |
+          python3 scripts/publish_download.py --channel stable \
+            --version "${{ needs.plan.outputs.release_version }}" \
+            --fingerprint "${{ needs.iso-plan.outputs.fingerprint }}" \
+            --system "${{ needs.plan.outputs.system }}" \
+            --generation "${{ needs.iso-plan.outputs.generation }}" \
+            --source "${{ needs.plan.outputs.source_sha }}" --ports "${{ needs.plan.outputs.ports_sha }}" \
+            --os-definition "${GITHUB_SHA}" --freebsd "${{ needs.plan.outputs.freebsd_sha }}" \
+            --output "${RUNNER_TEMP}/releases.json"
+          aws s3 cp "${RUNNER_TEMP}/releases.json" "s3://${R2_BUCKET}/v1/releases.json" \
+            --endpoint-url "${R2_ENDPOINT}" --no-progress --content-type application/json \
+            --cache-control 'public, max-age=60, must-revalidate'
