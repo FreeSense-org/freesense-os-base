@@ -79,6 +79,12 @@ require("/v1/releases/stable.json" in stable_workflow,
         "stable publication does not write its independent download document")
 require("s3://${R2_BUCKET}/v1/releases.json" not in release_workflow + stable_workflow,
         "release workflows still overwrite the combined legacy download index")
+broker_source = read("broker/src/index.js")
+for value in ("releases/stable.json", "releases/devel.json"):
+    require(value in broker_source,
+            f"channel-writer credentials do not authorize {value!r}")
+require("`${R2_PREFIX}/releases.json`" not in broker_source,
+        "channel-writer credentials still authorize the legacy combined download index")
 require("freebsd_pin_id" in reusable and "product_version" in reusable,
         "reusable builds omit the release or FreeBSD pin identity")
 
