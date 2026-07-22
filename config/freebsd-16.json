@@ -7,7 +7,7 @@
     "build_date": "20260720"
   },
   "freebsd_ports": {
-    "commit": "0cd7b5a3f54a52042f1482e004e2ce70fe6c2275"
+    "commit": "e04fb01027e2b36c6c05e2593359a9beee80bf35"
   },
   "jail_seed": {
     "url": "https://download.freebsd.org/snapshots/amd64/16.0-CURRENT/base.txz",
@@ -22,5 +22,10 @@
     "object": "inputs/sha256/09eb8662dd1c3f1154b5f23d068205efded5193825a5daa7e2c2b096f71c9a07",
     "sha256": "09eb8662dd1c3f1154b5f23d068205efded5193825a5daa7e2c2b096f71c9a07",
     "size": 1031274496
+  },
+  "worker_tools": {
+    "object": "inputs/sha256/13cadd1ca972c7793afe55acef110235d6de9e6aaf2cd00f13a2f42eb40416ab",
+    "sha256": "13cadd1ca972c7793afe55acef110235d6de9e6aaf2cd00f13a2f42eb40416ab",
+    "size": 37847040
   }
 }
