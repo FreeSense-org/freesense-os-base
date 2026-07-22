@@ -78,10 +78,11 @@ jobs:
           [[ "${freebsd_sha}" =~ ^[0-9a-f]{40}$ ]]
           packagesite_url=https://pkg.freebsd.org/FreeBSD:16:amd64/latest/packagesite.pkg
           curl "${retry[@]}" -o "${RUNNER_TEMP}/packagesite.pkg" "${packagesite_url}"
-          ports_sha=$(tar -xOf "${RUNNER_TEMP}/packagesite.pkg" packagesite.yaml | \
-            jq -Rr 'fromjson? | select(.name == "pkg") | .annotations.ports_top_git_hash // empty' | \
-            sort -u)
+          ports_sha=$(tar --zstd -xOf "${RUNNER_TEMP}/packagesite.pkg" packagesite.yaml | \
+            python3 scripts/select_ports_pin.py)
           [[ "${ports_sha}" =~ ^[0-9a-f]{40}$ ]]
+          resolved_ports_sha=$(gh api "repos/freebsd/freebsd-ports/commits/${ports_sha}" --jq .sha)
+          [[ "${resolved_ports_sha}" == "${ports_sha}" ]]
 
           base_sha=$(awk -F '\t' '$1=="base.txz" {print $2}' "${RUNNER_TEMP}/MANIFEST")
           [[ "${base_sha}" =~ ^[0-9a-f]{64}$ ]]
