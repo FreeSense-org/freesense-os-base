@@ -5,12 +5,6 @@ on:
     branches: [main]
     paths: ["broker/**", ".github/workflows/broker.yml"]
   workflow_dispatch:
-    inputs:
-      reset_release_storage:
-        description: One-time reset of package release state and all published downloads
-        type: boolean
-        default: false
-        required: true
 
 permissions: {contents: read}
 concurrency: {group: credential-broker, cancel-in-progress: false}
@@ -97,64 +91,3 @@ jobs:
         env: {FSBUILD_STORE_PREFIX: v1, R2_BUCKET: "${{ vars.R2_DOWNLOAD_BUCKET }}"}
         run: |
           "${RUNNER_TEMP}/fsbuild" credentials smoke --deployment-sha "${GITHUB_SHA}"
-
-  reset-release-storage:
-    needs: deploy
-    if: github.event_name == 'workflow_dispatch' && inputs.reset_release_storage
-    runs-on: ubuntu-24.04
-    timeout-minutes: 30
-    environment: broker
-    permissions: {contents: read}
-    steps:
-      - name: Inventory, reset, and verify both release buckets
-        env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.R2_BROKER_PARENT_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_BROKER_PARENT_SECRET_ACCESS_KEY }}
-          AWS_DEFAULT_REGION: auto
-          R2_BUILD_BUCKET: ${{ vars.R2_BUILD_BUCKET }}
-          R2_DOWNLOAD_BUCKET: ${{ vars.R2_DOWNLOAD_BUCKET }}
-          R2_ENDPOINT: ${{ vars.R2_ENDPOINT }}
-        run: |
-          set -euo pipefail
-          [[ "${R2_BUILD_BUCKET}" == "freesense-pkg" ]]
-          [[ "${R2_DOWNLOAD_BUCKET}" == "freesense-downloads" ]]
-          [[ "${R2_ENDPOINT}" == "https://b82cfe18700f7455daff39e87a6a323b.r2.cloudflarestorage.com" ]]
-
-          package_before=$(aws s3 ls "s3://${R2_BUILD_BUCKET}" --recursive --summarize \
-            --human-readable --endpoint-url "${R2_ENDPOINT}" | tail -2 | tr '\n' ';')
-          downloads_before=$(aws s3 ls "s3://${R2_DOWNLOAD_BUCKET}" --recursive --summarize \
-            --human-readable --endpoint-url "${R2_ENDPOINT}" | tail -2 | tr '\n' ';')
-          input_count_before=$(aws s3 ls "s3://${R2_BUILD_BUCKET}/v1/inputs" --recursive \
-            --endpoint-url "${R2_ENDPOINT}" | wc -l | tr -d ' ')
-          input_hash_before=$(aws s3 ls "s3://${R2_BUILD_BUCKET}/v1/inputs" --recursive \
-            --endpoint-url "${R2_ENDPOINT}" | sha256sum | cut -d' ' -f1)
-          [[ "${input_count_before}" -gt 0 ]]
-
-          aws s3 rm "s3://${R2_BUILD_BUCKET}" --recursive --exclude 'v1/inputs/*' \
-            --endpoint-url "${R2_ENDPOINT}" --only-show-errors
-          aws s3 rm "s3://${R2_DOWNLOAD_BUCKET}" --recursive \
-            --endpoint-url "${R2_ENDPOINT}" --only-show-errors
-
-          input_count_after=$(aws s3 ls "s3://${R2_BUILD_BUCKET}/v1/inputs" --recursive \
-            --endpoint-url "${R2_ENDPOINT}" | wc -l | tr -d ' ')
-          input_hash_after=$(aws s3 ls "s3://${R2_BUILD_BUCKET}/v1/inputs" --recursive \
-            --endpoint-url "${R2_ENDPOINT}" | sha256sum | cut -d' ' -f1)
-          package_release_remaining=$(aws s3 ls "s3://${R2_BUILD_BUCKET}" --recursive \
-            --endpoint-url "${R2_ENDPOINT}" | awk '$4 !~ /^v1\/inputs\// {count++} END {print count + 0}')
-          downloads_remaining=$(aws s3 ls "s3://${R2_DOWNLOAD_BUCKET}" --recursive \
-            --endpoint-url "${R2_ENDPOINT}" | wc -l | tr -d ' ')
-
-          [[ "${input_count_after}" == "${input_count_before}" ]]
-          [[ "${input_hash_after}" == "${input_hash_before}" ]]
-          [[ "${package_release_remaining}" == 0 ]]
-          [[ "${downloads_remaining}" == 0 ]]
-
-          {
-            echo '### One-time R2 reset'
-            echo
-            echo "- Package bucket before: ${package_before}"
-            echo "- Downloads bucket before: ${downloads_before}"
-            echo "- Preserved pinned input objects: ${input_count_after}"
-            echo '- Remaining package release objects: 0'
-            echo '- Remaining download objects: 0'
-          } >>"${GITHUB_STEP_SUMMARY}"
