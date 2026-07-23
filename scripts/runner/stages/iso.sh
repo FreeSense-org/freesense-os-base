@@ -155,11 +155,11 @@ openssl dgst -sha256 -verify /root/sign/channel-public.pem \
   -signature /tmp/channel-signature.bin /tmp/channel-payload.json >/dev/null
 test "$(sha256 -q /tmp/channel-payload.json)" = "${CHANNEL_PAYLOAD_SHA256}"
 jq -e --arg channel "${CHANNEL}" --arg system "${SYSTEM_ID}" \
-  --arg train "${PACKAGE_TRAIN}" --argjson generation "${GENERATION}" \
+  --arg train "${PACKAGE_TRAIN}" --argjson system_generation "${SYSTEM_GENERATION}" \
   '.schema_version == "freesense.channels/v3" and
    .channels[$channel].package_train == $train and
    .channels[$channel].system.fingerprint == $system and
-   .channels[$channel].system.generation == $generation and
+   .channels[$channel].system.generation == $system_generation and
    .channels[$channel].system.verified == true and
    (.channels[$channel].packages | type) == "object" and
    .channels[$channel].packages.verified == true and

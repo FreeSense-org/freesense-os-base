@@ -20,6 +20,7 @@ on:
       product_version: {type: string, required: true}
       package_train: {type: string, required: true}
       generation: {type: string, required: true}
+      system_generation: {type: string, required: false, default: "0"}
       public_base_url: {type: string, required: true}
       channel: {type: string, required: false, default: devel}
       channel_payload_sha256: {type: string, required: false, default: ""}
@@ -60,6 +61,7 @@ jobs:
       PRODUCT_VERSION: ${{ inputs.product_version }}
       PACKAGE_TRAIN: ${{ inputs.package_train }}
       GENERATION: ${{ inputs.generation }}
+      SYSTEM_GENERATION: ${{ inputs.system_generation }}
       PUBLIC_BASE_URL: ${{ inputs.public_base_url }}
       CHANNEL: ${{ inputs.channel }}
       CHANNEL_PAYLOAD_SHA256: ${{ inputs.channel_payload_sha256 }}

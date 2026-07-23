@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 from datetime import datetime, timezone
 import json
+import os
 from pathlib import Path
 import re
 import urllib.error
@@ -18,6 +19,15 @@ VERSION = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+$")
 ISO_FILE = re.compile(r"^FreeSense-[A-Za-z0-9.-]+-amd64\.iso$")
 DOWNLOAD_SCHEMA = "freesense.download/v1"
 DOWNLOAD_BASE_URL = "https://downloads.freesense.org/v1"
+CHANGE_TYPES = {
+    "security", "fix", "feature", "ui", "package", "documentation", "build", "other",
+}
+CHANGE_REPOSITORIES = (
+    ("source", "FreeSense-org/freesense", "System"),
+    ("system_ports", "FreeSense-org/freesense-system-ports", "System packages"),
+    ("packages", "FreeSense-org/freesense-packages", "Optional packages"),
+    ("os_definition", "FreeSense-org/freesense-os-base", "Build and installer"),
+)
 
 
 def version_tuple(value: str) -> tuple[int, int, int]:
@@ -35,6 +45,116 @@ def fetch_json(url: str, missing=None):
         if error.code == 404:
             return missing
         raise
+
+
+def classify_change(title: str) -> str:
+    lowered = title.lower()
+    if any(value in lowered for value in ("security", "cve-", "vulnerability")):
+        return "security"
+    if any(value in lowered for value in (
+        "fix", "repair", "recover", "prevent", "correct", "regression", "broken",
+    )):
+        return "fix"
+    if any(value in lowered for value in ("documentation", "docs:", "readme", "guide")):
+        return "documentation"
+    if any(value in lowered for value in ("webui", "website", "interface", " ui ")):
+        return "ui"
+    if any(value in lowered for value in ("package", "ports", "poudriere", "catalog")):
+        return "package"
+    if any(value in lowered for value in (
+        "build", "workflow", "release", "runner", "broker", "publish", "pin freebsd", "ci:",
+    )):
+        return "build"
+    if any(value in lowered for value in (
+        "add", "enable", "support", "introduce", "implement", "allow", "increase",
+    )):
+        return "feature"
+    return "other"
+
+
+def github_compare(repository: str, before: str, after: str) -> list[dict[str, str]]:
+    if before == after:
+        return []
+    headers = {
+        "Accept": "application/vnd.github+json",
+        "User-Agent": "FreeSense-build/1",
+        "X-GitHub-Api-Version": "2022-11-28",
+    }
+    token = os.environ.get("GITHUB_TOKEN", "")
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    request = urllib.request.Request(
+        f"https://api.github.com/repos/{repository}/compare/{before}...{after}?per_page=100",
+        headers=headers,
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:
+            comparison = json.load(response)
+    except (OSError, urllib.error.URLError, ValueError) as error:
+        raise SystemExit(f"unable to build release notes for {repository}: {error}") from error
+    commits = comparison.get("commits") if isinstance(comparison, dict) else None
+    if not isinstance(commits, list):
+        raise SystemExit(f"GitHub returned invalid release notes for {repository}")
+    if comparison.get("total_commits", len(commits)) > len(commits):
+        raise SystemExit(f"release notes for {repository} exceed the 100-commit safety limit")
+    changes = []
+    for commit in commits:
+        message = commit.get("commit", {}).get("message", "") if isinstance(commit, dict) else ""
+        title = message.splitlines()[0].strip()
+        if not title:
+            continue
+        changes.append({"type": classify_change(title), "title": title[:180]})
+    return changes
+
+
+def build_changes(existing: dict | None, provenance: dict[str, str]) -> list[dict[str, str]]:
+    if existing is None:
+        return []
+    if (existing.get("fingerprint") == provenance.get("fingerprint")
+            and isinstance(existing.get("changes"), list)):
+        return existing["changes"]
+    previous = existing.get("provenance", {})
+    if not isinstance(previous, dict):
+        return []
+    changes = []
+    seen = set()
+    for field, repository, scope in CHANGE_REPOSITORIES:
+        before = previous.get(field, "")
+        after = provenance.get(field, "")
+        if not SHA.fullmatch(before) or not SHA.fullmatch(after) or before == after:
+            continue
+        for change in github_compare(repository, before, after):
+            identity = (change["title"], scope)
+            if identity in seen:
+                continue
+            seen.add(identity)
+            changes.append({**change, "scope": scope})
+    if (SHA.fullmatch(previous.get("freebsd", ""))
+            and previous["freebsd"] != provenance["freebsd"]):
+        changes.append({
+            "type": "build",
+            "title": "Advance the pinned FreeBSD source snapshot",
+            "scope": "FreeBSD platform",
+        })
+    if (SHA.fullmatch(previous.get("ports", ""))
+            and previous["ports"] != provenance["ports"]):
+        changes.append({
+            "type": "package",
+            "title": "Advance the pinned FreeBSD ports snapshot",
+            "scope": "FreeBSD packages",
+        })
+    return changes[:50]
+
+
+def valid_changes(changes) -> bool:
+    return (isinstance(changes, list) and len(changes) <= 50
+            and all(isinstance(change, dict)
+                    and change.get("type") in CHANGE_TYPES
+                    and isinstance(change.get("title"), str)
+                    and 0 < len(change["title"]) <= 180
+                    and isinstance(change.get("scope"), str)
+                    and 0 < len(change["scope"]) <= 80
+                    for change in changes))
 
 
 def release_identity(release, channel: str) -> str:
@@ -59,7 +179,8 @@ def validate_download(release, channel: str, base_url: str,
             or not ISO_FILE.fullmatch(release.get("iso", ""))
             or not SHA256.fullmatch(release.get("sha256", ""))
             or not isinstance(release.get("size"), int) or release["size"] <= 0
-            or not isinstance(release.get("published_at"), str)):
+            or not isinstance(release.get("published_at"), str)
+            or ("changes" in release and not valid_changes(release["changes"]))):
         raise SystemExit(f"existing {channel} download document is invalid")
     artifact_url = f"{base_url}/artifacts/iso/{release['fingerprint']}"
     legacy_url = artifact_url + "/" + release["iso"]
@@ -90,6 +211,8 @@ def main() -> int:
     parser.add_argument("--system", required=True)
     parser.add_argument("--generation", required=True, type=int)
     parser.add_argument("--source", required=True)
+    parser.add_argument("--system-ports", required=True)
+    parser.add_argument("--packages", required=True)
     parser.add_argument("--ports", required=True)
     parser.add_argument("--os-definition", required=True)
     parser.add_argument("--freebsd", required=True)
@@ -102,7 +225,8 @@ def main() -> int:
     if not SHA256.fullmatch(args.fingerprint) or not SHA256.fullmatch(args.system):
         raise SystemExit("invalid artifact identity")
     if args.generation <= 0 or any(not SHA.fullmatch(value) for value in
-        (args.source, args.ports, args.os_definition, args.freebsd)):
+        (args.source, args.system_ports, args.packages, args.ports,
+         args.os_definition, args.freebsd)):
         raise SystemExit("invalid release provenance")
     if args.channel == "stable" and not args.version.startswith("1.0."):
         raise SystemExit("stable downloads must be exact 1.0.x releases")
@@ -144,6 +268,15 @@ def main() -> int:
     release_id = args.version if args.channel == "stable" else f"{args.version}-g{args.generation}"
     display_name = (f"FreeSense {args.version} Stable" if args.channel == "stable"
                     else f"FreeSense {args.version} Development — Generation {args.generation}")
+    provenance = {
+        "source": args.source,
+        "system_ports": args.system_ports,
+        "packages": args.packages,
+        "ports": args.ports,
+        "os_definition": args.os_definition,
+        "freebsd": args.freebsd,
+        "fingerprint": args.fingerprint,
+    }
     release = {
         "schema_version": DOWNLOAD_SCHEMA,
         "version": args.version,
@@ -160,10 +293,8 @@ def main() -> int:
         "size": marker["size"],
         "sha256": marker["sha256"],
         "published_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
-        "provenance": {
-            "source": args.source, "ports": args.ports,
-            "os_definition": args.os_definition, "freebsd": args.freebsd,
-        },
+        "provenance": {key: value for key, value in provenance.items() if key != "fingerprint"},
+        "changes": build_changes(existing, provenance),
     }
     release["url"] = public_iso_url(release, args.channel, args.download_base_url)
     if (existing is not None and existing["version"] == args.version

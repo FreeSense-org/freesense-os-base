@@ -224,14 +224,20 @@ jobs:
         with: {go-version-file: go.mod, cache: false}
       - run: go build -trimpath -o "${RUNNER_TEMP}/fsbuild" ./cmd/fsbuild
       - name: Prepare release document
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
           python3 scripts/publish_download.py --channel stable \
             --version "${{ needs.plan.outputs.release_version }}" \
             --fingerprint "${{ needs.iso-plan.outputs.fingerprint }}" \
             --system "${{ needs.plan.outputs.system }}" \
             --generation "${{ needs.iso-plan.outputs.generation }}" \
-            --source "${{ needs.plan.outputs.source_sha }}" --ports "${{ needs.plan.outputs.ports_sha }}" \
-            --os-definition "${GITHUB_SHA}" --freebsd "${{ needs.plan.outputs.freebsd_sha }}" \
+            --source "${{ needs.plan.outputs.source_sha }}" \
+            --system-ports "${{ needs.plan.outputs.system_sha }}" \
+            --packages "${{ needs.plan.outputs.packages_sha }}" \
+            --ports "${{ needs.plan.outputs.ports_sha }}" \
+            --os-definition "${{ needs.plan.outputs.os_base_sha }}" \
+            --freebsd "${{ needs.plan.outputs.freebsd_sha }}" \
             --output "${RUNNER_TEMP}/stable.json"
       - name: Acquire downloads-bucket writer
         env:

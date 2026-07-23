@@ -72,8 +72,10 @@ def release(channel="stable", generation=2, fingerprint=FINGERPRINT, legacy=Fals
         "sha256": item["sha256"],
         "published_at": "2026-07-22T22:09:10Z",
         "provenance": {
-            "source": SHA, "ports": SHA, "os_definition": SHA, "freebsd": SHA,
+            "source": SHA, "system_ports": SHA, "packages": SHA,
+            "ports": SHA, "os_definition": SHA, "freebsd": SHA,
         },
+        "changes": [],
     }
 
 
@@ -82,7 +84,8 @@ def publisher_argv(output: Path, channel="stable", generation=2, fingerprint=FIN
     return [
         "publish_download.py", "--channel", channel, "--version", version,
         "--fingerprint", fingerprint, "--system", SYSTEM,
-        "--generation", str(generation), "--source", SHA, "--ports", SHA,
+        "--generation", str(generation), "--source", SHA,
+        "--system-ports", SHA, "--packages", SHA, "--ports", SHA,
         "--os-definition", SHA, "--freebsd", SHA, "--output", str(output),
     ]
 
@@ -118,6 +121,31 @@ class PublishDownloadTests(unittest.TestCase):
                 self.assertEqual(publish.main(), 0)
             value = json.loads(output.read_text())
         self.assertEqual(value["published_at"], existing["published_at"])
+        self.assertEqual(value["changes"], existing["changes"])
+
+    def test_development_document_contains_repository_changes(self):
+        existing = release("devel", generation=7, fingerprint="e" * 64)
+        existing["provenance"]["source"] = "1" * 40
+        compared = [{"type": "fix", "title": "Fix ZFS configuration recovery"}]
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory, "devel.json")
+            responses = iter((marker("devel", generation=8), existing))
+            with mock.patch.object(
+                sys, "argv", publisher_argv(output, "devel", 8)
+            ), mock.patch.object(
+                publish, "fetch_json", side_effect=lambda *_args, **_kwargs: next(responses)
+            ), mock.patch.object(
+                publish, "github_compare", return_value=compared
+            ) as compare:
+                self.assertEqual(publish.main(), 0)
+            value = json.loads(output.read_text())
+
+        compare.assert_called_once_with("FreeSense-org/freesense", "1" * 40, SHA)
+        self.assertEqual(value["changes"], [{
+            "type": "fix",
+            "title": "Fix ZFS configuration recovery",
+            "scope": "System",
+        }])
 
     def test_immutable_stable_version_cannot_be_rewritten(self):
         existing = release(fingerprint="e" * 64)
