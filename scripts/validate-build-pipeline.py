@@ -129,6 +129,11 @@ require({path.stem for path in stage_dir.glob("*.sh")} == {"system", "packages",
 system_stage = read("scripts/runner/stages/system.sh")
 packages_stage = read("scripts/runner/stages/packages.sh")
 iso_stage = read("scripts/runner/stages/iso.sh")
+for value in ("recover_configxml.sh", "import_foreign_config.sh",
+              "config_import_pkgmap.map", "installer recovery helper was not installed",
+              "installer foreign-config package map was not installed"):
+    require(value in iso_stage,
+            f"exact ISO assembly omits installer recovery payload {value!r}")
 for value in ('TMPFS_BLACKLIST="rust telegraf"',
               "TMPFS_BLACKLIST_TMPDIR=/usr/local/poudriere/data/cache/tmp"):
     require(value in packages_stage,

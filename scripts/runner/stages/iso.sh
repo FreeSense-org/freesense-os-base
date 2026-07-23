@@ -77,6 +77,39 @@ cat >"${overlay}" <<'EOF'
 		return 1
 	}
 
+	# The exact-repository assembler seeds a clean installer root and therefore
+	# does not pass through builder_common's normal installer-helper staging.
+	# Install both recovery entry points explicitly. startbsdinstall deliberately
+	# hides their menu items unless these files are executable, so missing helpers
+	# must fail the image instead of producing an apparently valid ISO.
+	mkdir -p "${INSTALLER_CHROOT_DIR}/root"
+	for _recovery_helper in recover_configxml.sh import_foreign_config.sh; do
+		test -s "${BUILDER_TOOLS}/installer/${_recovery_helper}" || {
+			echo ">>> ERROR: installer recovery helper is missing: ${_recovery_helper}" >&2
+			return 1
+		}
+		install -o root -g wheel -m 0555 \
+			"${BUILDER_TOOLS}/installer/${_recovery_helper}" \
+			"${INSTALLER_CHROOT_DIR}/root/${_recovery_helper}"
+	done
+	test -s "${PRODUCT_SRC}/etc/config_import_pkgmap.map" || {
+		echo ">>> ERROR: installer foreign-config package map is missing" >&2
+		return 1
+	}
+	install -o root -g wheel -m 0444 \
+		"${PRODUCT_SRC}/etc/config_import_pkgmap.map" \
+		"${INSTALLER_CHROOT_DIR}/root/config_import_pkgmap.map"
+	for _recovery_helper in recover_configxml.sh import_foreign_config.sh; do
+		test -x "${INSTALLER_CHROOT_DIR}/root/${_recovery_helper}" || {
+			echo ">>> ERROR: installer recovery helper was not installed: ${_recovery_helper}" >&2
+			return 1
+		}
+	done
+	test -r "${INSTALLER_CHROOT_DIR}/root/config_import_pkgmap.map" || {
+		echo ">>> ERROR: installer foreign-config package map was not installed" >&2
+		return 1
+	}
+
 	# Keep the graphical installer while also exposing its deterministic boot
 	# readiness marker to headless release smoke tests.
 	cat > "${INSTALLER_CHROOT_DIR}/boot.config" <<'CONSOLE_EOF'
