@@ -133,6 +133,7 @@ def main() -> int:
     system_platform_id = closure.get("artifact_platform", "")
     system_source_sha = closure.get("artifact_source_sha", "")
     system_system_sha = closure.get("artifact_system_sha", "")
+    system_packages_sha = closure.get("artifact_packages_sha", "")
     system_os_base_sha = closure.get("artifact_os_base_sha", "")
     system_freebsd_sha = closure.get("artifact_freebsd_sha", "")
     system_ports_sha = closure.get("artifact_ports_sha", "")
@@ -244,6 +245,8 @@ def main() -> int:
             "FreeBSD": system_freebsd_sha,
             "ports": system_ports_sha,
         }
+        if args.kind == "iso":
+            sha_inputs["optional packages"] = system_packages_sha
         sha256_inputs = {
             "System": system_id,
             "platform": system_platform_id,
@@ -293,7 +296,10 @@ def main() -> int:
         selected_package_train = channel_package_train
         source_sha = system_source_sha
         system_sha = system_system_sha
-        packages_sha = remote_sha("FreeSense-org/freesense-packages") if args.kind == "packages" else "0" * 40
+        packages_sha = (
+            remote_sha("FreeSense-org/freesense-packages")
+            if args.kind == "packages" else system_packages_sha
+        )
         os_base_sha = system_os_base_sha
         freebsd_sha = system_freebsd_sha
         ports_sha = system_ports_sha
@@ -333,12 +339,14 @@ def main() -> int:
         "schema": 2,
         "kind": "iso",
         "system": system,
+        "packages": current_packages_fingerprint,
         "platform": platform,
         "source": source_sha,
         "freebsd_source": freebsd_sha,
         "freebsd_ports": ports_sha,
         "worker_image": image_sha256,
         "channel": channel_name,
+        "channel_payload": channel_payload_sha256,
         "release_version": channel_release_version if args.kind == "iso" else "1.1.0",
         "package_train": selected_package_train,
         "signing_public_key": signing_public_key_sha256,

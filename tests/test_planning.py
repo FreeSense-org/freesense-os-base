@@ -148,6 +148,7 @@ def system_closure(*, channel_name: str = "devel"):
         "artifact_platform": "c" * 64,
         "artifact_source_sha": "1" * 40,
         "artifact_system_sha": "2" * 40,
+        "artifact_packages_sha": "6" * 40,
         "artifact_os_base_sha": "3" * 40,
         "artifact_freebsd_sha": "4" * 40,
         "artifact_ports_sha": "5" * 40,
@@ -365,7 +366,14 @@ class PlannerChannelTests(unittest.TestCase):
     def test_system_channel_reader_exports_verified_packages_binding(self):
         envelope, _ = signed_envelope("system", include_packages=True, verified=True)
         marker = completion_marker()
-        responses = iter((envelope, json.dumps(marker).encode()))
+        packages_marker = completion_marker("packages")
+        packages_marker["fingerprint"] = PACKAGES_FINGERPRINT
+        packages_marker["generation"] = 8
+        responses = iter((
+            envelope,
+            json.dumps(marker).encode(),
+            json.dumps(packages_marker).encode(),
+        ))
 
         with tempfile.TemporaryDirectory() as directory:
             key = Path(directory, "channel.pem")
@@ -387,6 +395,7 @@ class PlannerChannelTests(unittest.TestCase):
         self.assertEqual(values["packages_fingerprint"], PACKAGES_FINGERPRINT)
         self.assertEqual(values["packages_generation"], 8)
         self.assertEqual(values["packages_verified"], "true")
+        self.assertEqual(values["artifact_packages_sha"], "6" * 40)
 
     def test_iso_plan_uses_selected_system_closure_without_remote_resolution(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -405,10 +414,29 @@ class PlannerChannelTests(unittest.TestCase):
         self.assertEqual(values["platform"], "c" * 64)
         self.assertEqual(values["system"], "a" * 64)
         self.assertEqual(values["source_sha"], "1" * 40)
+        self.assertEqual(values["packages_sha"], "6" * 40)
         self.assertEqual(values["os_base_sha"], "3" * 40)
         self.assertEqual(values["image_sha256"], "6" * 64)
         self.assertEqual(values["worker_tools_sha256"], "9" * 64)
         self.assertEqual(values["release_version"], "1.1.0")
+
+    def test_iso_identity_changes_with_the_optional_package_pair(self):
+        fingerprints = []
+        for package_fingerprint in ("b" * 64, "c" * 64):
+            with tempfile.TemporaryDirectory() as directory:
+                closure = system_closure()
+                closure["packages_fingerprint"] = package_fingerprint
+                closure_path = Path(directory, "system.json")
+                closure_path.write_text(json.dumps(closure))
+                argv = ["plan.py", "iso", "--system-closure", str(closure_path)]
+                with mock.patch.object(sys, "argv", argv), \
+                        mock.patch.object(
+                            plan, "remote_sha",
+                            side_effect=AssertionError("unexpected remote resolution"),
+                        ), redirect_stdout(io.StringIO()) as rendered:
+                    self.assertEqual(plan.main(), 0)
+                fingerprints.append(json.loads(rendered.getvalue())["iso"])
+        self.assertNotEqual(fingerprints[0], fingerprints[1])
 
     def test_iso_plan_rejects_pending_channel_pair(self):
         for field, value in (

@@ -128,6 +128,9 @@ def main() -> int:
         elif isinstance(selected_packages, dict):
             packages_fingerprint = selected_packages.get("fingerprint", "")
             packages_system = selected_packages.get("system_fingerprint", "")
+            packages_built_against = selected_packages.get(
+                "built_against_system", packages_system
+            )
             packages_generation = selected_packages.get("generation")
             packages_verified = selected_packages.get("verified")
             packages_pin_id = selected_packages.get("freebsd_pin_id", declared_pin_id)
@@ -138,6 +141,7 @@ def main() -> int:
             if (
                 not SHA256.fullmatch(packages_fingerprint)
                 or packages_system != fingerprint
+                or not SHA256.fullmatch(packages_built_against)
                 or not isinstance(packages_generation, int)
                 or packages_generation <= 0
                 or not isinstance(packages_verified, bool)
@@ -150,6 +154,7 @@ def main() -> int:
             values["packages_generation"] = packages_generation
             values["packages_verified"] = str(packages_verified).lower()
             values["packages_freebsd_pin_id"] = packages_pin_id
+            values["packages_built_against_system"] = packages_built_against
         else:
             raise SystemExit("selected channel packages are invalid")
 
@@ -231,6 +236,31 @@ def main() -> int:
             "artifact_signing_public_key_sha256": required_sha256["signing_public_key"],
             "artifact_freebsd_pin_id": artifact_pin_id,
         })
+        if isinstance(selected_packages, dict):
+            packages_marker_url = selected_packages["url"].removesuffix("/amd64") + "/complete.json"
+            try:
+                packages_marker = json.loads(fetch_bytes(packages_marker_url))
+                packages_inputs = packages_marker["inputs"]
+            except (KeyError, TypeError, ValueError) as error:
+                raise SystemExit("selected packages completion marker is invalid") from error
+            packages_source = packages_inputs.get("packages", "")
+            packages_built_against = values["packages_built_against_system"]
+            if (
+                not isinstance(packages_marker, dict)
+                or not isinstance(packages_inputs, dict)
+                or packages_marker.get("schema_version") != "freesense.artifact/v1"
+                or packages_marker.get("stage") != "packages"
+                or packages_marker.get("fingerprint") != values["packages_fingerprint"]
+                or packages_marker.get("generation") != values["packages_generation"]
+                or packages_inputs.get("package_train") != package_train
+                or packages_inputs.get("system") != packages_built_against
+                or packages_inputs.get("built_against_system", packages_inputs.get("system"))
+                    != packages_built_against
+                or packages_inputs.get("freebsd_pin_id", artifact_pin_id) != artifact_pin_id
+                or not SHA.fullmatch(packages_source)
+            ):
+                raise SystemExit("selected packages completion marker conflicts with its channel entry")
+            values["artifact_packages_sha"] = packages_source
     values["freebsd_pin_id"] = artifact_pin_id
     if not args.json_output and not args.github_output:
         print(json.dumps(values, indent=2, sort_keys=True))

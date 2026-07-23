@@ -172,7 +172,8 @@ jobs:
     outputs:
       fingerprint: ${{ steps.plan.outputs.iso }}
       system: ${{ steps.plan.outputs.system }}
-      generation: ${{ steps.plan.outputs.channel_generation }}
+      generation: ${{ steps.reserve.outputs.generation }}
+      system_generation: ${{ steps.plan.outputs.channel_generation }}
       platform: ${{ steps.plan.outputs.platform }}
       source_sha: ${{ steps.plan.outputs.source_sha }}
       system_sha: ${{ steps.plan.outputs.system_sha }}
@@ -194,6 +195,8 @@ jobs:
       channel_signature_base64: ${{ steps.plan.outputs.channel_signature_base64 }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with: {go-version-file: go.mod, cache: false}
       - name: Read signed selected channel
         env:
           SELECTED_CHANNEL: ${{ inputs.operation == 'retry-stable-1.0-iso' && 'stable' || (github.event_name == 'workflow_dispatch' && inputs.channel || 'devel') }}
@@ -205,6 +208,29 @@ jobs:
         run: >-
           python3 scripts/plan.py iso --system-closure "${RUNNER_TEMP}/system.json"
           --github-output "${GITHUB_OUTPUT}"
+      - run: go build -trimpath -o "${RUNNER_TEMP}/fsbuild" ./cmd/fsbuild
+      - name: Acquire generation coordinator
+        env:
+          R2_CREDENTIAL_BROKER_URL: ${{ vars.R2_CREDENTIAL_BROKER_URL }}
+          R2_CREDENTIAL_BROKER_AUDIENCE: ${{ vars.R2_CREDENTIAL_BROKER_AUDIENCE }}
+          R2_BUCKET: ${{ vars.R2_BUILD_BUCKET }}
+          R2_ENDPOINT: ${{ vars.R2_ENDPOINT }}
+          FSBUILD_STORE_PREFIX: v1
+        run: >-
+          "${RUNNER_TEMP}/fsbuild" credentials acquire --broker-url "${R2_CREDENTIAL_BROKER_URL}"
+          --audience "${R2_CREDENTIAL_BROKER_AUDIENCE}" --role coordinator
+          --expected-bucket "${R2_BUCKET}" --expected-prefix v1 --expected-endpoint "${R2_ENDPOINT}"
+          --github-env "${GITHUB_ENV}"
+      - id: reserve
+        name: Reserve immutable release generation
+        env:
+          R2_BUCKET: ${{ vars.R2_BUILD_BUCKET }}
+          FSBUILD_STORE_PREFIX: v1
+        run: |
+          "${RUNNER_TEMP}/fsbuild" state reserve-generation \
+            --fingerprint "${{ steps.plan.outputs.iso }}" --proposed "${GITHUB_RUN_NUMBER}" \
+            --output "${RUNNER_TEMP}/generation.json"
+          echo "generation=$(jq -r .generation "${RUNNER_TEMP}/generation.json")" >>"${GITHUB_OUTPUT}"
       - name: Restrict recovery operation to sealed 1.0.x
         if: github.event_name == 'workflow_dispatch' && inputs.operation == 'retry-stable-1.0-iso'
         env:
@@ -237,6 +263,7 @@ jobs:
       product_version: ${{ needs.iso-plan.outputs.product_version }}
       package_train: ${{ needs.iso-plan.outputs.package_train }}
       generation: ${{ needs.iso-plan.outputs.generation }}
+      system_generation: ${{ needs.iso-plan.outputs.system_generation }}
       public_base_url: ${{ needs.iso-plan.outputs.public_base_url }}
       channel: ${{ needs.iso-plan.outputs.channel }}
       channel_payload_sha256: ${{ needs.iso-plan.outputs.channel_payload_sha256 }}
@@ -254,14 +281,20 @@ jobs:
         with: {go-version-file: go.mod, cache: false}
       - run: go build -trimpath -o "${RUNNER_TEMP}/fsbuild" ./cmd/fsbuild
       - name: Prepare release document
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
           python3 scripts/publish_download.py --channel "${{ needs.iso-plan.outputs.channel }}" \
             --version "${{ needs.iso-plan.outputs.release_version }}" \
             --fingerprint "${{ needs.iso-plan.outputs.fingerprint }}" \
             --system "${{ needs.iso-plan.outputs.system }}" \
             --generation "${{ needs.iso-plan.outputs.generation }}" \
-            --source "${{ needs.iso-plan.outputs.source_sha }}" --ports "${{ needs.iso-plan.outputs.ports_sha }}" \
-            --os-definition "${GITHUB_SHA}" --freebsd "${{ needs.iso-plan.outputs.freebsd_sha }}" \
+            --source "${{ needs.iso-plan.outputs.source_sha }}" \
+            --system-ports "${{ needs.iso-plan.outputs.system_sha }}" \
+            --packages "${{ needs.iso-plan.outputs.packages_sha }}" \
+            --ports "${{ needs.iso-plan.outputs.ports_sha }}" \
+            --os-definition "${{ needs.iso-plan.outputs.os_base_sha }}" \
+            --freebsd "${{ needs.iso-plan.outputs.freebsd_sha }}" \
             --output "${RUNNER_TEMP}/${{ needs.iso-plan.outputs.channel }}.json"
       - name: Acquire downloads-bucket writer
         env:

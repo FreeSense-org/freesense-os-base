@@ -73,6 +73,11 @@ for value in ("Require an upstream publication and complete release pair",
               "needs.release_gate.outputs.ready == 'true'"):
     require(value in release_workflow,
             f"automatic ISO publication gating is missing {value!r}")
+for value in ("Reserve immutable release generation", "system_generation",
+              "--fingerprint \"${{ steps.plan.outputs.iso }}\"",
+              "--proposed \"${GITHUB_RUN_NUMBER}\""):
+    require(value in release_workflow,
+            f"independent ISO release generation is missing {value!r}")
 require('expected_system = values["built_against_system"]' in read("scripts/channel.py"),
         "rebound optional packages are not verified against their build System")
 for value in ("sync-downloads", "scripts/migrate_downloads.py",
@@ -83,6 +88,18 @@ for value in ("sync-downloads", "scripts/migrate_downloads.py",
             f"independent download publication is missing {value!r}")
 require("/v1/releases/stable.json" in stable_workflow,
         "stable publication does not write its independent download document")
+for value in ("--system-ports", "--packages", "GITHUB_TOKEN",
+              'needs.iso-plan.outputs.os_base_sha'):
+    require(value in release_workflow,
+            f"development release changelog provenance is missing {value!r}")
+for value in ("--system-ports", "--packages", "GITHUB_TOKEN",
+              'needs.plan.outputs.os_base_sha'):
+    require(value in stable_workflow,
+            f"stable release changelog provenance is missing {value!r}")
+release_publisher = read("scripts/publish_download.py")
+for value in ("github_compare", '"changes": build_changes', "FreeSense-org/freesense-packages"):
+    require(value in release_publisher,
+            f"canonical release changelog generation is missing {value!r}")
 require("s3://${R2_BUCKET}/v1/releases.json" not in release_workflow + stable_workflow,
         "release workflows still overwrite the combined legacy download index")
 broker_source = read("broker/src/index.js")
@@ -100,6 +117,9 @@ for value in ("https://downloads.freesense.org/v1/releases/", "sha256sum --check
     require(value in publisher, f"ISO publisher is missing {value!r}")
 require("freebsd_pin_id" in reusable and "product_version" in reusable,
         "reusable builds omit the release or FreeBSD pin identity")
+require("system_generation" in reusable and "SYSTEM_GENERATION" in
+        read("scripts/runner/worker-common.sh") + read("scripts/runner/stages/iso.sh"),
+        "ISO builds do not separate release and signed System generations")
 
 policy = json.loads(read("config/build-policy.json"))
 require(policy.get("runner") == {"vcpus": 12, "memory_mib": 32768, "disk_gib": 160},
@@ -160,6 +180,10 @@ require(iso_payload >= 0 and iso_complete > iso_payload,
 require("repos.manifest.json" not in iso_stage and
         "CHANNEL_PAYLOAD_B64" in iso_stage and "CHANNEL_SIGNATURE_B64" in iso_stage,
         "ISO does not consume the exact selected signed channel payload")
+planner_source = read("scripts/plan.py")
+require('"packages": current_packages_fingerprint' in planner_source and
+        '"channel_payload": channel_payload_sha256' in planner_source,
+        "ISO identity omits the optional package pair or signed channel payload")
 for value in ("FREESENSE_INSTALLER_PATCH_B64", "git apply --check",
               "FREESENSE_ASSEMBLY_INSTALLER_OVERLAY", "startbsdinstall",
               "copy_configxml_from_usb", "fix_fstab"):

@@ -18,7 +18,7 @@ decode() { printf '%s' "$1" | base64 -d; }
 for name in AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN R2_ENDPOINT R2_BUCKET \
   FREESENSE_REPO_SIGNING_KEY STAGE FINGERPRINT PLATFORM_ID SYSTEM_ID SOURCE_SHA \
   SYSTEM_SHA PACKAGES_SHA OS_BASE_SHA FREEBSD_SHA PORTS_SHA JAIL_OBJECT FREEBSD_PIN_ID PACKAGE_TRAIN PRODUCT_VERSION \
-  IMAGE_SHA256 WORKER_TOOLS_SHA256 GENERATION PUBLIC_BASE_URL CHANNEL CHANNEL_PAYLOAD_SHA256 \
+  IMAGE_SHA256 WORKER_TOOLS_SHA256 GENERATION SYSTEM_GENERATION PUBLIC_BASE_URL CHANNEL CHANNEL_PAYLOAD_SHA256 \
   CHANNEL_PAYLOAD_B64 CHANNEL_SIGNATURE_B64; do
   eval "$name=\$(decode \"\${${name}_B64}\")"
 done
@@ -29,6 +29,16 @@ export ASSUME_ALWAYS_YES=yes LC_ALL=C LANG=C TZ=UTC
 umask 022
 case "${STAGE}" in system|packages|iso) : ;; *) echo "invalid build stage" >&2; exit 1 ;; esac
 case "${CHANNEL}" in devel|stable) : ;; *) echo "invalid selected channel" >&2; exit 1 ;; esac
+case "${GENERATION}:${SYSTEM_GENERATION}" in
+  *[!0-9:]*|:*|*:) echo "invalid build generation" >&2; exit 1 ;;
+esac
+if [ "${SYSTEM_GENERATION}" = 0 ]; then
+  SYSTEM_GENERATION="${GENERATION}"
+fi
+[ "${GENERATION}" -gt 0 ] && [ "${SYSTEM_GENERATION}" -gt 0 ] || {
+  echo "invalid build generation" >&2
+  exit 1
+}
 for value in "${FINGERPRINT}" "${PLATFORM_ID}" "${SYSTEM_ID}" "${IMAGE_SHA256}" \
   "${WORKER_TOOLS_SHA256}"; do
   case "${value}" in ''|*[!0-9a-f]*) echo "invalid SHA-256 build input" >&2; exit 1 ;; esac
