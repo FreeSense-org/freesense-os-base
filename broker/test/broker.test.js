@@ -351,19 +351,28 @@ describe("automatic release ISO identity", () => {
     assert.equal(response.status, 200);
   });
 
-  for (const role of ["coordinator", "channel-writer"]) {
-    it(`does not widen automatic Release access to ${role}`, async () => {
-      const response = await request(
-        role,
-        claimsFor(role, {
-          ...releaseWorkflowRun,
-          job_workflow_ref: protocol.workflows.release,
-        }),
-      );
-      assert.equal(response.status, 403);
-      assert.deepEqual(await response.json(), { error: "access_denied" });
-    });
-  }
+  it("allows a direct automatic Release job to publish the channel document", async () => {
+    const response = await request(
+      "channel-writer",
+      claimsFor("channel-writer", {
+        ...releaseWorkflowRun,
+        job_workflow_ref: protocol.workflows.release,
+      }),
+    );
+    assert.equal(response.status, 200);
+  });
+
+  it("does not widen automatic Release access to the coordinator", async () => {
+    const response = await request(
+      "coordinator",
+      claimsFor("coordinator", {
+        ...releaseWorkflowRun,
+        job_workflow_ref: protocol.workflows.release,
+      }),
+    );
+    assert.equal(response.status, 403);
+    assert.deepEqual(await response.json(), { error: "access_denied" });
+  });
 
   it("rejects artifact access from a direct automatic Release job", async () => {
     const response = await request(
