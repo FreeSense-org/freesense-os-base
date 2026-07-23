@@ -457,7 +457,7 @@ index ab78c29..7336d73 100644
  : ${BSDDIALOG_ERROR=255}
  
 +if ! mdconfig -l | grep -q md3; then
-+	mdconfig -a -u 3 -s 8m
++	mdconfig -a -u 3 -s 32m
 +	newfs /dev/md3
 +	mount /dev/md3 /mnt
 +	tar -C /etc -cf - . | tar -C /mnt -xf -

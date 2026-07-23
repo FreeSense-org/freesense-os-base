@@ -165,6 +165,10 @@ for value in ("FREESENSE_INSTALLER_PATCH_B64", "git apply --check",
               "copy_configxml_from_usb", "fix_fstab"):
     require(value in iso_stage or value in read("scripts/render-worker.py"),
             f"ISO installer payload contract is missing {value!r}")
+installer_patch = read("patches/0005-installer.patch")
+require("mdconfig -a -u 3 -s 32m" in installer_patch and
+        "mdconfig -a -u 3 -s 8m" not in installer_patch,
+        "installer /etc memory disk is too small for configuration recovery")
 require('INSTALLED_VERSION="${INSTALLED_VERSION%%-*}"' in iso_stage and
         "v1.0 repoc compatibility overlay" in iso_stage,
         "the sealed 1.0 System repoc compatibility overlay is missing")
