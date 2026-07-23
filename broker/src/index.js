@@ -76,7 +76,7 @@ const ROLE_DEFINITIONS = Object.freeze({
   },
   "channel-writer": {
     environments: ["channel-publisher"],
-    workflow: "entry",
+    workflow: "channel",
     actions: ["GetObject", "HeadObject", "PutObject"],
     ttlSeconds: 75 * 60,
     pathKind: "object",
@@ -457,6 +457,13 @@ function entryWorkflow(claims) {
   );
 }
 
+function channelWorkflow(claims) {
+  return (
+    entryWorkflow(claims) ||
+    directWorkflow(claims, RELEASE_WORKFLOW, ["workflow_run"])
+  );
+}
+
 function downloadWorkflow(claims) {
   return (
     directWorkflow(claims, RELEASE_WORKFLOW, [
@@ -485,6 +492,8 @@ function authorizedWorkflow(claims, kind) {
   switch (kind) {
     case "entry":
       return entryWorkflow(claims);
+    case "channel":
+      return channelWorkflow(claims);
     case "artifact":
       return artifactWorkflow(claims);
     case "pin":
