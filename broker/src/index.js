@@ -468,12 +468,16 @@ function downloadWorkflow(claims) {
 }
 
 function artifactWorkflow(claims) {
+  const artifactEntryEvent =
+    buildEntryEvent(claims) ||
+    (claims.workflow_ref === RELEASE_WORKFLOW &&
+      claims.event_name === "workflow_run");
   return (
     BUILD_ENTRY_WORKFLOWS.includes(claims.workflow_ref) &&
     claims.job_workflow_ref === RUNNER_BUILD_WORKFLOW &&
     SHA_PATTERN.test(claims.job_workflow_sha ?? "") &&
     claims.job_workflow_sha === claims.workflow_sha &&
-    buildEntryEvent(claims)
+    artifactEntryEvent
   );
 }
 
