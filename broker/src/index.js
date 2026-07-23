@@ -46,7 +46,7 @@ const DEPLOYMENT_ID_PATTERN =
 const ROLE_DEFINITIONS = Object.freeze({
   coordinator: {
     environments: ["build-coordinator"],
-    workflow: "entry",
+    workflow: "coordinator",
     actions: ["GetObject", "HeadObject", "PutObject"],
     ttlSeconds: 45 * 60,
     paths() {
@@ -457,6 +457,13 @@ function entryWorkflow(claims) {
   );
 }
 
+function coordinatorWorkflow(claims) {
+  return (
+    entryWorkflow(claims) ||
+    directWorkflow(claims, RELEASE_WORKFLOW, ["workflow_run"])
+  );
+}
+
 function channelWorkflow(claims) {
   return (
     entryWorkflow(claims) ||
@@ -490,6 +497,8 @@ function artifactWorkflow(claims) {
 
 function authorizedWorkflow(claims, kind) {
   switch (kind) {
+    case "coordinator":
+      return coordinatorWorkflow(claims);
     case "entry":
       return entryWorkflow(claims);
     case "channel":
