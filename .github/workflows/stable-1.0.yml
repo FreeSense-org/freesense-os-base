@@ -8,6 +8,11 @@ on:
         type: string
         default: 1.0.0
         required: true
+      queue_development:
+        description: Start a fresh Development build after Stable is fully published
+        type: boolean
+        default: false
+        required: true
 
 permissions: {contents: read, id-token: write}
 concurrency: {group: release-control, cancel-in-progress: false}
@@ -267,3 +272,14 @@ jobs:
             "https://pkg.freesense.org/v1/releases/stable.json?run=${GITHUB_RUN_ID}" \
             --output "${RUNNER_TEMP}/published.json"
           diff <(jq -S . "${RUNNER_TEMP}/stable.json") <(jq -S . "${RUNNER_TEMP}/published.json")
+
+  queue-development:
+    needs: publish-download
+    if: inputs.queue_development
+    runs-on: ubuntu-24.04
+    permissions: {actions: write, contents: read}
+    steps:
+      - name: Dispatch Development only after Stable is complete
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run system.yml --repo "${GITHUB_REPOSITORY}" --ref main

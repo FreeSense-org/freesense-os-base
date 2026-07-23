@@ -60,6 +60,10 @@ stable_workflow = read(".github/workflows/stable-1.0.yml")
 require("schedule:" not in stable_workflow and "channel seal-stable" in stable_workflow and
         '--release "${{ inputs.release }}"' in stable_workflow,
         "stable 1.0.x is not an explicit checked patch publication")
+for value in ("queue_development", "needs: publish-download",
+              "gh workflow run system.yml", "actions: write"):
+    require(value in stable_workflow,
+            f"stable-to-development ordered handoff is missing {value!r}")
 release_workflow = read(".github/workflows/release.yml")
 require("retry-stable-1.0-iso" in release_workflow and
         "recovery operation requires a sealed stable 1.0.x channel" in release_workflow,
