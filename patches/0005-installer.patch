@@ -615,7 +615,8 @@ index ab78c29..7336d73 100644
 +		BSDINSTALL_SKIP_PKGBASE=y \
 +		DISTRIBUTIONS="base.txz" \
 +		NETCONFIG_DONE=yes \
-+		OSNAME=pfSense \
++		EFI_LABEL_NAME=FreeSense \
++		OSNAME=FreeSense \
 +		ROOTPASS_PLAIN=freesense \
 +		ZFSBOOT_DATASETS="
 +/$ZFSBOOT_BEROOT_NAME	mountpoint=none
