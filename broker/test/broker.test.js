@@ -337,6 +337,47 @@ describe("automatic package-chain identity", () => {
   }
 });
 
+describe("automatic release ISO identity", () => {
+  const releaseWorkflowRun = {
+    workflow_ref: protocol.workflows.release,
+    event_name: "workflow_run",
+  };
+
+  it("allows Release workflow_run to call the reusable artifact writer", async () => {
+    const response = await request(
+      "artifact-writer",
+      claimsFor("artifact-writer", releaseWorkflowRun),
+    );
+    assert.equal(response.status, 200);
+  });
+
+  for (const role of ["coordinator", "channel-writer"]) {
+    it(`does not widen automatic Release access to ${role}`, async () => {
+      const response = await request(
+        role,
+        claimsFor(role, {
+          ...releaseWorkflowRun,
+          job_workflow_ref: protocol.workflows.release,
+        }),
+      );
+      assert.equal(response.status, 403);
+      assert.deepEqual(await response.json(), { error: "access_denied" });
+    });
+  }
+
+  it("rejects artifact access from a direct automatic Release job", async () => {
+    const response = await request(
+      "artifact-writer",
+      claimsFor("artifact-writer", {
+        ...releaseWorkflowRun,
+        job_workflow_ref: protocol.workflows.release,
+      }),
+    );
+    assert.equal(response.status, 403);
+    assert.deepEqual(await response.json(), { error: "access_denied" });
+  });
+});
+
 describe("stable patch workflow identity", () => {
   for (const role of ["coordinator", "channel-writer", "download-writer"]) {
     it(`allows ${role} for a direct stable workflow dispatch`, async () => {
