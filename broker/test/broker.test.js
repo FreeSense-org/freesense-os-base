@@ -7,6 +7,10 @@ import { createBroker, protocol } from "../src/index.js";
 const contract = JSON.parse(
   readFileSync(new URL("../protocol-contract.json", import.meta.url), "utf8"),
 );
+const releaseWorkflow = readFileSync(
+  new URL("../../.github/workflows/release.yml", import.meta.url),
+  "utf8",
+);
 const NOW = Date.parse("2026-07-21T12:00:00.000Z");
 const NOW_SECONDS = Math.floor(NOW / 1000);
 const ACCOUNT_ID = "0123456789abcdef0123456789abcdef";
@@ -362,7 +366,7 @@ describe("automatic release ISO identity", () => {
     assert.equal(response.status, 200);
   });
 
-  it("does not widen automatic Release access to the coordinator", async () => {
+  it("allows a direct automatic Release job to reserve its generation", async () => {
     const response = await request(
       "coordinator",
       claimsFor("coordinator", {
@@ -370,8 +374,61 @@ describe("automatic release ISO identity", () => {
         job_workflow_ref: protocol.workflows.release,
       }),
     );
-    assert.equal(response.status, 403);
-    assert.deepEqual(await response.json(), { error: "access_denied" });
+    assert.equal(response.status, 200);
+    const body = await response.json();
+    const session = decodeSession(body.session_token);
+    assert.deepEqual(session.paths.prefixPaths, ["v1/state/generations/"]);
+    assert.deepEqual(session.paths.objectPaths, []);
+  });
+
+  it("keeps automatic Release coordinator access direct and event-specific", async () => {
+    const base = {
+      ...releaseWorkflowRun,
+      job_workflow_ref: protocol.workflows.release,
+    };
+    const rejected = [
+      { event_name: "push" },
+      { job_workflow_ref: protocol.workflows.runnerBuild },
+      { workflow_ref: protocol.workflows.system },
+      { ref: "refs/heads/feature" },
+      { ref_protected: "false" },
+      { environment: "channel-publisher" },
+      { runner_environment: "self-hosted" },
+    ];
+    for (const overrides of rejected) {
+      const response = await request(
+        "coordinator",
+        claimsFor("coordinator", { ...base, ...overrides }),
+      );
+      assert.equal(response.status, 403);
+      assert.deepEqual(await response.json(), { error: "access_denied" });
+    }
+  });
+
+  it("keeps automatic Release workflow roles synchronized with broker policy", async () => {
+    for (const role of [
+      "coordinator",
+      "channel-writer",
+      "download-writer",
+    ]) {
+      assert.match(releaseWorkflow, new RegExp(`--role ${role}\\b`, "u"));
+    }
+    const directRoles = [
+      ["coordinator", "build-coordinator"],
+      ["channel-writer", "channel-publisher"],
+      ["download-writer", "channel-publisher"],
+    ];
+    for (const [role, environment] of directRoles) {
+      const response = await request(
+        role,
+        claimsFor(role, {
+          ...releaseWorkflowRun,
+          environment,
+          job_workflow_ref: protocol.workflows.release,
+        }),
+      );
+      assert.equal(response.status, 200);
+    }
   });
 
   it("rejects artifact access from a direct automatic Release job", async () => {
