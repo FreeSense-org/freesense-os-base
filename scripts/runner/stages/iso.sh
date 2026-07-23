@@ -9,9 +9,9 @@ grep -Fqx '# FREESENSE_ISO_ASSEMBLY_API=2' \
   exit 1
 }
 # The sealed System repository must remain the sole package input, but the
-# installer boot environment belongs to the ISO recipe.  Overlay dual-console
-# settings here so headless KVM can observe the installer without changing the
-# console default of systems installed from the ISO.
+# installer boot environment belongs to the ISO recipe. Overlay dual-console
+# settings here so headless KVM can observe the installer without hard-coding
+# the BIOS or UEFI video-console implementation.
 phase iso-console-overlay
 assembler=tools/ci/freesense-assemble-iso.sh
 overlay=/tmp/freesense-iso-console-overlay
@@ -111,16 +111,17 @@ cat >"${overlay}" <<'EOF'
 	}
 
 	# Keep the graphical installer while also exposing its deterministic boot
-	# readiness marker to headless release smoke tests.
+	# readiness marker to headless release smoke tests. Let each loader choose
+	# its native video console (efi for UEFI, vidconsole for BIOS); -Dh enables
+	# both video and serial with serial primary without naming the wrong one.
 	cat > "${INSTALLER_CHROOT_DIR}/boot.config" <<'CONSOLE_EOF'
--S115200 -D
+-S115200 -Dh
 CONSOLE_EOF
 	cat > "${INSTALLER_CHROOT_DIR}/boot/loader.conf" <<'CONSOLE_EOF'
 autoboot_delay="3"
 kern.cam.boot_delay=10000
 boot_multicons="YES"
 boot_serial="YES"
-console="comconsole,vidconsole"
 comconsole_speed="115200"
 CONSOLE_EOF
 EOF
@@ -133,11 +134,15 @@ awk -v overlay="${overlay}" '
 ' "${assembler}" >"${transformed}"
 cat "${transformed}" >"${assembler}"
 rm -f "${overlay}" "${transformed}"
-grep -Fqx 'console="comconsole,vidconsole"' \
+grep -Fqx -- '-S115200 -Dh' \
   "${assembler}" || {
   echo "ISO console overlay was not applied" >&2
   exit 1
 }
+if grep -Fq 'console="comconsole,vidconsole"' "${assembler}"; then
+  echo "ISO console overlay hard-codes the BIOS-only video console" >&2
+  exit 1
+fi
 grep -Fq 'INSTALLED_VERSION="${INSTALLED_VERSION%%-*}"' \
   "${assembler}" || {
   echo "ISO v1.0 repoc compatibility overlay was not applied" >&2

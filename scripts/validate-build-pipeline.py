@@ -153,6 +153,9 @@ require({path.stem for path in stage_dir.glob("*.sh")} == {"system", "packages",
 system_stage = read("scripts/runner/stages/system.sh")
 packages_stage = read("scripts/runner/stages/packages.sh")
 iso_stage = read("scripts/runner/stages/iso.sh")
+require("-S115200 -Dh" in iso_stage and not re.search(
+            r'(?m)^console="comconsole,vidconsole"$', iso_stage),
+        "ISO console selection is not firmware-aware dual-console mode")
 for value in ("recover_configxml.sh", "import_foreign_config.sh",
               "config_import_pkgmap.map", "installer recovery helper was not installed",
               "installer foreign-config package map was not installed"):
