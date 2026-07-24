@@ -66,6 +66,7 @@ type Component struct {
 	SystemFingerprint  string    `json:"system_fingerprint,omitempty"`
 	FreeBSDPinID       string    `json:"freebsd_pin_id"`
 	BuiltAgainstSystem string    `json:"built_against_system,omitempty"`
+	OSVersion          uint64    `json:"osversion,omitempty"`
 	URL                string    `json:"url"`
 	Generation         uint64    `json:"generation"`
 	PublishedAt        time.Time `json:"published_at"`
@@ -77,16 +78,20 @@ type UpdateOptions struct {
 	Component   string
 	Fingerprint string
 	// SystemFingerprint binds a packages component to the exact system it was
-	// built and tested against. It must be empty for system publications.
+	// selected with. It must be empty for system publications.
 	SystemFingerprint string
-	FreeBSDPinID      string
-	URL               string
-	Generation        uint64
-	Version           string
-	PackageTrain      string
-	ABI               string
-	AltABI            string
-	PublishedAt       time.Time
+	// BuiltAgainstSystem preserves the immutable System used to build packages,
+	// even when a same-pin package repository is selected with a newer System.
+	BuiltAgainstSystem string
+	FreeBSDPinID       string
+	URL                string
+	Generation         uint64
+	Version            string
+	PackageTrain       string
+	ABI                string
+	AltABI             string
+	OSVersion          uint64
+	PublishedAt        time.Time
 }
 
 // SealStable publishes one complete immutable 1.0.x System/Packages pair. A
@@ -302,8 +307,27 @@ func Update(payload Payload, options UpdateOptions) (Payload, error) {
 	if options.Component == "packages" && !fingerprintPattern.MatchString(options.SystemFingerprint) {
 		return Payload{}, errors.New("packages publication requires an exact system fingerprint binding")
 	}
+	if options.Component == "packages" && !fingerprintPattern.MatchString(options.BuiltAgainstSystem) {
+		return Payload{}, errors.New("packages publication requires its immutable build System")
+	}
 	if options.Component == "system" && options.SystemFingerprint != "" {
 		return Payload{}, errors.New("system publication must not have a system fingerprint binding")
+	}
+	if options.Component == "system" && options.BuiltAgainstSystem != "" {
+		return Payload{}, errors.New("system publication must not have a package build binding")
+	}
+	if options.Component == "system" {
+		abiMatch := regexp.MustCompile(`^FreeBSD:([0-9]+):amd64$`).FindStringSubmatch(options.ABI)
+		var abiMajor uint64
+		if len(abiMatch) != 2 {
+			return Payload{}, errors.New("system publication requires a valid FreeBSD ABI")
+		}
+		if _, err := fmt.Sscanf(abiMatch[1], "%d", &abiMajor); err != nil ||
+			options.OSVersion < abiMajor*100000 || options.OSVersion >= (abiMajor+1)*100000 {
+			return Payload{}, errors.New("system publication requires an exact OSVERSION matching its ABI")
+		}
+	} else if options.OSVersion != 0 {
+		return Payload{}, errors.New("packages publication must not declare a System OSVERSION")
 	}
 	if !regexp.MustCompile(`^[0-9]+\.[0-9]+$`).MatchString(options.PackageTrain) || options.ABI == "" || options.AltABI == "" {
 		return Payload{}, errors.New("package train and ABI fields are required")
@@ -341,10 +365,14 @@ func Update(payload Payload, options UpdateOptions) (Payload, error) {
 		}
 		builtAgainstSystem := ""
 		if options.Component == "packages" {
-			builtAgainstSystem = options.SystemFingerprint
+			builtAgainstSystem = options.BuiltAgainstSystem
+		}
+		osVersion := uint64(0)
+		if options.Component == "system" {
+			osVersion = options.OSVersion
 		}
 		if componentIdentityMatches(existing, options.Fingerprint, options.SystemFingerprint,
-			options.FreeBSDPinID, builtAgainstSystem, artifactURL, options.Generation) {
+			options.FreeBSDPinID, builtAgainstSystem, osVersion, artifactURL, options.Generation) {
 			// A retry of the same publication must not restart its soak or discard
 			// successful integration verification.
 			return payload, nil
@@ -361,13 +389,14 @@ func Update(payload Payload, options UpdateOptions) (Payload, error) {
 		Fingerprint:       options.Fingerprint,
 		SystemFingerprint: options.SystemFingerprint,
 		FreeBSDPinID:      options.FreeBSDPinID,
+		OSVersion:         options.OSVersion,
 		URL:               artifactURL,
 		Generation:        options.Generation,
 		PublishedAt:       options.PublishedAt.UTC(),
 		Verified:          false,
 	}
 	if options.Component == "packages" {
-		component.BuiltAgainstSystem = options.SystemFingerprint
+		component.BuiltAgainstSystem = options.BuiltAgainstSystem
 	}
 	if options.Component == "system" {
 		previousSystem := channel.System
@@ -455,12 +484,13 @@ func stablePatchAdvances(current, next string) bool {
 }
 
 func componentIdentityMatches(component *Component, fingerprint, systemFingerprint, freeBSDPinID,
-	builtAgainstSystem, artifactURL string, generation uint64) bool {
+	builtAgainstSystem string, osVersion uint64, artifactURL string, generation uint64) bool {
 	return component != nil &&
 		component.Fingerprint == fingerprint &&
 		component.SystemFingerprint == systemFingerprint &&
 		component.FreeBSDPinID == freeBSDPinID &&
 		component.BuiltAgainstSystem == builtAgainstSystem &&
+		component.OSVersion == osVersion &&
 		component.URL == artifactURL &&
 		component.Generation == generation
 }
@@ -468,7 +498,7 @@ func componentIdentityMatches(component *Component, fingerprint, systemFingerpri
 func componentIdentityEqual(left, right *Component) bool {
 	return left != nil && right != nil &&
 		componentIdentityMatches(left, right.Fingerprint, right.SystemFingerprint, right.FreeBSDPinID,
-			right.BuiltAgainstSystem, right.URL, right.Generation)
+			right.BuiltAgainstSystem, right.OSVersion, right.URL, right.Generation)
 }
 
 func validatePackageBinding(channel Channel, packages *Component) error {

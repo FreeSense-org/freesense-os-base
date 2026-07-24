@@ -77,6 +77,18 @@ def main() -> int:
     release_version = channel.get("version", "")
     if payload_schema == "freesense.channels/v3" and not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", release_version):
         raise SystemExit("selected channel has an invalid release version")
+    abi = channel.get("abi", "")
+    abi_match = re.fullmatch(r"FreeBSD:([0-9]+):amd64", abi)
+    selected_system = channel.get("system")
+    osversion = selected_system.get("osversion", 0) if isinstance(selected_system, dict) else 0
+    if osversion != 0 and (
+        abi_match is None
+        or not isinstance(osversion, int)
+        or not int(abi_match.group(1)) * 100000
+        <= osversion
+        < (int(abi_match.group(1)) + 1) * 100000
+    ):
+        raise SystemExit("selected channel System has an invalid OSVERSION")
     fingerprint = component.get("fingerprint", "")
     if not SHA256.fullmatch(fingerprint):
         raise SystemExit("selected channel component has an invalid fingerprint")
@@ -99,8 +111,9 @@ def main() -> int:
         "published_at": component["published_at"],
         "verified": str(verified).lower(),
         "package_train": package_train,
-        "abi": channel["abi"],
+        "abi": abi,
         "altabi": channel["altabi"],
+        "osversion": osversion,
         "channel": args.channel,
         "release_version": release_version,
         "payload_sha256": hashlib.sha256(payload_bytes).hexdigest(),

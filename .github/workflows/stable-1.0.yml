@@ -6,7 +6,7 @@ on:
       release:
         description: Exact checked release lock to publish
         type: string
-        default: 1.0.2
+        default: 1.0.3
         required: true
       queue_development:
         description: Start a fresh Development build after Stable is fully published
@@ -42,6 +42,7 @@ jobs:
       product_version: ${{ steps.plan.outputs.product_version }}
       abi: ${{ steps.plan.outputs.abi }}
       altabi: ${{ steps.plan.outputs.altabi }}
+      osversion: ${{ steps.plan.outputs.osversion }}
       public_base_url: ${{ steps.plan.outputs.public_base_url }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -151,6 +152,16 @@ jobs:
           SIGNING_KEY: ${{ secrets.FREESENSE_PKG_SIGNING_KEY }}
         run: |
           key=$(mktemp); trap 'rm -f "$key"' EXIT; chmod 600 "$key"; printf '%s' "${SIGNING_KEY}" >"$key"
+          packages_marker="${RUNNER_TEMP}/packages-complete.json"
+          curl --fail --silent --show-error --location \
+            "${{ needs.plan.outputs.public_base_url }}/artifacts/packages/${{ needs.plan.outputs.package_train }}/${{ needs.plan.outputs.packages }}/complete.json" \
+            --output "${packages_marker}"
+          packages_built_against=$(jq -er \
+            '(.inputs.built_against_system // .inputs.system) as $system |
+             select(.schema_version == "freesense.artifact/v1" and .stage == "packages" and
+             .fingerprint == "${{ needs.plan.outputs.packages }}" and
+             ($system | test("^[0-9a-f]{64}$"))) | $system' \
+            "${packages_marker}")
           "${RUNNER_TEMP}/fsbuild" channel seal-stable \
             --version "${{ needs.plan.outputs.release_version }}" \
             --system-fingerprint "${{ needs.plan.outputs.system }}" \
@@ -159,9 +170,11 @@ jobs:
             --packages-fingerprint "${{ needs.plan.outputs.packages }}" \
             --packages-url "${{ needs.plan.outputs.public_base_url }}/artifacts/packages/${{ needs.plan.outputs.package_train }}/${{ needs.plan.outputs.packages }}/amd64" \
             --packages-generation "${{ needs.plan.outputs.packages_generation }}" \
+            --packages-built-against-system "${packages_built_against}" \
             --freebsd-pin-id "${{ needs.plan.outputs.freebsd_pin_id }}" \
             --package-train "${{ needs.plan.outputs.package_train }}" \
             --abi "${{ needs.plan.outputs.abi }}" --altabi "${{ needs.plan.outputs.altabi }}" \
+            --osversion "${{ needs.plan.outputs.osversion }}" \
             --published-at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --private-key "$key"
 
   iso-plan:

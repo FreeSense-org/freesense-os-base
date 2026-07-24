@@ -34,6 +34,7 @@ jobs:
       package_train: ${{ steps.plan.outputs.package_train }}
       abi: ${{ steps.plan.outputs.abi }}
       altabi: ${{ steps.plan.outputs.altabi }}
+      osversion: ${{ steps.plan.outputs.osversion }}
       public_base_url: ${{ steps.plan.outputs.public_base_url }}
       freebsd_pin_id: ${{ steps.plan.outputs.freebsd_pin_id }}
       product_version: ${{ steps.plan.outputs.product_version }}
@@ -128,6 +129,7 @@ jobs:
             --generation "${{ needs.plan.outputs.generation }}" --package-train "${{ needs.plan.outputs.package_train }}" \
             --freebsd-pin-id "${{ needs.plan.outputs.freebsd_pin_id }}" \
             --abi "${{ needs.plan.outputs.abi }}" --altabi "${{ needs.plan.outputs.altabi }}" \
+            --osversion "${{ needs.plan.outputs.osversion }}" \
             --published-at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --private-key "$key"
           "${RUNNER_TEMP}/fsbuild" channel verify --component system \
             --fingerprint "${{ needs.plan.outputs.system }}" --private-key "$key"

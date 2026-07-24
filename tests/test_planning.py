@@ -86,6 +86,8 @@ def signed_envelope(
             "published_at": "2026-07-21T00:00:00Z",
             "verified": True,
         }
+    if schema == "freesense.channels/v3" and "system" in components:
+        components["system"]["osversion"] = 1600019
     payload = {
         "schema_version": schema,
         "channels": {
@@ -165,6 +167,7 @@ def system_closure(*, channel_name: str = "devel"):
         "packages_generation": 8,
         "packages_verified": "true",
         "verified": "true",
+        "osversion": 1600019,
     }
 
 
@@ -193,6 +196,7 @@ def stable_values(*, package_build_config: str, system_ports_sha: str = "2" * 40
             "jail_object": "inputs/sha256/" + "6" * 64,
             "worker_image_sha256": "7" * 64,
             "worker_tools_sha256": "8" * 64,
+            "freebsd_osversion": 1600019,
         }))
         argv = [
             "stable_plan.py",
@@ -222,7 +226,7 @@ class PlannerChannelTests(unittest.TestCase):
                 "ready": True,
                 "valid_from": "2026-07-22T06:00:00Z",
                 "valid_until": "2026-08-05T06:00:00Z",
-                "freebsd_source": {"commit": "1" * 40},
+                "freebsd_source": {"commit": "1" * 40, "osversion": 1600019},
                 "freebsd_ports": {"commit": "2" * 40},
                 "jail_seed": {
                     "object": "inputs/sha256/" + "3" * 64,
@@ -250,8 +254,9 @@ class PlannerChannelTests(unittest.TestCase):
                     mock.patch.object(plan, "current_component", return_value=""), \
                     redirect_stdout(io.StringIO()) as rendered:
                 self.assertEqual(plan.main(), 0)
-        values = json.loads(rendered.getvalue())
+            values = json.loads(rendered.getvalue())
         self.assertEqual(values["worker_tools_sha256"], "5" * 64)
+        self.assertEqual(values["osversion"], 1600019)
         self.assertEqual(values["image_sha256"], "4" * 64)
         self.assertTrue(values["needed"])
 
@@ -611,6 +616,7 @@ class PlannerChannelTests(unittest.TestCase):
         second = stable_values(package_build_config="c" * 64)
         self.assertNotEqual(first["packages"], second["packages"])
         self.assertEqual(first["package_build_config_sha256"], "b" * 64)
+        self.assertEqual(first["osversion"], 1600019)
 
     def test_stable_package_fingerprint_ignores_system_only_change(self):
         first = stable_values(
