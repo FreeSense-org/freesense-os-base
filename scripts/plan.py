@@ -177,6 +177,7 @@ def main() -> int:
     current_packages_fingerprint = closure.get("packages_fingerprint", "")
     current_packages_generation = closure.get("packages_generation", 0)
     current_packages_verified = closure.get("packages_verified", "false")
+    channel_osversion = closure.get("osversion", 0)
 
     if args.kind == "system" and not SHA.fullmatch(args.os_base_sha):
         raise SystemExit("--os-base-sha must be a full Git commit")
@@ -184,6 +185,16 @@ def main() -> int:
     policy = json.loads((ROOT / "config/build-policy.json").read_text())
     if lock.get("schema_version") != "freesense.freebsd-pin/v2" or not lock.get("ready"):
         raise SystemExit("FreeBSD lock is not ready")
+    abi_match = re.fullmatch(r"FreeBSD:([0-9]+):amd64", policy.get("abi", ""))
+    pinned_osversion = lock.get("freebsd_source", {}).get("osversion")
+    if (
+        abi_match is None
+        or not isinstance(pinned_osversion, int)
+        or not int(abi_match.group(1)) * 100000
+        <= pinned_osversion
+        < (int(abi_match.group(1)) + 1) * 100000
+    ):
+        raise SystemExit("FreeBSD lock has no exact OSVERSION matching its ABI")
     try:
         valid_from = datetime.fromisoformat(lock["valid_from"].replace("Z", "+00:00"))
         valid_until = datetime.fromisoformat(lock["valid_until"].replace("Z", "+00:00"))
@@ -429,6 +440,7 @@ def main() -> int:
         "package_train": selected_package_train,
         "abi": policy["abi"],
         "altabi": policy["altabi"],
+        "osversion": pinned_osversion if args.kind == "system" else channel_osversion,
         "public_base_url": policy["public_base_url"],
         "channel": channel_name,
         "channel_generation": channel_generation,

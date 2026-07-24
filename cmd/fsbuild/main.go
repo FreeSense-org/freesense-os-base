@@ -99,11 +99,13 @@ func commandChannel(ctx context.Context, args []string) error {
 		artifactURL := flags.String("url", "", "immutable public artifact URL")
 		generation := flags.Uint64("generation", 0, "reserved build generation")
 		systemFingerprint := flags.String("system-fingerprint", "", "exact system fingerprint required for packages")
+		builtAgainstSystem := flags.String("built-against-system", "", "immutable System used to build packages")
 		freeBSDPinID := flags.String("freebsd-pin-id", "", "exact 14-day FreeBSD compatibility pin")
 		packageTrain := flags.String("package-train", "", "major.minor compatibility train")
 		version := flags.String("version", "", "exact release version")
 		abi := flags.String("abi", "FreeBSD:16:amd64", "pkg ABI")
 		altABI := flags.String("altabi", "freebsd:16:x86:64", "pkg alternate ABI")
+		osVersion := flags.Uint64("osversion", 0, "exact System __FreeBSD_version")
 		publishedAt := flags.String("published-at", "", "RFC3339 publication time")
 		if err := parseFlags(flags, args[1:]); err != nil {
 			return err
@@ -114,10 +116,11 @@ func commandChannel(ctx context.Context, args []string) error {
 		}
 		mutate = func(payload control.Payload) (control.Payload, error) {
 			return control.Update(payload, control.UpdateOptions{
-				Channel: "devel", Component: *component, Fingerprint: *fingerprint, SystemFingerprint: *systemFingerprint,
+				Channel: "devel", Component: *component, Fingerprint: *fingerprint,
+				SystemFingerprint: *systemFingerprint, BuiltAgainstSystem: *builtAgainstSystem,
 				FreeBSDPinID: *freeBSDPinID,
 				URL:          *artifactURL, Generation: *generation, Version: *version, PackageTrain: *packageTrain,
-				ABI: *abi, AltABI: *altABI, PublishedAt: when,
+				ABI: *abi, AltABI: *altABI, OSVersion: *osVersion, PublishedAt: when,
 			})
 		}
 	case "verify":
@@ -135,10 +138,12 @@ func commandChannel(ctx context.Context, args []string) error {
 		packagesFingerprint := flags.String("packages-fingerprint", "", "sealed Packages fingerprint")
 		packagesURL := flags.String("packages-url", "", "immutable Packages URL")
 		packagesGeneration := flags.Uint64("packages-generation", 0, "Packages build generation")
+		packagesBuiltAgainstSystem := flags.String("packages-built-against-system", "", "immutable System used to build Packages")
 		freeBSDPinID := flags.String("freebsd-pin-id", "", "exact FreeBSD compatibility pin")
 		packageTrain := flags.String("package-train", "1.0", "sealed package train")
 		abi := flags.String("abi", "FreeBSD:16:amd64", "pkg ABI")
 		altABI := flags.String("altabi", "freebsd:16:x86:64", "pkg alternate ABI")
+		osVersion := flags.Uint64("osversion", 0, "exact System __FreeBSD_version")
 		publishedAt := flags.String("published-at", "", "RFC3339 publication time")
 		if err := parseFlags(flags, args[1:]); err != nil {
 			return err
@@ -155,10 +160,12 @@ func commandChannel(ctx context.Context, args []string) error {
 			system := common
 			system.Component, system.Fingerprint, system.URL, system.Generation =
 				"system", *systemFingerprint, *systemURL, *systemGeneration
+			system.OSVersion = *osVersion
 			packages := common
 			packages.Component, packages.Fingerprint, packages.SystemFingerprint,
 				packages.URL, packages.Generation = "packages", *packagesFingerprint,
 				*systemFingerprint, *packagesURL, *packagesGeneration
+			packages.BuiltAgainstSystem = *packagesBuiltAgainstSystem
 			return control.SealStable(payload, system, packages)
 		}
 	default:

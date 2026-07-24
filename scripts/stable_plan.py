@@ -43,6 +43,16 @@ def main() -> int:
     for key in ("worker_image_sha256", "worker_tools_sha256"):
         if not SHA256.fullmatch(lock.get(key, "")):
             raise SystemExit(f"invalid release input {key}")
+    abi_match = re.fullmatch(r"FreeBSD:([0-9]+):amd64", policy.get("abi", ""))
+    osversion = lock.get("freebsd_osversion")
+    if (
+        abi_match is None
+        or not isinstance(osversion, int)
+        or not int(abi_match.group(1)) * 100000
+        <= osversion
+        < (int(abi_match.group(1)) + 1) * 100000
+    ):
+        raise SystemExit("release lock has no exact OSVERSION matching its ABI")
     if not SHA.fullmatch(args.os_base_sha):
         raise SystemExit("--os-base-sha must be a full commit")
     signing_key = hashlib.sha256((ROOT / "config/channel-signing-public.pem").read_bytes()).hexdigest()
@@ -94,6 +104,7 @@ def main() -> int:
         "jail_object": lock["jail_object"], "package_train": lock["package_train"],
         "release_version": lock["release"],
         "product_version": lock["product_version"], "abi": policy["abi"], "altabi": policy["altabi"],
+        "osversion": osversion,
         "public_base_url": policy["public_base_url"],
     }
     print(json.dumps(values, indent=2, sort_keys=True))

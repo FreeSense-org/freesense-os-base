@@ -55,12 +55,18 @@ require("workflow_run:" in packages_workflow and "workflows: [System]" in packag
         "optional packages are not chained to System")
 require("schedule:" not in packages_workflow,
         "optional packages retain a racing fixed schedule")
+require("--built-against-system" in packages_workflow,
+        "optional package publication omits its immutable build System")
 require('cron: "0 6 * * *"' in read(".github/workflows/system.yml"),
         "the daily System check is not fixed at 06:00 UTC")
 stable_workflow = read(".github/workflows/stable-1.0.yml")
 require("schedule:" not in stable_workflow and "channel seal-stable" in stable_workflow and
         '--release "${{ inputs.release }}"' in stable_workflow,
         "stable 1.0.x is not an explicit checked patch publication")
+for value in ("--packages-built-against-system", "packages-complete.json",
+              ".inputs.built_against_system // .inputs.system"):
+    require(value in stable_workflow,
+            f"stable package reuse provenance is missing {value!r}")
 for value in ("queue_development", "needs: publish-download",
               "gh workflow run system.yml", "actions: write"):
     require(value in stable_workflow,
@@ -232,6 +238,11 @@ require(lock.get("schema_version") == "freesense.freebsd-pin/v2" and lock.get("r
 for name in ("freebsd_source", "freebsd_ports"):
     require(bool(re.fullmatch(r"[0-9a-f]{40}", lock.get(name, {}).get("commit", ""))),
             f"{name} is not pinned to a full Git commit")
+abi_major = int(policy["abi"].split(":")[1])
+osversion = lock.get("freebsd_source", {}).get("osversion")
+require(isinstance(osversion, int) and
+        abi_major * 100000 <= osversion < (abi_major + 1) * 100000,
+        "FreeBSD source is not pinned to an exact OSVERSION matching the ABI")
 for name in ("jail_seed", "worker_image", "worker_tools"):
     item = lock.get(name, {})
     sha = item.get("sha256", "")

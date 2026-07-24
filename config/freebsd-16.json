@@ -6,7 +6,8 @@
   "freebsd_source": {
     "commit": "7fc2c9f688efb12beddd58a01628157e32b632b0",
     "revision_prefix": "7fc2c9f688ef",
-    "build_date": "20260720"
+    "build_date": "20260720",
+    "osversion": 1600019
   },
   "freebsd_ports": {
     "commit": "e04fb01027e2b36c6c05e2593359a9beee80bf35"

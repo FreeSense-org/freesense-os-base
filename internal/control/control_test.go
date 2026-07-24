@@ -61,7 +61,7 @@ func TestRollingDevelopmentCannotPromoteToStable(t *testing.T) {
 		Channel: "devel", Component: "system", Fingerprint: fingerprint,
 		FreeBSDPinID: "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
 		URL:          "https://pkg.freesense.org/v1/artifacts/system/" + fingerprint + "/amd64",
-		Generation:   4, Version: "1.1.0", PackageTrain: "1.1", ABI: "FreeBSD:16:amd64", AltABI: "freebsd:16:x86:64", PublishedAt: now,
+		Generation:   4, Version: "1.1.0", PackageTrain: "1.1", ABI: "FreeBSD:16:amd64", AltABI: "freebsd:16:x86:64", OSVersion: 1600019, PublishedAt: now,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -199,6 +199,32 @@ func TestPublicationURLMustMatchComponentIdentity(t *testing.T) {
 	options.URL = "https://pkg.freesense.org/v1/artifacts/packages/1.1/" + fingerprint + "/amd64"
 	if _, err := Update(Payload{}, options); err == nil {
 		t.Fatal("cross-component artifact URL was accepted")
+	}
+}
+
+func TestSystemPublicationRequiresExactOSVersion(t *testing.T) {
+	now := time.Date(2026, 7, 21, 12, 0, 0, 0, time.UTC)
+	fingerprint := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	for name, osVersion := range map[string]uint64{
+		"missing":        0,
+		"previous-major": 1599999,
+		"next-major":     1700000,
+	} {
+		t.Run(name, func(t *testing.T) {
+			options := updateOptions("system", fingerprint, "", 1, now)
+			options.OSVersion = osVersion
+			if _, err := Update(Payload{}, options); err == nil {
+				t.Fatal("system publication accepted an invalid OSVERSION")
+			}
+		})
+	}
+	options := updateOptions("system", fingerprint, "", 1, now)
+	payload, err := Update(Payload{}, options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := payload.Channels["devel"].System.OSVersion; got != 1600019 {
+		t.Fatalf("published OSVERSION = %d, want 1600019", got)
 	}
 }
 
@@ -348,9 +374,7 @@ func TestStablePatchAdvancementIsForwardOnly(t *testing.T) {
 	nextSystem.Version, nextPackages.Version = "1.0.1", "1.0.1"
 	nextSystem.Fingerprint = "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
 	nextSystem.URL = artifactURL("system", nextSystem.Fingerprint)
-	nextPackages.Fingerprint = "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
 	nextPackages.SystemFingerprint = nextSystem.Fingerprint
-	nextPackages.URL = "https://pkg.freesense.org/v1/artifacts/packages/1.0/" + nextPackages.Fingerprint + "/amd64"
 	payload, err = SealStable(payload, nextSystem, nextPackages)
 	if err != nil {
 		t.Fatal(err)
@@ -358,13 +382,19 @@ func TestStablePatchAdvancementIsForwardOnly(t *testing.T) {
 	if payload.Channels["stable"].Version != "1.0.1" {
 		t.Fatal("stable patch did not advance")
 	}
+	if got := payload.Channels["stable"].Packages.BuiltAgainstSystem; got != system.Fingerprint {
+		t.Fatalf("reused packages build System = %q, want %q", got, system.Fingerprint)
+	}
+	if got := payload.Channels["stable"].Packages.SystemFingerprint; got != nextSystem.Fingerprint {
+		t.Fatalf("reused packages selected System = %q, want %q", got, nextSystem.Fingerprint)
+	}
 	if _, err := SealStable(payload, system, packages); err == nil {
 		t.Fatal("stable rollback was accepted")
 	}
 }
 
 func updateOptions(component, fingerprint, systemFingerprint string, generation uint64, publishedAt time.Time) UpdateOptions {
-	return UpdateOptions{
+	options := UpdateOptions{
 		Channel:           "devel",
 		Component:         component,
 		Fingerprint:       fingerprint,
@@ -378,6 +408,12 @@ func updateOptions(component, fingerprint, systemFingerprint string, generation 
 		AltABI:            "freebsd:16:x86:64",
 		PublishedAt:       publishedAt,
 	}
+	if component == "system" {
+		options.OSVersion = 1600019
+	} else {
+		options.BuiltAgainstSystem = systemFingerprint
+	}
+	return options
 }
 
 func artifactURL(component, fingerprint string) string {

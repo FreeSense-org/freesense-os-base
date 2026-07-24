@@ -122,6 +122,7 @@ jobs:
             --version "1.1.0" \
             --fingerprint "${{ needs.plan.outputs.packages }}" \
             --system-fingerprint "${{ needs.plan.outputs.system }}" \
+            --built-against-system "${{ needs.plan.outputs.system }}" \
             --freebsd-pin-id "${{ needs.plan.outputs.freebsd_pin_id }}" \
             --url "${{ needs.plan.outputs.public_base_url }}/artifacts/packages/${{ needs.plan.outputs.package_train }}/${{ needs.plan.outputs.packages }}/amd64" \
             --generation "${{ needs.plan.outputs.generation }}" --package-train "${{ needs.plan.outputs.package_train }}" \
