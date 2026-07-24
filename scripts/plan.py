@@ -21,6 +21,9 @@ ROOT = Path(__file__).resolve().parents[1]
 SHA = re.compile(r"^[0-9a-f]{40}$")
 SHA256 = re.compile(r"^[0-9a-f]{64}$")
 USER_AGENT = "FreeSense-build/1"
+OPTIONAL_PACKAGE_CONFIG_PATHS = (
+    "tools/conf/pfPorts/make.conf",
+)
 
 
 def remote_sha(repository: str, branch: str = "main") -> str:
@@ -32,6 +35,35 @@ def remote_sha(repository: str, branch: str = "main") -> str:
     if not SHA.fullmatch(value):
         raise SystemExit(f"could not resolve {repository}@{branch}")
     return value
+
+
+def remote_recipe_digest(repository: str, commit: str, paths: tuple[str, ...]) -> str:
+    if not SHA.fullmatch(commit):
+        raise SystemExit("remote recipe commit must be a full Git commit")
+    digest = hashlib.sha256()
+    for path in sorted(paths):
+        if not path or path.startswith("/") or ".." in Path(path).parts:
+            raise SystemExit("remote recipe path is invalid")
+        url = f"https://raw.githubusercontent.com/{repository}/{commit}/{path}"
+        request = urllib.request.Request(
+            url,
+            headers={"Accept": "application/octet-stream", "User-Agent": USER_AGENT},
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=15) as response:
+                data = response.read()
+        except urllib.error.HTTPError as error:
+            raise SystemExit(
+                f"remote recipe fetch failed for {path} with HTTP {error.code}"
+            ) from error
+        except (OSError, urllib.error.URLError) as error:
+            raise SystemExit(f"remote recipe fetch failed for {path}: {error}") from error
+        relative = path.encode()
+        digest.update(len(relative).to_bytes(4, "big"))
+        digest.update(relative)
+        digest.update(len(data).to_bytes(8, "big"))
+        digest.update(data)
+    return digest.hexdigest()
 
 
 def recipe_digest(paths: list[Path]) -> str:
@@ -321,11 +353,21 @@ def main() -> int:
         jail_object = lock["jail_seed"]["object"]
         platform = desired_platform
         system = desired_system
+    package_build_config = (
+        remote_recipe_digest(
+            "FreeSense-org/freesense",
+            source_sha,
+            OPTIONAL_PACKAGE_CONFIG_PATHS,
+        )
+        if args.kind == "packages"
+        else "0" * 64
+    )
     packages = fingerprint({
-        "schema": 3,
+        "schema": 4,
         "kind": "packages",
         "freebsd_pin": freebsd_pin_id,
         "packages": packages_sha,
+        "package_build_config": package_build_config,
         "package_train": selected_package_train,
         "signing_public_key": signing_public_key_sha256,
         "recipe": recipe_digest([
@@ -377,6 +419,7 @@ def main() -> int:
         "source_sha": source_sha,
         "system_sha": system_sha,
         "packages_sha": packages_sha,
+        "package_build_config_sha256": package_build_config,
         "os_base_sha": os_base_sha,
         "freebsd_sha": freebsd_sha,
         "ports_sha": ports_sha,
