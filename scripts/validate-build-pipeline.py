@@ -210,6 +210,10 @@ require("mdconfig -a -u 3 -s 32m" in installer_patch and
 require("OPTIONAL_PACKAGE_CONFIG_PATHS" in planner_source and
         '"package_build_config": package_build_config' in planner_source,
         "optional package identity omits its source build configuration")
+stable_planner_source = read("scripts/stable_plan.py")
+require("OPTIONAL_PACKAGE_CONFIG_PATHS" in stable_planner_source and
+        '"package_build_config": package_build_config' in stable_planner_source,
+        "stable optional package identity omits its pinned source build configuration")
 require('INSTALLED_VERSION="${INSTALLED_VERSION%%-*}"' in iso_stage and
         "v1.0 repoc compatibility overlay" in iso_stage,
         "the sealed 1.0 System repoc compatibility overlay is missing")

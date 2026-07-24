@@ -9,7 +9,12 @@ import json
 from pathlib import Path
 import re
 
-from plan import fingerprint, recipe_digest
+from plan import (
+    OPTIONAL_PACKAGE_CONFIG_PATHS,
+    fingerprint,
+    recipe_digest,
+    remote_recipe_digest,
+)
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -66,9 +71,15 @@ def main() -> int:
         "recipe": recipe_digest([ROOT / "scripts/render-worker.py", ROOT / "scripts/runner/install-worker-tools.sh",
             ROOT / "scripts/runner/worker-common.sh", ROOT / "scripts/runner/stages/system.sh"]),
     })
+    package_build_config = remote_recipe_digest(
+        "FreeSense-org/freesense",
+        lock["source_sha"],
+        OPTIONAL_PACKAGE_CONFIG_PATHS,
+    )
     packages = fingerprint({
-        "schema": 3, "kind": "packages", "freebsd_pin": pin_id,
+        "schema": 4, "kind": "packages", "freebsd_pin": pin_id,
         "packages": lock["packages_sha"], "package_train": lock["package_train"],
+        "package_build_config": package_build_config,
         "signing_public_key": signing_key,
         "recipe": recipe_digest([ROOT / "scripts/render-worker.py", ROOT / "scripts/runner/install-worker-tools.sh",
             ROOT / "scripts/runner/worker-common.sh", ROOT / "scripts/runner/stages/packages.sh"]),
@@ -77,6 +88,7 @@ def main() -> int:
         "platform": platform, "system": system, "packages": packages, "freebsd_pin_id": pin_id,
         "source_sha": lock["source_sha"], "system_sha": lock["system_ports_sha"],
         "packages_sha": lock["packages_sha"], "os_base_sha": args.os_base_sha,
+        "package_build_config_sha256": package_build_config,
         "freebsd_sha": lock["freebsd_source_sha"], "ports_sha": lock["freebsd_ports_sha"],
         "image_sha256": lock["worker_image_sha256"], "worker_tools_sha256": lock["worker_tools_sha256"],
         "jail_object": lock["jail_object"], "package_train": lock["package_train"],
