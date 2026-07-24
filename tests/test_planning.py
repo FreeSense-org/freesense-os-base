@@ -240,6 +240,42 @@ class PlannerChannelTests(unittest.TestCase):
                 FINGERPRINT,
             )
 
+    def test_remote_recipe_digest_is_commit_pinned_and_uses_named_client(self):
+        requests = []
+
+        def open_request(request, timeout):
+            requests.append((request, timeout))
+            return Response(b"package-build-options\n")
+
+        with mock.patch.object(
+            plan.urllib.request, "urlopen", side_effect=open_request
+        ):
+            first = plan.remote_recipe_digest(
+                "FreeSense-org/freesense",
+                "1" * 40,
+                ("tools/conf/pfPorts/make.conf",),
+            )
+        with mock.patch.object(
+            plan.urllib.request,
+            "urlopen",
+            return_value=Response(b"different-package-build-options\n"),
+        ):
+            second = plan.remote_recipe_digest(
+                "FreeSense-org/freesense",
+                "1" * 40,
+                ("tools/conf/pfPorts/make.conf",),
+            )
+
+        self.assertNotEqual(first, second)
+        self.assertEqual(
+            requests[0][0].full_url,
+            "https://raw.githubusercontent.com/FreeSense-org/freesense/"
+            + "1" * 40
+            + "/tools/conf/pfPorts/make.conf",
+        )
+        self.assertEqual(requests[0][0].get_header("User-agent"), plan.USER_AGENT)
+        self.assertEqual(requests[0][1], 15)
+
     def test_current_component_allows_only_not_found_as_empty(self):
         missing = urllib.error.HTTPError("https://example.invalid", 404, "missing", {}, None)
         forbidden = urllib.error.HTTPError("https://example.invalid", 403, "forbidden", {}, None)
@@ -475,6 +511,7 @@ class PlannerChannelTests(unittest.TestCase):
 
             with mock.patch.object(sys, "argv", argv), \
                     mock.patch.object(plan, "remote_sha", side_effect=resolve), \
+                    mock.patch.object(plan, "remote_recipe_digest", return_value="9" * 64), \
                     mock.patch.object(plan, "current_component", side_effect=AssertionError("unexpected channel refetch")), \
                     redirect_stdout(io.StringIO()):
                 self.assertEqual(plan.main(), 0)
@@ -484,6 +521,7 @@ class PlannerChannelTests(unittest.TestCase):
         self.assertEqual(values["platform"], "b" * 64)
         self.assertEqual(values["os_base_sha"], "3" * 40)
         self.assertEqual(values["packages_sha"], "8" * 40)
+        self.assertEqual(values["package_build_config_sha256"], "9" * 64)
 
     def test_package_fingerprint_is_independent_of_same_pin_system_update(self):
         fingerprints = []
@@ -498,10 +536,30 @@ class PlannerChannelTests(unittest.TestCase):
                 argv = ["plan.py", "packages", "--system-closure", str(closure_path)]
                 with mock.patch.object(sys, "argv", argv), mock.patch.object(
                     plan, "remote_sha", return_value="8" * 40
+                ), mock.patch.object(
+                    plan, "remote_recipe_digest", return_value="9" * 64
                 ), redirect_stdout(io.StringIO()) as rendered:
                     self.assertEqual(plan.main(), 0)
                 fingerprints.append(json.loads(rendered.getvalue())["packages"])
         self.assertEqual(fingerprints[0], fingerprints[1])
+
+    def test_package_fingerprint_changes_with_package_build_configuration(self):
+        fingerprints = []
+        for config_digest in ("9" * 64, "a" * 64):
+            with tempfile.TemporaryDirectory() as directory:
+                closure = system_closure()
+                closure["packages_fingerprint"] = ""
+                closure_path = Path(directory, "system.json")
+                closure_path.write_text(json.dumps(closure))
+                argv = ["plan.py", "packages", "--system-closure", str(closure_path)]
+                with mock.patch.object(sys, "argv", argv), mock.patch.object(
+                    plan, "remote_sha", return_value="8" * 40
+                ), mock.patch.object(
+                    plan, "remote_recipe_digest", return_value=config_digest
+                ), redirect_stdout(io.StringIO()) as rendered:
+                    self.assertEqual(plan.main(), 0)
+                fingerprints.append(json.loads(rendered.getvalue())["packages"])
+        self.assertNotEqual(fingerprints[0], fingerprints[1])
 
 
 if __name__ == "__main__":

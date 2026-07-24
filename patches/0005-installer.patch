@@ -596,7 +596,7 @@ index ab78c29..7336d73 100644
  	# If not netbooting, have the installer configure the network
  	dlv=`/sbin/sysctl -n vfs.nfs.diskless_valid 2> /dev/null`
  	if [ ${dlv:=0} -eq 0 -a ! -f /etc/diskless ]; then
-@@ -71,44 +194,76 @@ $BSDDIALOG_OK)	# Install
+@@ -71,44 +194,77 @@ $BSDDIALOG_OK)	# Install
  	fi
  
  	trap true SIGINT	# Ignore cntrl-C here
