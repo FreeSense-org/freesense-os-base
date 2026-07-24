@@ -28,6 +28,8 @@ def load_script(name: str, relative: str):
 
 plan = load_script("freesense_plan", "scripts/plan.py")
 channel = load_script("freesense_channel", "scripts/channel.py")
+with mock.patch.dict(sys.modules, {"plan": plan}):
+    stable_plan = load_script("freesense_stable_plan", "scripts/stable_plan.py")
 FINGERPRINT = "a" * 64
 PACKAGES_FINGERPRINT = "b" * 64
 
@@ -164,6 +166,49 @@ def system_closure(*, channel_name: str = "devel"):
         "packages_verified": "true",
         "verified": "true",
     }
+
+
+def stable_values(*, package_build_config: str, system_ports_sha: str = "2" * 40):
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        (root / "config/releases").mkdir(parents=True)
+        (root / "config/build-policy.json").write_text(json.dumps({
+            "abi": "FreeBSD:16:amd64",
+            "altabi": "freebsd:16:x86:64",
+            "public_base_url": "https://pkg.freesense.org/v1",
+            "runner": {"vcpus": 12, "memory_mib": 32768, "disk_gib": 160},
+        }))
+        (root / "config/channel-signing-public.pem").write_bytes(b"test-key")
+        (root / "config/releases/1.0.1.json").write_text(json.dumps({
+            "schema_version": "freesense.release-lock/v1",
+            "release": "1.0.1",
+            "product_version": "1.0.1-RELEASE",
+            "package_train": "1.0",
+            "sealed": True,
+            "source_sha": "1" * 40,
+            "system_ports_sha": system_ports_sha,
+            "packages_sha": "3" * 40,
+            "freebsd_source_sha": "4" * 40,
+            "freebsd_ports_sha": "5" * 40,
+            "jail_object": "inputs/sha256/" + "6" * 64,
+            "worker_image_sha256": "7" * 64,
+            "worker_tools_sha256": "8" * 64,
+        }))
+        argv = [
+            "stable_plan.py",
+            "--os-base-sha", "9" * 40,
+            "--release", "1.0.1",
+        ]
+        with mock.patch.object(sys, "argv", argv), \
+                mock.patch.object(stable_plan, "ROOT", root), \
+                mock.patch.object(stable_plan, "recipe_digest", return_value="a" * 64), \
+                mock.patch.object(
+                    stable_plan,
+                    "remote_recipe_digest",
+                    return_value=package_build_config,
+                ), redirect_stdout(io.StringIO()) as rendered:
+            stable_plan.main()
+    return json.loads(rendered.getvalue())
 
 
 class PlannerChannelTests(unittest.TestCase):
@@ -560,6 +605,24 @@ class PlannerChannelTests(unittest.TestCase):
                     self.assertEqual(plan.main(), 0)
                 fingerprints.append(json.loads(rendered.getvalue())["packages"])
         self.assertNotEqual(fingerprints[0], fingerprints[1])
+
+    def test_stable_package_fingerprint_changes_with_package_build_configuration(self):
+        first = stable_values(package_build_config="b" * 64)
+        second = stable_values(package_build_config="c" * 64)
+        self.assertNotEqual(first["packages"], second["packages"])
+        self.assertEqual(first["package_build_config_sha256"], "b" * 64)
+
+    def test_stable_package_fingerprint_ignores_system_only_change(self):
+        first = stable_values(
+            package_build_config="b" * 64,
+            system_ports_sha="2" * 40,
+        )
+        second = stable_values(
+            package_build_config="b" * 64,
+            system_ports_sha="c" * 40,
+        )
+        self.assertEqual(first["packages"], second["packages"])
+        self.assertNotEqual(first["system"], second["system"])
 
 
 if __name__ == "__main__":

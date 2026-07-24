@@ -6,7 +6,7 @@ on:
       release:
         description: Exact checked release lock to publish
         type: string
-        default: 1.0.0
+        default: 1.0.1
         required: true
       queue_development:
         description: Start a fresh Development build after Stable is fully published
