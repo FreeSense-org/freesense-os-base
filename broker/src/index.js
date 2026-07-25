@@ -109,6 +109,7 @@ const ROLE_DEFINITIONS = Object.freeze({
       return [
         `${R2_PREFIX}/artifacts/`,
         `${R2_PREFIX}/inputs/sha256/`,
+        `${R2_PREFIX}/smoke/broker/`,
       ];
     },
     objectPaths() {
@@ -116,6 +117,7 @@ const ROLE_DEFINITIONS = Object.freeze({
         `${R2_PREFIX}/repos.manifest.json`,
         `${R2_PREFIX}/releases/stable.json`,
         `${R2_PREFIX}/releases/devel.json`,
+        `${R2_PREFIX}/state/retention.json`,
       ];
     },
   },
@@ -126,7 +128,46 @@ const ROLE_DEFINITIONS = Object.freeze({
     actions: ["GetObject", "HeadObject", "ListObjectsV2"],
     ttlSeconds: 30 * 60,
     paths() {
-      return [`${R2_PREFIX}/releases/`];
+      return [
+        `${R2_PREFIX}/releases/`,
+        `${R2_PREFIX}/smoke/broker/`,
+      ];
+    },
+  },
+  "retention-build-deleter": {
+    environments: ["retention"],
+    workflow: "retention",
+    actions: ["DeleteObject"],
+    ttlSeconds: 15 * 60,
+    paths() {
+      return [
+        `${R2_PREFIX}/artifacts/`,
+        `${R2_PREFIX}/inputs/sha256/`,
+        `${R2_PREFIX}/smoke/broker/`,
+      ];
+    },
+  },
+  "retention-download-deleter": {
+    environments: ["retention"],
+    workflow: "retention",
+    bucket: "downloads",
+    actions: ["DeleteObject"],
+    ttlSeconds: 15 * 60,
+    paths() {
+      return [
+        `${R2_PREFIX}/releases/devel/`,
+        `${R2_PREFIX}/smoke/broker/`,
+      ];
+    },
+  },
+  "retention-state-writer": {
+    environments: ["retention"],
+    workflow: "retention",
+    actions: ["GetObject", "HeadObject", "PutObject"],
+    ttlSeconds: 15 * 60,
+    pathKind: "object",
+    paths() {
+      return [`${R2_PREFIX}/state/retention.json`];
     },
   },
   "broker-smoke": {

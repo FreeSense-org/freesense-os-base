@@ -139,7 +139,25 @@ function claimsFor(role, overrides = {}) {
       job_workflow_ref: protocol.workflows.retention,
       job_workflow_sha: "b".repeat(40),
     },
+    "retention-build-deleter": {
+      environment: "retention",
+      workflow_ref: protocol.workflows.retention,
+      job_workflow_ref: protocol.workflows.retention,
+      job_workflow_sha: "b".repeat(40),
+    },
     "retention-download-reader": {
+      environment: "retention",
+      workflow_ref: protocol.workflows.retention,
+      job_workflow_ref: protocol.workflows.retention,
+      job_workflow_sha: "b".repeat(40),
+    },
+    "retention-download-deleter": {
+      environment: "retention",
+      workflow_ref: protocol.workflows.retention,
+      job_workflow_ref: protocol.workflows.retention,
+      job_workflow_sha: "b".repeat(40),
+    },
+    "retention-state-writer": {
       environment: "retention",
       workflow_ref: protocol.workflows.retention,
       job_workflow_ref: protocol.workflows.retention,
@@ -300,11 +318,12 @@ describe("least-privilege role policies", () => {
       "retention-build-reader",
       BUCKET,
       1800,
-      ["v1/artifacts/", "v1/inputs/sha256/"],
+      ["v1/artifacts/", "v1/inputs/sha256/", "v1/smoke/broker/"],
       [
         "v1/repos.manifest.json",
         "v1/releases/stable.json",
         "v1/releases/devel.json",
+        "v1/state/retention.json",
       ],
       ["GetObject", "HeadObject", "ListObjectsV2"],
     ],
@@ -312,9 +331,33 @@ describe("least-privilege role policies", () => {
       "retention-download-reader",
       DOWNLOAD_BUCKET,
       1800,
-      ["v1/releases/"],
+      ["v1/releases/", "v1/smoke/broker/"],
       [],
       ["GetObject", "HeadObject", "ListObjectsV2"],
+    ],
+    [
+      "retention-build-deleter",
+      BUCKET,
+      900,
+      ["v1/artifacts/", "v1/inputs/sha256/", "v1/smoke/broker/"],
+      [],
+      ["DeleteObject"],
+    ],
+    [
+      "retention-download-deleter",
+      DOWNLOAD_BUCKET,
+      900,
+      ["v1/releases/devel/", "v1/smoke/broker/"],
+      [],
+      ["DeleteObject"],
+    ],
+    [
+      "retention-state-writer",
+      BUCKET,
+      900,
+      [],
+      ["v1/state/retention.json"],
+      ["GetObject", "HeadObject", "PutObject"],
     ],
     [
       "broker-smoke",
@@ -348,8 +391,13 @@ describe("least-privilege role policies", () => {
       assert.deepEqual(session.paths.objectPaths, objects);
       assert.equal(session.exp - session.iat, ttl);
       assert.deepEqual(session.actions, actions);
-      assert.ok(!session.actions.includes("DeleteObject"));
       assert.ok(!session.actions.some((action) => /Multipart/u.test(action)));
+      assert.ok(
+        !(
+          session.actions.includes("DeleteObject") &&
+          session.actions.includes("PutObject")
+        ),
+      );
     });
   }
 });
@@ -357,7 +405,10 @@ describe("least-privilege role policies", () => {
 describe("retention workflow identity", () => {
   for (const role of [
     "retention-build-reader",
+    "retention-build-deleter",
     "retention-download-reader",
+    "retention-download-deleter",
+    "retention-state-writer",
   ]) {
     it(`allows scheduled ${role} access only from protected main`, async () => {
       const response = await request(role);

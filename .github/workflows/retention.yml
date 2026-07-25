@@ -1,4 +1,4 @@
-name: R2 retention report
+name: R2 retention
 
 on:
   workflow_dispatch:
@@ -10,7 +10,7 @@ permissions:
   id-token: write
 
 concurrency:
-  group: r2-retention-report
+  group: r2-retention
   cancel-in-progress: false
 
 jobs:
@@ -81,16 +81,122 @@ jobs:
             --public-key config/channel-signing-public.pem \
             --config config \
             --keep-devel 4 \
-            --grace-hours 168 \
+            --completed-grace-hours 0 \
+            --orphan-grace-hours 168 \
+            --keep-smoke 1 \
             --output "${RUNNER_TEMP}/retention-report.json" \
             --github-summary "${GITHUB_STEP_SUMMARY}"
           jq . "${RUNNER_TEMP}/retention-report.json"
-      - name: Confirm report-only safety boundary
+      - id: confirmation
+        name: Require two matching daily observations
+        run: |
+          previous=()
+          if jq -e '.documents["v1/state/retention.json"] != null' \
+            "${RUNNER_TEMP}/build-inventory.json" >/dev/null; then
+            jq '.documents["v1/state/retention.json"]' \
+              "${RUNNER_TEMP}/build-inventory.json" \
+              >"${RUNNER_TEMP}/previous-retention.json"
+            previous=(--previous "${RUNNER_TEMP}/previous-retention.json")
+          fi
+          python3 scripts/r2_retention.py confirm \
+            --report "${RUNNER_TEMP}/retention-report.json" \
+            "${previous[@]}" \
+            --output "${RUNNER_TEMP}/retention-decision.json" \
+            --github-output "${GITHUB_OUTPUT}"
+          jq . "${RUNNER_TEMP}/retention-decision.json"
+      - name: Acquire exact build deletion credential
+        if: steps.confirmation.outputs.ready == 'true'
+        env:
+          R2_CREDENTIAL_BROKER_URL: ${{ vars.R2_CREDENTIAL_BROKER_URL }}
+          R2_CREDENTIAL_BROKER_AUDIENCE: ${{ vars.R2_CREDENTIAL_BROKER_AUDIENCE }}
+          R2_BUCKET: ${{ vars.R2_BUILD_BUCKET }}
+          R2_ENDPOINT: ${{ vars.R2_ENDPOINT }}
+        run: >-
+          "${RUNNER_TEMP}/fsbuild" credentials acquire
+          --broker-url "${R2_CREDENTIAL_BROKER_URL}"
+          --audience "${R2_CREDENTIAL_BROKER_AUDIENCE}"
+          --role retention-build-deleter
+          --expected-bucket "${R2_BUCKET}"
+          --expected-prefix v1
+          --expected-endpoint "${R2_ENDPOINT}"
+          --github-env "${GITHUB_ENV}"
+      - name: Delete confirmed build candidates
+        if: steps.confirmation.outputs.ready == 'true'
+        env:
+          R2_BUCKET: ${{ vars.R2_BUILD_BUCKET }}
+          R2_ENDPOINT: ${{ vars.R2_ENDPOINT }}
+        run: >-
+          python3 scripts/r2_retention.py delete
+          --report "${RUNNER_TEMP}/retention-report.json"
+          --bucket-kind build
+          --bucket "${R2_BUCKET}"
+          --endpoint "${R2_ENDPOINT}"
+      - name: Acquire exact download deletion credential
+        if: steps.confirmation.outputs.ready == 'true'
+        env:
+          R2_CREDENTIAL_BROKER_URL: ${{ vars.R2_CREDENTIAL_BROKER_URL }}
+          R2_CREDENTIAL_BROKER_AUDIENCE: ${{ vars.R2_CREDENTIAL_BROKER_AUDIENCE }}
+          R2_BUCKET: ${{ vars.R2_DOWNLOAD_BUCKET }}
+          R2_ENDPOINT: ${{ vars.R2_ENDPOINT }}
+        run: >-
+          "${RUNNER_TEMP}/fsbuild" credentials acquire
+          --broker-url "${R2_CREDENTIAL_BROKER_URL}"
+          --audience "${R2_CREDENTIAL_BROKER_AUDIENCE}"
+          --role retention-download-deleter
+          --expected-bucket "${R2_BUCKET}"
+          --expected-prefix v1
+          --expected-endpoint "${R2_ENDPOINT}"
+          --github-env "${GITHUB_ENV}"
+      - name: Delete confirmed download candidates
+        if: steps.confirmation.outputs.ready == 'true'
+        env:
+          R2_BUCKET: ${{ vars.R2_DOWNLOAD_BUCKET }}
+          R2_ENDPOINT: ${{ vars.R2_ENDPOINT }}
+        run: >-
+          python3 scripts/r2_retention.py delete
+          --report "${RUNNER_TEMP}/retention-report.json"
+          --bucket-kind downloads
+          --bucket "${R2_BUCKET}"
+          --endpoint "${R2_ENDPOINT}"
+      - name: Acquire retention-state credential
+        env:
+          R2_CREDENTIAL_BROKER_URL: ${{ vars.R2_CREDENTIAL_BROKER_URL }}
+          R2_CREDENTIAL_BROKER_AUDIENCE: ${{ vars.R2_CREDENTIAL_BROKER_AUDIENCE }}
+          R2_BUCKET: ${{ vars.R2_BUILD_BUCKET }}
+          R2_ENDPOINT: ${{ vars.R2_ENDPOINT }}
+        run: >-
+          "${RUNNER_TEMP}/fsbuild" credentials acquire
+          --broker-url "${R2_CREDENTIAL_BROKER_URL}"
+          --audience "${R2_CREDENTIAL_BROKER_AUDIENCE}"
+          --role retention-state-writer
+          --expected-bucket "${R2_BUCKET}"
+          --expected-prefix v1
+          --expected-endpoint "${R2_ENDPOINT}"
+          --github-env "${GITHUB_ENV}"
+      - name: Record the observation after successful processing
+        env:
+          R2_BUCKET: ${{ vars.R2_BUILD_BUCKET }}
+          R2_ENDPOINT: ${{ vars.R2_ENDPOINT }}
+          APPLIED: ${{ steps.confirmation.outputs.ready }}
+        run: |
+          jq --argjson applied "${APPLIED}" '
+            .state + {applied:$applied} +
+            (if $applied then {applied_at:(now|todateiso8601)} else {} end)
+          ' "${RUNNER_TEMP}/retention-decision.json" \
+            >"${RUNNER_TEMP}/retention-state.json"
+          aws s3api put-object \
+            --bucket "${R2_BUCKET}" \
+            --key v1/state/retention.json \
+            --body "${RUNNER_TEMP}/retention-state.json" \
+            --endpoint-url "${R2_ENDPOINT}" \
+            --content-type application/json >/dev/null
+      - name: Confirm guarded safety boundary
         run: |
           jq -e '
             .schema_version == "freesense.r2-retention-report/v1" and
-            .mode == "report-only" and
+            .mode == "two-run-confirmation" and
             .policy.stable == "keep forever" and
-            .policy.development_completed_per_component == 4
+            .policy.development_completed_per_component == 4 and
+            .policy.smoke_markers_per_bucket == 1
           ' "${RUNNER_TEMP}/retention-report.json" >/dev/null
-          echo "Retention completed in report-only mode; no R2 objects were deleted."
+          echo "Retention completed with two-run confirmation and exact-key boundaries."

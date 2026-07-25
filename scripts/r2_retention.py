@@ -11,6 +11,7 @@ import argparse
 import base64
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
+import hashlib
 import json
 from pathlib import Path
 import re
@@ -21,6 +22,7 @@ from typing import Any
 
 INVENTORY_SCHEMA = "freesense.r2-inventory/v1"
 REPORT_SCHEMA = "freesense.r2-retention-report/v1"
+STATE_SCHEMA = "freesense.r2-retention-state/v1"
 ENVELOPE_SCHEMA = "freesense.repositories/v3"
 PAYLOAD_SCHEMAS = {
     "freesense.channels/v1",
@@ -45,6 +47,7 @@ DOCUMENT_KEYS = {
     "v1/repos.manifest.json",
     "v1/releases/stable.json",
     "v1/releases/devel.json",
+    "v1/state/retention.json",
 }
 MAX_DOCUMENT_SIZE = 1024 * 1024
 
@@ -100,9 +103,9 @@ def aws(
 
 def snapshot(bucket: str, endpoint: str, kind: str, captured_at: datetime) -> dict[str, Any]:
     prefixes = (
-        ("v1/artifacts/", "v1/inputs/sha256/")
+        ("v1/artifacts/", "v1/inputs/sha256/", "v1/smoke/broker/")
         if kind == "build"
-        else ("v1/releases/",)
+        else ("v1/releases/", "v1/smoke/broker/")
     )
     contents: list[Any] = []
     for prefix in prefixes:
@@ -386,13 +389,20 @@ def plan_retention(
     now: datetime,
     keep_devel: int,
     grace: timedelta,
+    completed_grace: timedelta = timedelta(0),
+    smoke_keep: int = 1,
 ) -> dict[str, Any]:
     if keep_devel < 1:
         fail("Development retention must keep at least one completed build")
     if now.tzinfo is None:
         fail("retention planning time must have a timezone")
     now = now.astimezone(timezone.utc)
-    cutoff = now - grace
+    if grace < timedelta(0) or completed_grace < timedelta(0):
+        fail("retention grace periods cannot be negative")
+    if smoke_keep < 1:
+        fail("retention must keep at least one smoke marker per bucket")
+    orphan_cutoff = now - grace
+    completed_cutoff = now - completed_grace
     for inventory, kind in ((build, "build"), (downloads, "downloads")):
         if (
             inventory.get("schema_version") != INVENTORY_SCHEMA
@@ -510,6 +520,7 @@ def plan_retention(
         if prefix in protected_prefixes:
             continue
         newest = max(parse_time(item["last_modified"]) for item in objects)
+        cutoff = completed_cutoff if prefix in markers else orphan_cutoff
         if newest > cutoff:
             continue
         reason = "expired completed Development artifact"
@@ -524,7 +535,7 @@ def plan_retention(
         match = re.fullmatch(r"v1/inputs/sha256/([0-9a-f]{64})", key)
         if match is None or match[1] in protected_inputs:
             continue
-        if parse_time(item["last_modified"]) <= cutoff:
+        if parse_time(item["last_modified"]) <= orphan_cutoff:
             build_candidates.append(
                 candidate(
                     build["bucket"],
@@ -550,6 +561,8 @@ def plan_retention(
         elif key.startswith("v1/releases/devel/"):
             protected_downloads.add(key)
             warnings.append(f"protected unrecognized Development download object {key}")
+        elif key.startswith("v1/smoke/broker/"):
+            continue
         elif key.startswith("v1/"):
             protected_downloads.add(key)
 
@@ -574,7 +587,7 @@ def plan_retention(
     for prefix, objects in sorted(download_groups.items()):
         if prefix in protected_downloads:
             continue
-        if max(parse_time(item["last_modified"]) for item in objects) <= cutoff:
+        if max(parse_time(item["last_modified"]) for item in objects) <= completed_cutoff:
             download_candidates.append(
                 candidate(
                     downloads["bucket"],
@@ -584,18 +597,48 @@ def plan_retention(
                 )
             )
 
+    smoke_candidates: list[dict[str, Any]] = []
+    protected_smoke: list[str] = []
+    for inventory in (build, downloads):
+        smoke = sorted(
+            (
+                item
+                for item in inventory["objects"]
+                if item["key"].startswith("v1/smoke/broker/")
+            ),
+            key=lambda item: (parse_time(item["last_modified"]), item["key"]),
+            reverse=True,
+        )
+        protected_smoke.extend(
+            f"{inventory['bucket']}/{item['key']}" for item in smoke[:smoke_keep]
+        )
+        for item in smoke[smoke_keep:]:
+            if parse_time(item["last_modified"]) <= completed_cutoff:
+                smoke_candidates.append(
+                    candidate(
+                        inventory["bucket"],
+                        item["key"],
+                        "superseded broker smoke marker",
+                        [item],
+                    )
+                )
+
     candidates = sorted(
-        build_candidates + download_candidates,
+        build_candidates + download_candidates + smoke_candidates,
         key=lambda item: (item["bucket"], item["prefix"]),
     )
     return {
         "schema_version": REPORT_SCHEMA,
-        "mode": "report-only",
+        "mode": "two-run-confirmation",
         "generated_at": now.isoformat().replace("+00:00", "Z"),
         "policy": {
             "stable": "keep forever",
             "development_completed_per_component": keep_devel,
-            "minimum_candidate_age_hours": int(grace.total_seconds() // 3600),
+            "completed_candidate_age_hours": int(
+                completed_grace.total_seconds() // 3600
+            ),
+            "orphan_candidate_age_hours": int(grace.total_seconds() // 3600),
+            "smoke_markers_per_bucket": smoke_keep,
             "unknown_objects": "protect",
             "generation_records": "keep forever",
         },
@@ -605,6 +648,7 @@ def plan_retention(
                 f"v1/inputs/sha256/{value}" for value in protected_inputs
             ),
             "download_prefixes": sorted(protected_downloads),
+            "smoke_objects": sorted(protected_smoke),
         },
         "candidates": candidates,
         "totals": {
@@ -614,6 +658,148 @@ def plan_retention(
         },
         "warnings": sorted(set(warnings)),
     }
+
+
+def candidate_digest(report: dict[str, Any]) -> str:
+    if (
+        report.get("schema_version") != REPORT_SCHEMA
+        or report.get("mode") != "two-run-confirmation"
+        or not isinstance(report.get("candidates"), list)
+    ):
+        fail("invalid retention report")
+    identities: list[dict[str, str]] = []
+    for item in report["candidates"]:
+        if not isinstance(item, dict) or not isinstance(item.get("keys"), list):
+            fail("retention report has an invalid candidate")
+        bucket = item.get("bucket")
+        if not isinstance(bucket, str) or not bucket:
+            fail("retention report candidate has no bucket")
+        for key in item["keys"]:
+            if not isinstance(key, str) or not key.startswith("v1/"):
+                fail("retention report candidate has an invalid key")
+            identities.append({"bucket": bucket, "key": key})
+    encoded = canonical_json(sorted(identities, key=lambda item: (item["bucket"], item["key"])))
+    return hashlib.sha256(encoded.encode()).hexdigest()
+
+
+def confirmation(
+    report: dict[str, Any],
+    previous: Any,
+    now: datetime,
+    minimum_interval: timedelta = timedelta(hours=20),
+) -> dict[str, Any]:
+    if now.tzinfo is None:
+        fail("confirmation time must have a timezone")
+    now = now.astimezone(timezone.utc)
+    digest = candidate_digest(report)
+    count = report["totals"]["candidate_objects"]
+    first_observed = now
+    last_observed = now
+    observations = 1
+    ready = False
+    if previous is not None:
+        if (
+            not isinstance(previous, dict)
+            or previous.get("schema_version") != STATE_SCHEMA
+            or not SHA256.fullmatch(str(previous.get("candidate_sha256", "")))
+            or not isinstance(previous.get("observations"), int)
+            or previous["observations"] < 1
+        ):
+            fail("previous retention state is invalid")
+        if previous["candidate_sha256"] == digest:
+            try:
+                previous_observed = parse_time(previous["last_observed_at"])
+                first_observed = parse_time(previous["first_observed_at"])
+            except KeyError:
+                fail("previous retention state has no observation times")
+            if now - previous_observed >= minimum_interval:
+                observations = previous["observations"] + 1
+                ready = count > 0 and observations >= 2
+            else:
+                observations = previous["observations"]
+                last_observed = previous_observed
+    state = {
+        "schema_version": STATE_SCHEMA,
+        "candidate_sha256": digest,
+        "candidate_objects": count,
+        "candidate_bytes": report["totals"]["candidate_bytes"],
+        "observations": observations,
+        "first_observed_at": first_observed.isoformat().replace("+00:00", "Z"),
+        "last_observed_at": last_observed.isoformat().replace("+00:00", "Z"),
+        "applied": False,
+    }
+    return {"ready": ready, "state": state}
+
+
+def deletion_keys(
+    report: dict[str, Any], bucket_kind: str, bucket: str
+) -> list[str]:
+    candidate_digest(report)
+    if bucket_kind not in {"build", "downloads"}:
+        fail("unknown retention bucket kind")
+    keys: set[str] = set()
+    total_bytes = 0
+    for item in report["candidates"]:
+        if item.get("bucket") != bucket:
+            continue
+        total_bytes += item.get("bytes", 0)
+        for key in item["keys"]:
+            if (
+                "/stable/" in key
+                or key.startswith("v1/state/")
+                or key in DOCUMENT_KEYS
+                or key == "v1/repos.manifest.json"
+            ):
+                fail(f"protected object entered deletion set: {key}")
+            allowed = (
+                key.startswith("v1/artifacts/")
+                or key.startswith("v1/inputs/sha256/")
+                or key.startswith("v1/smoke/broker/")
+                if bucket_kind == "build"
+                else key.startswith("v1/releases/devel/")
+                or key.startswith("v1/smoke/broker/")
+            )
+            if not allowed:
+                fail(f"object is outside the {bucket_kind} deletion boundary: {key}")
+            keys.add(key)
+    if len(keys) > 5000 or total_bytes > 50 * 1024**3:
+        fail("retention deletion exceeds the per-run safety cap")
+    return sorted(keys)
+
+
+def delete_report_keys(
+    report: dict[str, Any], bucket_kind: str, bucket: str, endpoint: str
+) -> int:
+    keys = deletion_keys(report, bucket_kind, bucket)
+    for offset in range(0, len(keys), 1000):
+        batch = keys[offset : offset + 1000]
+        with tempfile.TemporaryDirectory(prefix="freesense-delete.") as directory:
+            request = Path(directory) / "delete.json"
+            request.write_text(
+                json.dumps(
+                    {"Objects": [{"Key": key} for key in batch], "Quiet": False}
+                ),
+                encoding="utf-8",
+            )
+            response = aws(
+                "s3api",
+                "delete-objects",
+                "--bucket",
+                bucket,
+                "--delete",
+                f"file://{request}",
+                "--endpoint-url",
+                endpoint,
+                "--output",
+                "json",
+            )
+        errors = response.get("Errors", [])
+        deleted = {item.get("Key") for item in response.get("Deleted", [])}
+        if errors or deleted != set(batch):
+            fail(
+                f"R2 did not confirm the exact {bucket_kind} deletion batch"
+            )
+    return len(keys)
 
 
 def load_json(path: Path) -> Any:
@@ -636,7 +822,7 @@ def markdown_summary(report: dict[str, Any]) -> str:
     lines = [
         "## R2 retention report",
         "",
-        "**Report-only:** no objects were deleted.",
+        "**Guarded cleanup:** candidates require two matching daily observations.",
         "",
         f"- Candidate prefixes/objects: {totals['candidate_prefixes']} / "
         f"{totals['candidate_objects']}",
@@ -668,9 +854,25 @@ def main() -> None:
     plan_parser.add_argument("--public-key", type=Path, required=True)
     plan_parser.add_argument("--config", type=Path, required=True)
     plan_parser.add_argument("--keep-devel", type=int, default=4)
-    plan_parser.add_argument("--grace-hours", type=int, default=168)
+    plan_parser.add_argument("--orphan-grace-hours", type=int, default=168)
+    plan_parser.add_argument("--completed-grace-hours", type=int, default=0)
+    plan_parser.add_argument("--keep-smoke", type=int, default=1)
     plan_parser.add_argument("--output", type=Path, required=True)
     plan_parser.add_argument("--github-summary", type=Path)
+
+    confirm_parser = subparsers.add_parser("confirm")
+    confirm_parser.add_argument("--report", type=Path, required=True)
+    confirm_parser.add_argument("--previous", type=Path)
+    confirm_parser.add_argument("--output", type=Path, required=True)
+    confirm_parser.add_argument("--github-output", type=Path)
+
+    delete_parser = subparsers.add_parser("delete")
+    delete_parser.add_argument("--report", type=Path, required=True)
+    delete_parser.add_argument(
+        "--bucket-kind", choices=("build", "downloads"), required=True
+    )
+    delete_parser.add_argument("--bucket", required=True)
+    delete_parser.add_argument("--endpoint", required=True)
 
     args = parser.parse_args()
     now = datetime.now(timezone.utc)
@@ -679,6 +881,27 @@ def main() -> None:
         args.output.write_text(
             json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8"
         )
+        return
+
+    if args.command == "confirm":
+        previous = None
+        if args.previous is not None and args.previous.exists():
+            previous = load_json(args.previous)
+        decision = confirmation(load_json(args.report), previous, now)
+        args.output.write_text(
+            json.dumps(decision, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        if args.github_output is not None:
+            with args.github_output.open("a", encoding="utf-8") as output:
+                output.write(f"ready={str(decision['ready']).lower()}\n")
+        return
+
+    if args.command == "delete":
+        deleted = delete_report_keys(
+            load_json(args.report), args.bucket_kind, args.bucket, args.endpoint
+        )
+        print(f"Deleted {deleted} exact {args.bucket_kind} R2 objects.")
         return
 
     build = load_json(args.build_inventory)
@@ -694,7 +917,9 @@ def main() -> None:
         pinned_inputs(args.config),
         now,
         args.keep_devel,
-        timedelta(hours=args.grace_hours),
+        timedelta(hours=args.orphan_grace_hours),
+        timedelta(hours=args.completed_grace_hours),
+        args.keep_smoke,
     )
     args.output.write_text(
         json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8"

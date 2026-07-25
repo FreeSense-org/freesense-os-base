@@ -107,6 +107,80 @@ def inventory(kind: str, bucket: str) -> dict:
 
 
 class RetentionPlanTests(unittest.TestCase):
+    def test_confirmation_requires_matching_observations_twenty_hours_apart(self):
+        report = {
+            "schema_version": retention.REPORT_SCHEMA,
+            "mode": "two-run-confirmation",
+            "candidates": [
+                {
+                    "bucket": "builds",
+                    "keys": ["v1/artifacts/system/" + fingerprint(1) + "/file"],
+                }
+            ],
+            "totals": {"candidate_objects": 1, "candidate_bytes": 100},
+        }
+        first = retention.confirmation(report, None, NOW)
+        self.assertFalse(first["ready"])
+        too_soon = retention.confirmation(
+            report, first["state"], NOW + timedelta(hours=1)
+        )
+        self.assertFalse(too_soon["ready"])
+        self.assertEqual(too_soon["state"]["observations"], 1)
+        second = retention.confirmation(
+            report, first["state"], NOW + timedelta(hours=24)
+        )
+        self.assertTrue(second["ready"])
+        self.assertEqual(second["state"]["observations"], 2)
+
+        changed = {
+            **report,
+            "candidates": [
+                {
+                    "bucket": "builds",
+                    "keys": ["v1/artifacts/system/" + fingerprint(2) + "/file"],
+                }
+            ],
+        }
+        reset = retention.confirmation(
+            changed, first["state"], NOW + timedelta(hours=24)
+        )
+        self.assertFalse(reset["ready"])
+        self.assertEqual(reset["state"]["observations"], 1)
+
+    def test_deletion_keys_enforce_bucket_and_stable_boundaries(self):
+        report = {
+            "schema_version": retention.REPORT_SCHEMA,
+            "mode": "two-run-confirmation",
+            "candidates": [
+                {
+                    "bucket": "builds",
+                    "bytes": 100,
+                    "keys": [
+                        "v1/artifacts/system/" + fingerprint(1) + "/file",
+                        "v1/smoke/broker/" + "a" * 40 + ".json",
+                    ],
+                },
+                {
+                    "bucket": "downloads",
+                    "bytes": 100,
+                    "keys": ["v1/releases/devel/1.1.0-g1/FreeSense.iso"],
+                },
+            ],
+            "totals": {"candidate_objects": 3, "candidate_bytes": 200},
+        }
+        self.assertEqual(
+            len(retention.deletion_keys(report, "build", "builds")), 2
+        )
+        self.assertEqual(
+            retention.deletion_keys(report, "downloads", "downloads"),
+            ["v1/releases/devel/1.1.0-g1/FreeSense.iso"],
+        )
+        report["candidates"][1]["keys"] = [
+            "v1/releases/stable/1.0.4/FreeSense.iso"
+        ]
+        with self.assertRaisesRegex(SystemExit, "protected object"):
+            retention.deletion_keys(report, "downloads", "downloads")
+
     @unittest.skipUnless(shutil.which("openssl"), "OpenSSL is required")
     def test_signed_manifest_must_verify_before_planning(self):
         payload = {
@@ -241,6 +315,15 @@ class RetentionPlanTests(unittest.TestCase):
         downloads["objects"].append(
             object_record("v1/releases/stable/1.0.4/FreeSense.iso", size=500)
         )
+        old_smoke = "v1/smoke/broker/" + "1" * 40 + ".json"
+        new_smoke = "v1/smoke/broker/" + "2" * 40 + ".json"
+        for target in (build, downloads):
+            target["objects"].extend(
+                [
+                    object_record(old_smoke),
+                    object_record(new_smoke, modified=RECENT),
+                ]
+            )
         build["documents"]["v1/releases/devel.json"] = {
             "channel": "devel",
             "release_id": "1.1.0-g6",
@@ -349,7 +432,11 @@ class RetentionPlanTests(unittest.TestCase):
         self.assertTrue(
             any("unknown package train" in warning for warning in report["warnings"])
         )
-        self.assertEqual(report["mode"], "report-only")
+        self.assertEqual(report["mode"], "two-run-confirmation")
+        self.assertIn(("builds", old_smoke), candidates)
+        self.assertIn(("downloads", old_smoke), candidates)
+        self.assertNotIn(("builds", new_smoke), candidates)
+        self.assertNotIn(("downloads", new_smoke), candidates)
 
     def test_invalid_completion_marker_aborts_the_entire_plan(self):
         build = inventory("build", "builds")

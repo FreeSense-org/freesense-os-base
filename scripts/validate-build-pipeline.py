@@ -61,14 +61,22 @@ require('cron: "0 6 * * *"' in read(".github/workflows/system.yml"),
         "the daily System check is not fixed at 06:00 UTC")
 retention_workflow = read(".github/workflows/retention.yml")
 for value in ('cron: "30 4 * * *"', "scripts/r2_retention.py",
-              "--keep-devel 4", "--grace-hours 168",
+              "--keep-devel 4", "--orphan-grace-hours 168",
+              "--completed-grace-hours 0", "--keep-smoke 1",
               "--role retention-build-reader",
-              "--role retention-download-reader", "report-only"):
+              "--role retention-download-reader",
+              "--role retention-build-deleter",
+              "--role retention-download-deleter",
+              "--role retention-state-writer",
+              "v1/state/retention.json", "two-run-confirmation"):
     require(value in retention_workflow,
-            f"daily R2 retention report is missing {value!r}")
-require("delete-object" not in retention_workflow.lower() and
-        "DeleteObject" not in retention_workflow,
-        "report-only R2 retention workflow contains a delete operation")
+            f"daily guarded R2 retention is missing {value!r}")
+retention_source = read("scripts/r2_retention.py")
+for value in ("minimum_interval: timedelta = timedelta(hours=20)",
+              "retention deletion exceeds the per-run safety cap",
+              '"/stable/" in key', "superseded broker smoke marker"):
+    require(value in retention_source,
+            f"R2 retention safety boundary is missing {value!r}")
 stable_workflow = read(".github/workflows/stable-1.0.yml")
 require("schedule:" not in stable_workflow and "channel seal-stable" in stable_workflow and
         '--release "${{ inputs.release }}"' in stable_workflow,
@@ -269,7 +277,9 @@ for value in ("scripts/resolve_worker_tools.py", "packagesite.yaml.sig",
 broker = read("broker/src/index.js")
 for role in ("coordinator", "artifact-writer", "pin-writer", "channel-writer",
              "download-writer", "retention-build-reader",
-             "retention-download-reader", "broker-smoke", "download-smoke"):
+             "retention-download-reader", "retention-build-deleter",
+             "retention-download-deleter", "retention-state-writer",
+             "broker-smoke", "download-smoke"):
     require(role in broker, f"credential broker lacks {role}")
 require("GITHUB_REPOSITORY_ID" in broker and "ref_protected" in broker,
         "credential broker is not bound to protected main")

@@ -29,7 +29,10 @@
     "download-smoke",
     "download-writer",
     "pin-writer",
+    "retention-build-deleter",
     "retention-build-reader",
-    "retention-download-reader"
+    "retention-download-deleter",
+    "retention-download-reader",
+    "retention-state-writer"
   ]
 }
