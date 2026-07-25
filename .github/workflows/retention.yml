@@ -1,0 +1,96 @@
+name: R2 retention report
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "30 4 * * *"
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: r2-retention-report
+  cancel-in-progress: false
+
+jobs:
+  report:
+    runs-on: ubuntu-24.04
+    environment: retention
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with: {go-version-file: go.mod, cache: false}
+      - name: Build the credential client
+        run: go build -trimpath -o "${RUNNER_TEMP}/fsbuild" ./cmd/fsbuild
+      - name: Acquire read-only build-bucket credential
+        env:
+          R2_CREDENTIAL_BROKER_URL: ${{ vars.R2_CREDENTIAL_BROKER_URL }}
+          R2_CREDENTIAL_BROKER_AUDIENCE: ${{ vars.R2_CREDENTIAL_BROKER_AUDIENCE }}
+          R2_BUCKET: ${{ vars.R2_BUILD_BUCKET }}
+          R2_ENDPOINT: ${{ vars.R2_ENDPOINT }}
+        run: >-
+          "${RUNNER_TEMP}/fsbuild" credentials acquire
+          --broker-url "${R2_CREDENTIAL_BROKER_URL}"
+          --audience "${R2_CREDENTIAL_BROKER_AUDIENCE}"
+          --role retention-build-reader
+          --expected-bucket "${R2_BUCKET}"
+          --expected-prefix v1
+          --expected-endpoint "${R2_ENDPOINT}"
+          --github-env "${GITHUB_ENV}"
+      - name: Inventory immutable build storage
+        env:
+          R2_BUCKET: ${{ vars.R2_BUILD_BUCKET }}
+          R2_ENDPOINT: ${{ vars.R2_ENDPOINT }}
+        run: >-
+          python3 scripts/r2_retention.py inventory
+          --kind build
+          --bucket "${R2_BUCKET}"
+          --endpoint "${R2_ENDPOINT}"
+          --output "${RUNNER_TEMP}/build-inventory.json"
+      - name: Acquire read-only downloads-bucket credential
+        env:
+          R2_CREDENTIAL_BROKER_URL: ${{ vars.R2_CREDENTIAL_BROKER_URL }}
+          R2_CREDENTIAL_BROKER_AUDIENCE: ${{ vars.R2_CREDENTIAL_BROKER_AUDIENCE }}
+          R2_BUCKET: ${{ vars.R2_DOWNLOAD_BUCKET }}
+          R2_ENDPOINT: ${{ vars.R2_ENDPOINT }}
+        run: >-
+          "${RUNNER_TEMP}/fsbuild" credentials acquire
+          --broker-url "${R2_CREDENTIAL_BROKER_URL}"
+          --audience "${R2_CREDENTIAL_BROKER_AUDIENCE}"
+          --role retention-download-reader
+          --expected-bucket "${R2_BUCKET}"
+          --expected-prefix v1
+          --expected-endpoint "${R2_ENDPOINT}"
+          --github-env "${GITHUB_ENV}"
+      - name: Inventory immutable download storage
+        env:
+          R2_BUCKET: ${{ vars.R2_DOWNLOAD_BUCKET }}
+          R2_ENDPOINT: ${{ vars.R2_ENDPOINT }}
+        run: >-
+          python3 scripts/r2_retention.py inventory
+          --kind downloads
+          --bucket "${R2_BUCKET}"
+          --endpoint "${R2_ENDPOINT}"
+          --output "${RUNNER_TEMP}/download-inventory.json"
+      - name: Plan exact retention candidates
+        run: |
+          python3 scripts/r2_retention.py plan \
+            --build-inventory "${RUNNER_TEMP}/build-inventory.json" \
+            --download-inventory "${RUNNER_TEMP}/download-inventory.json" \
+            --public-key config/channel-signing-public.pem \
+            --config config \
+            --keep-devel 4 \
+            --grace-hours 168 \
+            --output "${RUNNER_TEMP}/retention-report.json" \
+            --github-summary "${GITHUB_STEP_SUMMARY}"
+          jq . "${RUNNER_TEMP}/retention-report.json"
+      - name: Confirm report-only safety boundary
+        run: |
+          jq -e '
+            .schema_version == "freesense.r2-retention-report/v1" and
+            .mode == "report-only" and
+            .policy.stable == "keep forever" and
+            .policy.development_completed_per_component == 4
+          ' "${RUNNER_TEMP}/retention-report.json" >/dev/null
+          echo "Retention completed in report-only mode; no R2 objects were deleted."

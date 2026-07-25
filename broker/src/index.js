@@ -31,6 +31,8 @@ const RELEASE_WORKFLOW =
   `${GITHUB_REPOSITORY}/.github/workflows/release.yml@${MAIN_REF}`;
 const BROKER_WORKFLOW =
   `${GITHUB_REPOSITORY}/.github/workflows/broker.yml@${MAIN_REF}`;
+const RETENTION_WORKFLOW =
+  `${GITHUB_REPOSITORY}/.github/workflows/retention.yml@${MAIN_REF}`;
 
 const REQUEST_SCHEMA = "fsbuild.credential-request/v1";
 const RESPONSE_SCHEMA = "fsbuild.temporary-r2-credentials/v1";
@@ -94,6 +96,35 @@ const ROLE_DEFINITIONS = Object.freeze({
     bucket: "downloads",
     actions: ["GetObject", "HeadObject", "PutObject"],
     ttlSeconds: 75 * 60,
+    paths() {
+      return [`${R2_PREFIX}/releases/`];
+    },
+  },
+  "retention-build-reader": {
+    environments: ["retention"],
+    workflow: "retention",
+    actions: ["GetObject", "HeadObject", "ListObjectsV2"],
+    ttlSeconds: 30 * 60,
+    prefixPaths() {
+      return [
+        `${R2_PREFIX}/artifacts/`,
+        `${R2_PREFIX}/inputs/sha256/`,
+      ];
+    },
+    objectPaths() {
+      return [
+        `${R2_PREFIX}/repos.manifest.json`,
+        `${R2_PREFIX}/releases/stable.json`,
+        `${R2_PREFIX}/releases/devel.json`,
+      ];
+    },
+  },
+  "retention-download-reader": {
+    environments: ["retention"],
+    workflow: "retention",
+    bucket: "downloads",
+    actions: ["GetObject", "HeadObject", "ListObjectsV2"],
+    ttlSeconds: 30 * 60,
     paths() {
       return [`${R2_PREFIX}/releases/`];
     },
@@ -522,6 +553,11 @@ function authorizedWorkflow(claims, kind) {
         "push",
         "workflow_dispatch",
       ]);
+    case "retention":
+      return directWorkflow(claims, RETENTION_WORKFLOW, [
+        "schedule",
+        "workflow_dispatch",
+      ]);
     default:
       return false;
   }
@@ -551,12 +587,16 @@ function authorizeRole(claims, role) {
     throw new BrokerError(403, "access_denied");
   }
 
-  const paths = definition.paths(claims);
+  const paths = definition.paths?.(claims) ?? [];
+  const prefixPaths = definition.prefixPaths?.(claims) ??
+    (definition.pathKind === "object" ? [] : paths);
+  const objectPaths = definition.objectPaths?.(claims) ??
+    (definition.pathKind === "object" ? paths : []);
   return {
     bucket: definition.bucket ?? "build",
     actions: [...definition.actions],
-    prefixPaths: definition.pathKind === "object" ? [] : paths,
-    objectPaths: definition.pathKind === "object" ? paths : [],
+    prefixPaths,
+    objectPaths,
     ttlSeconds: definition.ttlSeconds,
   };
 }
@@ -852,6 +892,7 @@ export const protocol = Object.freeze({
     pin: PIN_WORKFLOW,
     release: RELEASE_WORKFLOW,
     broker: BROKER_WORKFLOW,
+    retention: RETENTION_WORKFLOW,
   }),
 });
 

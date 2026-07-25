@@ -41,6 +41,12 @@ Retries reserve one generation per content fingerprint, reuse a valid
 last. Failed jobs therefore neither invent a new package version nor upload the
 same successful output again.
 
+`retention.yml` inventories R2 daily at 04:30 UTC and produces a report-only,
+reference-aware retention plan. Every Stable 1.0.x artifact remains permanent.
+Development keeps four completed artifacts per component plus the active
+channel closure, while incomplete and unreferenced data receives a seven-day
+grace period. The reporting identity cannot modify or delete R2 objects.
+
 See [credential broker operations](docs/credential-broker.md) for the small set
 of GitHub variables, environments, and secrets.
 

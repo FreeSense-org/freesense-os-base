@@ -21,6 +21,7 @@ Environments:
 - `build`: immutable inputs/artifacts from the reusable build-runner workflow
 - `pin`: weekly input mirroring on the build runner
 - `channel-publisher`: signed repository/release metadata and immutable public ISOs
+- `retention`: daily read-only build/download inventories and retention reports
 
 The organization secret `FREESENSE_PKG_SIGNING_KEY` signs both pkg repository
 catalogs and the channel document. Its public key is checked in at
@@ -41,3 +42,11 @@ other sessions cannot list. The downloads session can write only under
 `v1/releases/`. No session grants delete or multipart actions.
 Published files remain under prefix `v1`; failed partial uploads are safe because
 `complete.json` is always last.
+
+The daily retention workflow runs at 04:30 UTC. Its two reader sessions can
+list and read only the immutable build/input and download-release prefixes
+needed to construct a reference-aware report. Stable 1.0.x artifacts are kept
+forever; the report retains four completed Development artifacts per component,
+the active signed channel pair, and their transitive inputs. Candidates must be
+at least seven days old. The initial workflow is intentionally report-only and
+has no R2 delete permission.

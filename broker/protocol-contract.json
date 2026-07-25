@@ -28,6 +28,8 @@
     "coordinator",
     "download-smoke",
     "download-writer",
-    "pin-writer"
+    "pin-writer",
+    "retention-build-reader",
+    "retention-download-reader"
   ]
 }

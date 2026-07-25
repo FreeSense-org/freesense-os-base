@@ -1,0 +1,708 @@
+#!/usr/bin/env python3
+"""Inventory R2 and plan conservative FreeSense retention.
+
+This first implementation is deliberately report-only. It computes exact
+candidate keys but never issues a delete request.
+"""
+
+from __future__ import annotations
+
+import argparse
+import base64
+from collections import defaultdict
+from datetime import datetime, timedelta, timezone
+import json
+from pathlib import Path
+import re
+import subprocess
+import tempfile
+from typing import Any
+
+
+INVENTORY_SCHEMA = "freesense.r2-inventory/v1"
+REPORT_SCHEMA = "freesense.r2-retention-report/v1"
+ENVELOPE_SCHEMA = "freesense.repositories/v3"
+PAYLOAD_SCHEMAS = {
+    "freesense.channels/v1",
+    "freesense.channels/v2",
+    "freesense.channels/v3",
+}
+SHA256 = re.compile(r"^[0-9a-f]{64}$")
+SYSTEM_KEY = re.compile(
+    r"^v1/artifacts/system/(?P<fingerprint>[0-9a-f]{64})/(?P<relative>.+)$"
+)
+PACKAGES_KEY = re.compile(
+    r"^v1/artifacts/packages/(?P<train>[0-9]+\.[0-9]+)/"
+    r"(?P<fingerprint>[0-9a-f]{64})/(?P<relative>.+)$"
+)
+ISO_KEY = re.compile(
+    r"^v1/artifacts/iso/(?P<fingerprint>[0-9a-f]{64})/(?P<relative>.+)$"
+)
+DEVEL_DOWNLOAD = re.compile(
+    r"^v1/releases/devel/(?P<release>[0-9]+\.[0-9]+\.[0-9]+-g(?P<generation>[1-9][0-9]*))/"
+)
+DOCUMENT_KEYS = {
+    "v1/repos.manifest.json",
+    "v1/releases/stable.json",
+    "v1/releases/devel.json",
+}
+MAX_DOCUMENT_SIZE = 1024 * 1024
+
+
+def fail(message: str) -> None:
+    raise SystemExit(message)
+
+
+def parse_time(value: str) -> datetime:
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        fail(f"invalid R2 object timestamp {value!r}")
+    if parsed.tzinfo is None:
+        fail(f"R2 object timestamp has no timezone: {value!r}")
+    return parsed.astimezone(timezone.utc)
+
+
+def canonical_json(value: Any) -> str:
+    return json.dumps(value, sort_keys=True, separators=(",", ":"))
+
+
+def aws(
+    *args: str, output: Path | None = None, missing_ok: bool = False
+) -> Any:
+    command = ["aws", *args]
+    if output is not None:
+        command.append(str(output))
+    completed = subprocess.run(
+        command,
+        check=False,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    )
+    if completed.returncode != 0:
+        if missing_ok and any(
+            value in completed.stderr
+            for value in ("404", "Not Found", "NoSuchKey")
+        ):
+            return None
+        fail(
+            f"AWS CLI failed ({' '.join(command[:-1] if output else command)}): "
+            f"{completed.stderr.strip()}"
+        )
+    if output is not None:
+        return None
+    try:
+        return json.loads(completed.stdout)
+    except json.JSONDecodeError:
+        fail("AWS CLI returned invalid JSON")
+
+
+def snapshot(bucket: str, endpoint: str, kind: str, captured_at: datetime) -> dict[str, Any]:
+    prefixes = (
+        ("v1/artifacts/", "v1/inputs/sha256/")
+        if kind == "build"
+        else ("v1/releases/",)
+    )
+    contents: list[Any] = []
+    for prefix in prefixes:
+        listed = aws(
+            "s3api",
+            "list-objects-v2",
+            "--bucket",
+            bucket,
+            "--prefix",
+            prefix,
+            "--endpoint-url",
+            endpoint,
+            "--page-size",
+            "1000",
+            "--output",
+            "json",
+        )
+        page = listed.get("Contents", [])
+        if not isinstance(page, list):
+            fail("R2 listing has no object list")
+        contents.extend(page)
+    if kind == "build":
+        for key in sorted(DOCUMENT_KEYS):
+            headed = aws(
+                "s3api",
+                "head-object",
+                "--bucket",
+                bucket,
+                "--key",
+                key,
+                "--endpoint-url",
+                endpoint,
+                "--output",
+                "json",
+                missing_ok=True,
+            )
+            if headed is not None:
+                contents.append(
+                    {
+                        "Key": key,
+                        "Size": headed.get("ContentLength"),
+                        "LastModified": headed.get("LastModified"),
+                        "ETag": headed.get("ETag", ""),
+                    }
+                )
+    objects: list[dict[str, Any]] = []
+    for item in contents:
+        if not isinstance(item, dict):
+            fail("R2 listing contains an invalid object")
+        key = item.get("Key")
+        size = item.get("Size")
+        modified = item.get("LastModified")
+        etag = item.get("ETag", "")
+        if (
+            not isinstance(key, str)
+            or not key.startswith("v1/")
+            or not isinstance(size, int)
+            or size < 0
+            or not isinstance(modified, str)
+            or not isinstance(etag, str)
+        ):
+            fail("R2 listing contains invalid object metadata")
+        parse_time(modified)
+        objects.append(
+            {
+                "key": key,
+                "size": size,
+                "last_modified": modified,
+                "etag": etag,
+            }
+        )
+
+    documents: dict[str, Any] = {}
+    if kind == "build":
+        wanted = [
+            item
+            for item in objects
+            if item["key"] in DOCUMENT_KEYS or item["key"].endswith("/complete.json")
+        ]
+        with tempfile.TemporaryDirectory(prefix="freesense-retention.") as directory:
+            root = Path(directory)
+            for number, item in enumerate(wanted):
+                if item["size"] > MAX_DOCUMENT_SIZE:
+                    fail(f"refusing oversized retention document {item['key']!r}")
+                destination = root / f"{number}.json"
+                aws(
+                    "s3api",
+                    "get-object",
+                    "--bucket",
+                    bucket,
+                    "--key",
+                    item["key"],
+                    "--endpoint-url",
+                    endpoint,
+                    "--output",
+                    "json",
+                    output=destination,
+                )
+                try:
+                    documents[item["key"]] = json.loads(
+                        destination.read_text(encoding="utf-8")
+                    )
+                except (OSError, json.JSONDecodeError):
+                    fail(f"R2 document is not valid JSON: {item['key']!r}")
+
+    return {
+        "schema_version": INVENTORY_SCHEMA,
+        "kind": kind,
+        "bucket": bucket,
+        "captured_at": captured_at.isoformat().replace("+00:00", "Z"),
+        "objects": sorted(objects, key=lambda item: item["key"]),
+        "documents": documents,
+    }
+
+
+def verify_manifest(envelope: Any, public_key: Path) -> dict[str, Any]:
+    if not isinstance(envelope, dict) or envelope.get("schema_version") != ENVELOPE_SCHEMA:
+        fail("repository manifest has an unsupported envelope")
+    try:
+        payload = base64.b64decode(envelope["payload"], validate=True)
+        signature = base64.b64decode(envelope["signature"], validate=True)
+    except (KeyError, TypeError, ValueError):
+        fail("repository manifest has invalid canonical base64")
+    try:
+        decoded = json.loads(payload)
+    except json.JSONDecodeError:
+        fail("repository manifest payload is not JSON")
+    if (
+        not isinstance(decoded, dict)
+        or decoded.get("schema_version") not in PAYLOAD_SCHEMAS
+        or not isinstance(decoded.get("channels"), dict)
+    ):
+        fail("repository manifest payload has an unsupported schema")
+
+    with tempfile.TemporaryDirectory(prefix="freesense-manifest.") as directory:
+        root = Path(directory)
+        payload_path = root / "payload.json"
+        signature_path = root / "signature.bin"
+        payload_path.write_bytes(payload)
+        signature_path.write_bytes(signature)
+        checked = subprocess.run(
+            [
+                "openssl",
+                "dgst",
+                "-sha256",
+                "-verify",
+                str(public_key),
+                "-signature",
+                str(signature_path),
+                str(payload_path),
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+        )
+    if checked.returncode != 0:
+        fail("repository manifest signature is invalid")
+    return decoded
+
+
+def classify_artifact_key(key: str) -> tuple[str, str, str | None, str] | None:
+    match = SYSTEM_KEY.fullmatch(key)
+    if match:
+        return (
+            "system",
+            f"v1/artifacts/system/{match['fingerprint']}",
+            None,
+            match["fingerprint"],
+        )
+    match = PACKAGES_KEY.fullmatch(key)
+    if match:
+        return (
+            "packages",
+            f"v1/artifacts/packages/{match['train']}/{match['fingerprint']}",
+            match["train"],
+            match["fingerprint"],
+        )
+    match = ISO_KEY.fullmatch(key)
+    if match:
+        return (
+            "iso",
+            f"v1/artifacts/iso/{match['fingerprint']}",
+            None,
+            match["fingerprint"],
+        )
+    return None
+
+
+def marker_identity(
+    prefix: str, kind: str, train: str | None, fingerprint: str, marker: Any
+) -> dict[str, Any]:
+    if not isinstance(marker, dict):
+        fail(f"completion marker is not an object: {prefix}")
+    generation = marker.get("generation")
+    inputs = marker.get("inputs")
+    if (
+        marker.get("fingerprint") != fingerprint
+        or not isinstance(generation, int)
+        or isinstance(generation, bool)
+        or generation <= 0
+        or not isinstance(inputs, dict)
+    ):
+        fail(f"completion marker conflicts with its artifact identity: {prefix}")
+    if kind in {"system", "packages"}:
+        if (
+            marker.get("schema_version") != "freesense.artifact/v1"
+            or marker.get("stage") != kind
+        ):
+            fail(f"repository completion marker has an invalid schema: {prefix}")
+        if kind == "system" and inputs.get("system") != fingerprint:
+            fail(f"System completion marker has an invalid closure: {prefix}")
+        if kind == "packages" and inputs.get("package_train") != train:
+            fail(f"Packages completion marker has an invalid train: {prefix}")
+    elif (
+        marker.get("schema_version") != "freesense.iso/v1"
+        or not SHA256.fullmatch(str(marker.get("system", "")))
+        or inputs.get("channel") not in {"stable", "devel"}
+    ):
+        fail(f"ISO completion marker has an invalid closure: {prefix}")
+    return {
+        "prefix": prefix,
+        "kind": kind,
+        "train": train,
+        "fingerprint": fingerprint,
+        "generation": generation,
+        "marker": marker,
+    }
+
+
+def collect_sha256(value: Any, output: set[str]) -> None:
+    if isinstance(value, str):
+        if SHA256.fullmatch(value):
+            output.add(value)
+        elif re.fullmatch(r"inputs/sha256/[0-9a-f]{64}", value):
+            output.add(value.rsplit("/", 1)[1])
+    elif isinstance(value, dict):
+        for item in value.values():
+            collect_sha256(item, output)
+    elif isinstance(value, list):
+        for item in value:
+            collect_sha256(item, output)
+
+
+def component_prefix(component: Any, kind: str, package_train: str) -> str | None:
+    if not isinstance(component, dict):
+        return None
+    fingerprint = component.get("fingerprint")
+    if not isinstance(fingerprint, str) or not SHA256.fullmatch(fingerprint):
+        fail(f"signed {kind} channel component has an invalid fingerprint")
+    if kind == "system":
+        return f"v1/artifacts/system/{fingerprint}"
+    return f"v1/artifacts/packages/{package_train}/{fingerprint}"
+
+
+def candidate(
+    bucket: str,
+    prefix: str,
+    reason: str,
+    objects: list[dict[str, Any]],
+) -> dict[str, Any]:
+    keys = sorted(item["key"] for item in objects)
+    return {
+        "bucket": bucket,
+        "prefix": prefix,
+        "reason": reason,
+        "object_count": len(keys),
+        "bytes": sum(item["size"] for item in objects),
+        "last_modified": max(parse_time(item["last_modified"]) for item in objects)
+        .isoformat()
+        .replace("+00:00", "Z"),
+        "keys": keys,
+    }
+
+
+def plan_retention(
+    build: dict[str, Any],
+    downloads: dict[str, Any],
+    manifest: dict[str, Any],
+    pinned_inputs: set[str],
+    now: datetime,
+    keep_devel: int,
+    grace: timedelta,
+) -> dict[str, Any]:
+    if keep_devel < 1:
+        fail("Development retention must keep at least one completed build")
+    if now.tzinfo is None:
+        fail("retention planning time must have a timezone")
+    now = now.astimezone(timezone.utc)
+    cutoff = now - grace
+    for inventory, kind in ((build, "build"), (downloads, "downloads")):
+        if (
+            inventory.get("schema_version") != INVENTORY_SCHEMA
+            or inventory.get("kind") != kind
+            or not isinstance(inventory.get("objects"), list)
+            or not isinstance(inventory.get("documents"), dict)
+        ):
+            fail(f"invalid {kind} inventory")
+
+    build_groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    group_identity: dict[str, tuple[str, str | None, str]] = {}
+    warnings: list[str] = []
+    for item in build["objects"]:
+        key = item.get("key")
+        if not isinstance(key, str):
+            fail("build inventory contains an object without a key")
+        classified = classify_artifact_key(key)
+        if classified is None:
+            continue
+        kind, prefix, train, fingerprint = classified
+        build_groups[prefix].append(item)
+        group_identity[prefix] = (kind, train, fingerprint)
+
+    markers: dict[str, dict[str, Any]] = {}
+    for prefix, objects in build_groups.items():
+        marker_key = prefix + "/complete.json"
+        if not any(item["key"] == marker_key for item in objects):
+            continue
+        document = build["documents"].get(marker_key)
+        if document is None:
+            fail(f"inventory omitted completion marker {marker_key}")
+        kind, train, fingerprint = group_identity[prefix]
+        markers[prefix] = marker_identity(prefix, kind, train, fingerprint, document)
+
+    protected_prefixes: set[str] = set()
+    devel: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for entry in markers.values():
+        inputs = entry["marker"]["inputs"]
+        if entry["kind"] == "system":
+            train = inputs.get("package_train")
+            if train == "1.0":
+                protected_prefixes.add(entry["prefix"])
+            elif train == "1.1":
+                devel["system"].append(entry)
+            else:
+                protected_prefixes.add(entry["prefix"])
+                warnings.append(
+                    f"protected System artifact with unknown package train at {entry['prefix']}"
+                )
+        elif entry["kind"] == "packages":
+            if entry["train"] == "1.0":
+                protected_prefixes.add(entry["prefix"])
+            elif entry["train"] == "1.1":
+                devel["packages"].append(entry)
+            else:
+                protected_prefixes.add(entry["prefix"])
+                warnings.append(
+                    f"protected Packages artifact with unknown train at {entry['prefix']}"
+                )
+        elif inputs.get("channel") == "stable":
+            protected_prefixes.add(entry["prefix"])
+        else:
+            devel["iso"].append(entry)
+
+    for entries in devel.values():
+        entries.sort(key=lambda item: (item["generation"], item["prefix"]), reverse=True)
+        protected_prefixes.update(item["prefix"] for item in entries[:keep_devel])
+
+    channels = manifest.get("channels")
+    if not isinstance(channels, dict):
+        fail("signed repository manifest has no channels")
+    for channel_name in ("stable", "devel"):
+        channel = channels.get(channel_name)
+        if channel is None:
+            continue
+        if not isinstance(channel, dict):
+            fail(f"signed {channel_name} channel is invalid")
+        train = channel.get("package_train")
+        if not isinstance(train, str) or not re.fullmatch(r"[0-9]+\.[0-9]+", train):
+            fail(f"signed {channel_name} channel has an invalid package train")
+        for kind in ("system", "packages"):
+            prefix = component_prefix(channel.get(kind), kind, train)
+            if prefix is not None:
+                protected_prefixes.add(prefix)
+
+    changed = True
+    while changed:
+        changed = False
+        for prefix in list(protected_prefixes):
+            entry = markers.get(prefix)
+            if entry is None:
+                continue
+            marker = entry["marker"]
+            references: list[str] = []
+            if entry["kind"] == "packages":
+                for name in ("built_against_system", "system"):
+                    value = marker["inputs"].get(name)
+                    if isinstance(value, str) and SHA256.fullmatch(value):
+                        references.append(f"v1/artifacts/system/{value}")
+            if entry["kind"] == "iso":
+                references.append(f"v1/artifacts/system/{marker['system']}")
+            for reference in references:
+                if reference not in protected_prefixes:
+                    protected_prefixes.add(reference)
+                    changed = True
+
+    protected_inputs = set(pinned_inputs)
+    for prefix in protected_prefixes:
+        entry = markers.get(prefix)
+        if entry is not None:
+            collect_sha256(entry["marker"], protected_inputs)
+
+    build_candidates: list[dict[str, Any]] = []
+    for prefix, objects in sorted(build_groups.items()):
+        if prefix in protected_prefixes:
+            continue
+        newest = max(parse_time(item["last_modified"]) for item in objects)
+        if newest > cutoff:
+            continue
+        reason = "expired completed Development artifact"
+        if prefix not in markers:
+            reason = "abandoned incomplete artifact"
+        build_candidates.append(
+            candidate(build["bucket"], prefix + "/", reason, objects)
+        )
+
+    for item in build["objects"]:
+        key = item["key"]
+        match = re.fullmatch(r"v1/inputs/sha256/([0-9a-f]{64})", key)
+        if match is None or match[1] in protected_inputs:
+            continue
+        if parse_time(item["last_modified"]) <= cutoff:
+            build_candidates.append(
+                candidate(
+                    build["bucket"],
+                    key,
+                    "unreferenced immutable input",
+                    [item],
+                )
+            )
+
+    download_groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    protected_downloads: set[str] = set()
+    download_generations: dict[str, int] = {}
+    for item in downloads["objects"]:
+        key = item["key"]
+        if key.startswith("v1/releases/stable/"):
+            protected_downloads.add("v1/releases/stable/")
+            continue
+        match = DEVEL_DOWNLOAD.match(key)
+        if match:
+            prefix = f"v1/releases/devel/{match['release']}/"
+            download_groups[prefix].append(item)
+            download_generations[prefix] = int(match["generation"])
+        elif key.startswith("v1/releases/devel/"):
+            protected_downloads.add(key)
+            warnings.append(f"protected unrecognized Development download object {key}")
+        elif key.startswith("v1/"):
+            protected_downloads.add(key)
+
+    ordered_downloads = sorted(
+        download_groups,
+        key=lambda prefix: (download_generations[prefix], prefix),
+        reverse=True,
+    )
+    protected_downloads.update(ordered_downloads[:keep_devel])
+    devel_release = build["documents"].get("v1/releases/devel.json")
+    if devel_release is not None:
+        if not isinstance(devel_release, dict) or devel_release.get("channel") != "devel":
+            fail("Development release document is invalid")
+        release_id = devel_release.get("release_id")
+        if not isinstance(release_id, str) or not re.fullmatch(
+            r"[0-9]+\.[0-9]+\.[0-9]+-g[1-9][0-9]*", release_id
+        ):
+            fail("Development release document has an invalid release ID")
+        protected_downloads.add(f"v1/releases/devel/{release_id}/")
+
+    download_candidates: list[dict[str, Any]] = []
+    for prefix, objects in sorted(download_groups.items()):
+        if prefix in protected_downloads:
+            continue
+        if max(parse_time(item["last_modified"]) for item in objects) <= cutoff:
+            download_candidates.append(
+                candidate(
+                    downloads["bucket"],
+                    prefix,
+                    "expired Development download",
+                    objects,
+                )
+            )
+
+    candidates = sorted(
+        build_candidates + download_candidates,
+        key=lambda item: (item["bucket"], item["prefix"]),
+    )
+    return {
+        "schema_version": REPORT_SCHEMA,
+        "mode": "report-only",
+        "generated_at": now.isoformat().replace("+00:00", "Z"),
+        "policy": {
+            "stable": "keep forever",
+            "development_completed_per_component": keep_devel,
+            "minimum_candidate_age_hours": int(grace.total_seconds() // 3600),
+            "unknown_objects": "protect",
+            "generation_records": "keep forever",
+        },
+        "protected": {
+            "artifact_prefixes": sorted(protected_prefixes),
+            "input_objects": sorted(
+                f"v1/inputs/sha256/{value}" for value in protected_inputs
+            ),
+            "download_prefixes": sorted(protected_downloads),
+        },
+        "candidates": candidates,
+        "totals": {
+            "candidate_prefixes": len(candidates),
+            "candidate_objects": sum(item["object_count"] for item in candidates),
+            "candidate_bytes": sum(item["bytes"] for item in candidates),
+        },
+        "warnings": sorted(set(warnings)),
+    }
+
+
+def load_json(path: Path) -> Any:
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        fail(f"cannot read JSON from {path}: {error}")
+
+
+def pinned_inputs(config: Path) -> set[str]:
+    values: set[str] = set()
+    for path in sorted(config.rglob("*.json")):
+        collect_sha256(load_json(path), values)
+    return values
+
+
+def markdown_summary(report: dict[str, Any]) -> str:
+    totals = report["totals"]
+    gib = totals["candidate_bytes"] / (1024**3)
+    lines = [
+        "## R2 retention report",
+        "",
+        "**Report-only:** no objects were deleted.",
+        "",
+        f"- Candidate prefixes/objects: {totals['candidate_prefixes']} / "
+        f"{totals['candidate_objects']}",
+        f"- Candidate storage: {gib:.2f} GiB",
+        f"- Protected artifact prefixes: "
+        f"{len(report['protected']['artifact_prefixes'])}",
+        f"- Protected input objects: {len(report['protected']['input_objects'])}",
+        f"- Warnings: {len(report['warnings'])}",
+        "",
+        "The exact candidate keys are printed in the workflow log.",
+        "",
+    ]
+    return "\n".join(lines)
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser()
+    subparsers = parser.add_subparsers(dest="command", required=True)
+
+    inventory_parser = subparsers.add_parser("inventory")
+    inventory_parser.add_argument("--bucket", required=True)
+    inventory_parser.add_argument("--endpoint", required=True)
+    inventory_parser.add_argument("--kind", choices=("build", "downloads"), required=True)
+    inventory_parser.add_argument("--output", type=Path, required=True)
+
+    plan_parser = subparsers.add_parser("plan")
+    plan_parser.add_argument("--build-inventory", type=Path, required=True)
+    plan_parser.add_argument("--download-inventory", type=Path, required=True)
+    plan_parser.add_argument("--public-key", type=Path, required=True)
+    plan_parser.add_argument("--config", type=Path, required=True)
+    plan_parser.add_argument("--keep-devel", type=int, default=4)
+    plan_parser.add_argument("--grace-hours", type=int, default=168)
+    plan_parser.add_argument("--output", type=Path, required=True)
+    plan_parser.add_argument("--github-summary", type=Path)
+
+    args = parser.parse_args()
+    now = datetime.now(timezone.utc)
+    if args.command == "inventory":
+        result = snapshot(args.bucket, args.endpoint, args.kind, now)
+        args.output.write_text(
+            json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
+        return
+
+    build = load_json(args.build_inventory)
+    downloads = load_json(args.download_inventory)
+    envelope = build.get("documents", {}).get("v1/repos.manifest.json")
+    if envelope is None:
+        fail("build inventory has no signed repository manifest")
+    manifest = verify_manifest(envelope, args.public_key)
+    report = plan_retention(
+        build,
+        downloads,
+        manifest,
+        pinned_inputs(args.config),
+        now,
+        args.keep_devel,
+        timedelta(hours=args.grace_hours),
+    )
+    args.output.write_text(
+        json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    if args.github_summary is not None:
+        with args.github_summary.open("a", encoding="utf-8") as summary:
+            summary.write(markdown_summary(report))
+
+
+if __name__ == "__main__":
+    main()

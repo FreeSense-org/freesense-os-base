@@ -24,7 +24,7 @@ def require(condition: bool, message: str) -> None:
 
 expected_workflows = {
     "broker.yml", "ci.yml", "packages.yml", "pin.yml", "release.yml",
-    "runner-build.yml", "stable-1.0.yml", "system.yml",
+    "retention.yml", "runner-build.yml", "stable-1.0.yml", "system.yml",
 }
 workflow_paths = sorted(WORKFLOWS.glob("*.yml"))
 require({path.name for path in workflow_paths} == expected_workflows,
@@ -59,6 +59,16 @@ require("--built-against-system" in packages_workflow,
         "optional package publication omits its immutable build System")
 require('cron: "0 6 * * *"' in read(".github/workflows/system.yml"),
         "the daily System check is not fixed at 06:00 UTC")
+retention_workflow = read(".github/workflows/retention.yml")
+for value in ('cron: "30 4 * * *"', "scripts/r2_retention.py",
+              "--keep-devel 4", "--grace-hours 168",
+              "--role retention-build-reader",
+              "--role retention-download-reader", "report-only"):
+    require(value in retention_workflow,
+            f"daily R2 retention report is missing {value!r}")
+require("delete-object" not in retention_workflow.lower() and
+        "DeleteObject" not in retention_workflow,
+        "report-only R2 retention workflow contains a delete operation")
 stable_workflow = read(".github/workflows/stable-1.0.yml")
 require("schedule:" not in stable_workflow and "channel seal-stable" in stable_workflow and
         '--release "${{ inputs.release }}"' in stable_workflow,
@@ -258,7 +268,8 @@ for value in ("scripts/resolve_worker_tools.py", "packagesite.yaml.sig",
 
 broker = read("broker/src/index.js")
 for role in ("coordinator", "artifact-writer", "pin-writer", "channel-writer",
-             "download-writer", "broker-smoke", "download-smoke"):
+             "download-writer", "retention-build-reader",
+             "retention-download-reader", "broker-smoke", "download-smoke"):
     require(role in broker, f"credential broker lacks {role}")
 require("GITHUB_REPOSITORY_ID" in broker and "ref_protected" in broker,
         "credential broker is not bound to protected main")
