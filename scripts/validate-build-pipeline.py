@@ -74,7 +74,10 @@ for value in ('cron: "30 4 * * *"', "scripts/r2_retention.py",
 retention_source = read("scripts/r2_retention.py")
 for value in ("minimum_interval: timedelta = timedelta(hours=20)",
               "retention deletion exceeds the per-run safety cap",
-              '"/stable/" in key', "superseded broker smoke marker"):
+              '"/stable/" in key', "superseded broker smoke marker",
+              'for kind in ("system", "iso")',
+              'inputs.get("packages")',
+              "retained legacy Development ISO has no Packages fingerprint"):
     require(value in retention_source,
             f"R2 retention safety boundary is missing {value!r}")
 stable_workflow = read(".github/workflows/stable-1.0.yml")
@@ -142,6 +145,10 @@ for value in ("https://downloads.freesense.org/v1/releases/", "sha256sum --check
     require(value in publisher, f"ISO publisher is missing {value!r}")
 require("freebsd_pin_id" in reusable and "product_version" in reusable,
         "reusable builds omit the release or FreeBSD pin identity")
+for value in ("packages_id", "PACKAGES_ID", '--packages-id "${PACKAGES_ID}"',
+              '--packages "${PACKAGES_ID}"'):
+    require(value in reusable,
+            f"reusable ISO build omits the Packages identity binding {value!r}")
 require("system_generation" in reusable and "SYSTEM_GENERATION" in
         read("scripts/runner/worker-common.sh") + read("scripts/runner/stages/iso.sh"),
         "ISO builds do not separate release and signed System generations")
@@ -210,8 +217,12 @@ require("repos.manifest.json" not in iso_stage and
         "ISO does not consume the exact selected signed channel payload")
 planner_source = read("scripts/plan.py")
 require('"packages": current_packages_fingerprint' in planner_source and
+        '"packages_fingerprint": (' in planner_source and
         '"channel_payload": channel_payload_sha256' in planner_source,
         "ISO identity omits the optional package pair or signed channel payload")
+require('schema_version:"freesense.iso/v2"' in iso_stage and
+        "packages:$packages" in iso_stage,
+        "ISO completion markers omit the exact Packages artifact")
 for value in ("FREESENSE_INSTALLER_PATCH_B64", "git apply --check",
               "FREESENSE_ASSEMBLY_INSTALLER_OVERLAY", "startbsdinstall",
               "copy_configxml_from_usb", "fix_fstab"):

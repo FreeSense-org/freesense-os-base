@@ -320,12 +320,18 @@ def marker_identity(
             fail(f"System completion marker has an invalid closure: {prefix}")
         if kind == "packages" and inputs.get("package_train") != train:
             fail(f"Packages completion marker has an invalid train: {prefix}")
-    elif (
-        marker.get("schema_version") != "freesense.iso/v1"
-        or not SHA256.fullmatch(str(marker.get("system", "")))
-        or inputs.get("channel") not in {"stable", "devel"}
-    ):
-        fail(f"ISO completion marker has an invalid closure: {prefix}")
+    else:
+        schema = marker.get("schema_version")
+        legacy = schema == "freesense.iso/v1" and inputs.get("packages") is None
+        current = schema == "freesense.iso/v2" and SHA256.fullmatch(
+            str(inputs.get("packages", ""))
+        )
+        if (
+            not (legacy or current)
+            or not SHA256.fullmatch(str(marker.get("system", "")))
+            or inputs.get("channel") not in {"stable", "devel"}
+        ):
+            fail(f"ISO completion marker has an invalid closure: {prefix}")
     return {
         "prefix": prefix,
         "kind": kind,
@@ -467,7 +473,8 @@ def plan_retention(
         else:
             devel["iso"].append(entry)
 
-    for entries in devel.values():
+    for kind in ("system", "iso"):
+        entries = devel[kind]
         entries.sort(key=lambda item: (item["generation"], item["prefix"]), reverse=True)
         protected_prefixes.update(item["prefix"] for item in entries[:keep_devel])
 
@@ -487,6 +494,34 @@ def plan_retention(
             prefix = component_prefix(channel.get(kind), kind, train)
             if prefix is not None:
                 protected_prefixes.add(prefix)
+
+    legacy_development_iso = False
+    for prefix in list(protected_prefixes):
+        entry = markers.get(prefix)
+        if entry is None or entry["kind"] != "iso":
+            continue
+        inputs = entry["marker"]["inputs"]
+        if inputs.get("channel") != "devel":
+            continue
+        package_train = inputs.get("package_train")
+        packages = inputs.get("packages")
+        if isinstance(packages, str) and SHA256.fullmatch(packages):
+            if not isinstance(package_train, str) or not re.fullmatch(
+                r"[0-9]+\.[0-9]+", package_train
+            ):
+                fail(f"retained ISO has an invalid package train: {prefix}")
+            protected_prefixes.add(
+                f"v1/artifacts/packages/{package_train}/{packages}"
+            )
+        else:
+            legacy_development_iso = True
+
+    if legacy_development_iso:
+        protected_prefixes.update(item["prefix"] for item in devel["packages"])
+        warnings.append(
+            "retained legacy Development ISO has no Packages fingerprint; "
+            "protected all 1.1 package repositories"
+        )
 
     changed = True
     while changed:

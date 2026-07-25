@@ -70,18 +70,26 @@ def packages_marker(
 
 
 def iso_marker(
-    number: int, generation: int, system: str, channel: str = "devel"
+    number: int,
+    generation: int,
+    system: str,
+    channel: str = "devel",
+    packages: str | None = None,
+    legacy: bool = False,
 ) -> dict:
-    return {
-        "schema_version": "freesense.iso/v1",
+    marker = {
+        "schema_version": "freesense.iso/v1" if legacy else "freesense.iso/v2",
         "fingerprint": fingerprint(number),
         "generation": generation,
         "system": system,
         "sha256": fingerprint(number + 1000),
         "size": 1024,
         "file": "FreeSense.iso",
-        "inputs": {"channel": channel},
+        "inputs": {"channel": channel, "package_train": "1.0" if channel == "stable" else "1.1"},
     }
+    if not legacy:
+        marker["inputs"]["packages"] = packages or fingerprint(number + 2000)
+    return marker
 
 
 def add_artifact(inventory: dict, prefix: str, marker: dict) -> None:
@@ -107,6 +115,117 @@ def inventory(kind: str, bucket: str) -> dict:
 
 
 class RetentionPlanTests(unittest.TestCase):
+    def test_packages_follow_current_channel_and_retained_iso_references(self):
+        build = inventory("build", "builds")
+        downloads = inventory("downloads", "downloads")
+        system = system_marker(100, 100)
+        add_artifact(
+            build, f"v1/artifacts/system/{system['fingerprint']}", system
+        )
+        packages = []
+        for generation in range(1, 7):
+            marker = packages_marker(
+                200 + generation, generation, system["fingerprint"]
+            )
+            packages.append(marker)
+            add_artifact(
+                build,
+                f"v1/artifacts/packages/1.1/{marker['fingerprint']}",
+                marker,
+            )
+        for generation in range(1, 5):
+            marker = iso_marker(
+                300 + generation,
+                generation,
+                system["fingerprint"],
+                packages=packages[-1]["fingerprint"],
+            )
+            add_artifact(
+                build, f"v1/artifacts/iso/{marker['fingerprint']}", marker
+            )
+        manifest = {
+            "schema_version": "freesense.channels/v3",
+            "channels": {
+                "devel": {
+                    "package_train": "1.1",
+                    "system": {"fingerprint": system["fingerprint"]},
+                    "packages": {"fingerprint": packages[-1]["fingerprint"]},
+                }
+            },
+        }
+        report = retention.plan_retention(
+            build,
+            downloads,
+            manifest,
+            set(),
+            NOW,
+            keep_devel=4,
+            grace=timedelta(days=7),
+        )
+        candidate_prefixes = {item["prefix"] for item in report["candidates"]}
+        for marker in packages[:-1]:
+            self.assertIn(
+                f"v1/artifacts/packages/1.1/{marker['fingerprint']}/",
+                candidate_prefixes,
+            )
+        self.assertNotIn(
+            f"v1/artifacts/packages/1.1/{packages[-1]['fingerprint']}/",
+            candidate_prefixes,
+        )
+
+    def test_legacy_retained_iso_conservatively_protects_all_development_packages(self):
+        build = inventory("build", "builds")
+        downloads = inventory("downloads", "downloads")
+        system = system_marker(10, 10)
+        add_artifact(
+            build, f"v1/artifacts/system/{system['fingerprint']}", system
+        )
+        packages = []
+        for generation in range(1, 4):
+            marker = packages_marker(
+                20 + generation, generation, system["fingerprint"]
+            )
+            packages.append(marker)
+            add_artifact(
+                build,
+                f"v1/artifacts/packages/1.1/{marker['fingerprint']}",
+                marker,
+            )
+        legacy = iso_marker(
+            30, 30, system["fingerprint"], legacy=True
+        )
+        add_artifact(
+            build, f"v1/artifacts/iso/{legacy['fingerprint']}", legacy
+        )
+        manifest = {
+            "schema_version": "freesense.channels/v3",
+            "channels": {
+                "devel": {
+                    "package_train": "1.1",
+                    "system": {"fingerprint": system["fingerprint"]},
+                    "packages": {"fingerprint": packages[-1]["fingerprint"]},
+                }
+            },
+        }
+        report = retention.plan_retention(
+            build,
+            downloads,
+            manifest,
+            set(),
+            NOW,
+            keep_devel=4,
+            grace=timedelta(days=7),
+        )
+        package_candidates = [
+            item
+            for item in report["candidates"]
+            if "/artifacts/packages/1.1/" in item["prefix"]
+        ]
+        self.assertEqual(package_candidates, [])
+        self.assertTrue(
+            any("legacy Development ISO" in warning for warning in report["warnings"])
+        )
+
     def test_confirmation_requires_matching_observations_twenty_hours_apart(self):
         report = {
             "schema_version": retention.REPORT_SCHEMA,
@@ -260,7 +379,13 @@ class RetentionPlanTests(unittest.TestCase):
         stable_packages = packages_marker(
             200, 100, stable_system["fingerprint"], "1.0"
         )
-        stable_iso = iso_marker(300, 100, stable_system["fingerprint"], "stable")
+        stable_iso = iso_marker(
+            300,
+            100,
+            stable_system["fingerprint"],
+            "stable",
+            stable_packages["fingerprint"],
+        )
         add_artifact(
             build,
             f"v1/artifacts/system/{stable_system['fingerprint']}",
@@ -291,6 +416,7 @@ class RetentionPlanTests(unittest.TestCase):
                 3000 + generation,
                 generation,
                 systems[generation]["fingerprint"],
+                packages=packages[generation]["fingerprint"],
             )
             add_artifact(
                 build,

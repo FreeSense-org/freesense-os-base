@@ -213,6 +213,7 @@ def main() -> int:
     parser.add_argument("--source", required=True)
     parser.add_argument("--system-ports", required=True)
     parser.add_argument("--packages", required=True)
+    parser.add_argument("--packages-fingerprint", required=True)
     parser.add_argument("--ports", required=True)
     parser.add_argument("--os-definition", required=True)
     parser.add_argument("--freebsd", required=True)
@@ -222,7 +223,9 @@ def main() -> int:
     args = parser.parse_args()
 
     requested_version = version_tuple(args.version)
-    if not SHA256.fullmatch(args.fingerprint) or not SHA256.fullmatch(args.system):
+    if (not SHA256.fullmatch(args.fingerprint)
+            or not SHA256.fullmatch(args.system)
+            or not SHA256.fullmatch(args.packages_fingerprint)):
         raise SystemExit("invalid artifact identity")
     if args.generation <= 0 or any(not SHA.fullmatch(value) for value in
         (args.source, args.system_ports, args.packages, args.ports,
@@ -236,11 +239,17 @@ def main() -> int:
     artifact_url = f"{args.base_url}/artifacts/iso/{args.fingerprint}"
     marker_url = artifact_url + "/complete.json"
     marker = fetch_json(marker_url)
-    if (not isinstance(marker, dict) or marker.get("schema_version") != "freesense.iso/v1"
+    marker_inputs = marker.get("inputs", {}) if isinstance(marker, dict) else {}
+    legacy_marker = (marker.get("schema_version") == "freesense.iso/v1"
+                     and "packages" not in marker_inputs) if isinstance(marker, dict) else False
+    current_marker = (marker.get("schema_version") == "freesense.iso/v2"
+                      and marker_inputs.get("packages") == args.packages_fingerprint
+                      ) if isinstance(marker, dict) else False
+    if (not isinstance(marker, dict) or not (legacy_marker or current_marker)
             or marker.get("fingerprint") != args.fingerprint
             or marker.get("system") != args.system
             or marker.get("generation") != args.generation
-            or marker.get("inputs", {}).get("channel") != args.channel
+            or marker_inputs.get("channel") != args.channel
             or not SHA256.fullmatch(marker.get("sha256", ""))
             or not isinstance(marker.get("size"), int) or marker["size"] <= 0
             or not isinstance(marker.get("file"), str)):

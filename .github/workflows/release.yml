@@ -178,6 +178,7 @@ jobs:
       source_sha: ${{ steps.plan.outputs.source_sha }}
       system_sha: ${{ steps.plan.outputs.system_sha }}
       packages_sha: ${{ steps.plan.outputs.packages_sha }}
+      packages_fingerprint: ${{ steps.plan.outputs.packages_fingerprint }}
       os_base_sha: ${{ steps.plan.outputs.os_base_sha }}
       freebsd_sha: ${{ steps.plan.outputs.freebsd_sha }}
       ports_sha: ${{ steps.plan.outputs.ports_sha }}
@@ -253,6 +254,7 @@ jobs:
       source_sha: ${{ needs.iso-plan.outputs.source_sha }}
       system_sha: ${{ needs.iso-plan.outputs.system_sha }}
       packages_sha: ${{ needs.iso-plan.outputs.packages_sha }}
+      packages_id: ${{ needs.iso-plan.outputs.packages_fingerprint }}
       os_base_sha: ${{ needs.iso-plan.outputs.os_base_sha }}
       freebsd_sha: ${{ needs.iso-plan.outputs.freebsd_sha }}
       ports_sha: ${{ needs.iso-plan.outputs.ports_sha }}
@@ -292,6 +294,7 @@ jobs:
             --source "${{ needs.iso-plan.outputs.source_sha }}" \
             --system-ports "${{ needs.iso-plan.outputs.system_sha }}" \
             --packages "${{ needs.iso-plan.outputs.packages_sha }}" \
+            --packages-fingerprint "${{ needs.iso-plan.outputs.packages_fingerprint }}" \
             --ports "${{ needs.iso-plan.outputs.ports_sha }}" \
             --os-definition "${{ needs.iso-plan.outputs.os_base_sha }}" \
             --freebsd "${{ needs.iso-plan.outputs.freebsd_sha }}" \

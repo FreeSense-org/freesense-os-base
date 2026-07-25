@@ -17,7 +17,7 @@ trap report_phase_failure EXIT
 decode() { printf '%s' "$1" | base64 -d; }
 for name in AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN R2_ENDPOINT R2_BUCKET \
   FREESENSE_REPO_SIGNING_KEY STAGE FINGERPRINT PLATFORM_ID SYSTEM_ID SOURCE_SHA \
-  SYSTEM_SHA PACKAGES_SHA OS_BASE_SHA FREEBSD_SHA PORTS_SHA JAIL_OBJECT FREEBSD_PIN_ID PACKAGE_TRAIN PRODUCT_VERSION \
+  SYSTEM_SHA PACKAGES_SHA PACKAGES_ID OS_BASE_SHA FREEBSD_SHA PORTS_SHA JAIL_OBJECT FREEBSD_PIN_ID PACKAGE_TRAIN PRODUCT_VERSION \
   IMAGE_SHA256 WORKER_TOOLS_SHA256 GENERATION SYSTEM_GENERATION PUBLIC_BASE_URL CHANNEL CHANNEL_PAYLOAD_SHA256 \
   CHANNEL_PAYLOAD_B64 CHANNEL_SIGNATURE_B64; do
   eval "$name=\$(decode \"\${${name}_B64}\")"
@@ -44,6 +44,10 @@ for value in "${FINGERPRINT}" "${PLATFORM_ID}" "${SYSTEM_ID}" "${IMAGE_SHA256}" 
   case "${value}" in ''|*[!0-9a-f]*) echo "invalid SHA-256 build input" >&2; exit 1 ;; esac
   [ "${#value}" -eq 64 ] || { echo "invalid SHA-256 build input" >&2; exit 1; }
 done
+if [ "${STAGE}" = iso ]; then
+  case "${PACKAGES_ID}" in ''|*[!0-9a-f]*) echo "invalid ISO Packages identity" >&2; exit 1 ;; esac
+  [ "${#PACKAGES_ID}" -eq 64 ] || { echo "invalid ISO Packages identity" >&2; exit 1; }
+fi
 case "${FREEBSD_PIN_ID}" in ''|*[!0-9a-f]*) echo "invalid FreeBSD pin identity" >&2; exit 1 ;; esac
 [ "${#FREEBSD_PIN_ID}" -eq 64 ] || { echo "invalid FreeBSD pin identity" >&2; exit 1; }
 printf '%s\n' "${PRODUCT_VERSION}" | grep -Eq '^(1\.0\.[0-9]+-RELEASE|1\.1\.0-DEVELOPMENT)$' || {

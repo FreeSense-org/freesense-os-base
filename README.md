@@ -44,9 +44,12 @@ same successful output again.
 `retention.yml` inventories R2 daily at 04:30 UTC and applies a reference-aware
 retention plan only after the exact candidate set appears in two observations
 at least 20 hours apart. Every Stable 1.0.x artifact remains permanent.
-Development keeps four completed artifacts per component plus the active
-channel closure. Incomplete and unreferenced data receives a seven-day grace
-period, and each bucket keeps its newest broker smoke marker.
+Development keeps the latest four completed System and ISO artifacts. Optional
+Packages retention follows the active signed channel and the exact Packages
+fingerprints recorded by those retained ISOs. Legacy ISOs without that binding
+conservatively protect all Development Packages until they rotate out.
+Incomplete and unreferenced data receives a seven-day grace period, and each
+bucket keeps its newest broker smoke marker.
 
 See [credential broker operations](docs/credential-broker.md) for the small set
 of GitHub variables, environments, and secrets.

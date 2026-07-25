@@ -48,10 +48,12 @@ Published files remain under prefix `v1`; failed partial uploads are safe becaus
 The daily retention workflow runs at 04:30 UTC. Its reader sessions can list
 and read only the build/input, download-release, and broker-smoke prefixes
 needed to construct a reference-aware plan. Stable 1.0.x artifacts are kept
-forever. Development retains four completed artifacts per component, the active
-signed channel pair, and their transitive inputs. Each bucket keeps its newest
-broker smoke marker. Incomplete artifacts and unreferenced inputs must be seven
-days old.
+forever. Development retains four completed System and ISO artifacts. Optional
+Packages follow the active signed channel and the exact Packages fingerprints
+recorded by retained ISOs, together with their transitive inputs. A retained
+legacy ISO without that fingerprint protects every Development Packages
+repository until it rotates out. Each bucket keeps its newest broker smoke
+marker. Incomplete artifacts and unreferenced inputs must be seven days old.
 
 No candidate is deleted on first observation. The exact candidate set must be
 seen again at least 20 hours later. Delete-only credentials are then issued
