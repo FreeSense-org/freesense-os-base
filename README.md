@@ -25,7 +25,7 @@ maps `devel` and `stable` to exact repository URLs. The appliance verifies that
 signature before changing its pkg configuration.
 
 `stable-1.0.yml` manually publishes an exact checked 1.0.x lock such as
-`config/releases/1.0.3.json`. Each patch is immutable once published. The
+`config/releases/1.0.4.json`. Each patch is immutable once published. The
 `stable` pointer may move only to a higher 1.0 patch and always moves as one
 verified System/Packages pair. Rolling workflows never promote 1.1 into stable.
 
