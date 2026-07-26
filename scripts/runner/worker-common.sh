@@ -64,10 +64,6 @@ printf '%s\n' "${PRODUCT_VERSION}" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+-(RELEASE|
   echo "invalid product version" >&2
   exit 1
 }
-test "${PRODUCT_VERSION%%.*}.${PRODUCT_VERSION#*.}" != "${PRODUCT_VERSION}" || {
-  echo "invalid product version train" >&2
-  exit 1
-}
 product_train=$(printf '%s\n' "${PRODUCT_VERSION}" | sed -E 's/^([0-9]+\.[0-9]+)\..*$/\1/')
 [ "${product_train}" = "${PACKAGE_TRAIN}" ] || {
   echo "product version does not match package train" >&2
