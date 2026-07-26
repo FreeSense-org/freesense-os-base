@@ -27,6 +27,7 @@ on:
       channel_payload_sha256: {type: string, required: false, default: ""}
       channel_payload_base64: {type: string, required: false, default: ""}
       channel_signature_base64: {type: string, required: false, default: ""}
+      bundle_id: {type: string, required: false, default: ""}
 
 jobs:
   build:
@@ -69,6 +70,7 @@ jobs:
       CHANNEL_PAYLOAD_SHA256: ${{ inputs.channel_payload_sha256 }}
       CHANNEL_PAYLOAD_B64: ${{ inputs.channel_payload_base64 }}
       CHANNEL_SIGNATURE_B64: ${{ inputs.channel_signature_base64 }}
+      BUNDLE_ID: ${{ inputs.bundle_id }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
@@ -98,8 +100,8 @@ jobs:
         run: |
           args=(--stage "${STAGE}" --id "${FINGERPRINT}" --platform-id "${PLATFORM_ID}" \
             --generation "${GENERATION}" --github-output "${GITHUB_OUTPUT}")
-          if [[ "${STAGE}" == packages || "${STAGE}" == iso ]]; then args+=(--system-id "${SYSTEM_ID}"); fi
-          if [[ "${STAGE}" == iso ]]; then args+=(--packages-id "${PACKAGES_ID}"); fi
+          if [[ "${STAGE}" == packages || "${STAGE}" == iso || "${STAGE}" == cloud ]]; then args+=(--system-id "${SYSTEM_ID}"); fi
+          if [[ "${STAGE}" == iso || "${STAGE}" == cloud ]]; then args+=(--packages-id "${PACKAGES_ID}"); fi
           if [[ "${STAGE}" == packages ]]; then args+=(--package-train "${PACKAGE_TRAIN}"); fi
           if [[ "${STAGE}" == packages ]]; then args+=(--freebsd-pin-id "${FREEBSD_PIN_ID}"); fi
           "${RUNNER_TEMP}/fsbuild" result check "${args[@]}"
@@ -139,6 +141,17 @@ jobs:
           --channel "${CHANNEL}"
           --package-train "${PACKAGE_TRAIN}"
           --channel-payload "${CHANNEL_PAYLOAD_SHA256}"
+      - name: Boot-check completed cloud images
+        if: inputs.stage == 'cloud'
+        run: >-
+          bash scripts/runner/smoke-cloud.sh
+          --public-base-url "${PUBLIC_BASE_URL}"
+          --fingerprint "${FINGERPRINT}"
+          --bundle "${BUNDLE_ID}"
+          --system "${SYSTEM_ID}"
+          --packages "${PACKAGES_ID}"
+          --generation "${GENERATION}"
+          --channel "${CHANNEL}"
       - name: Clean sensitive runner files
         if: always()
         run: >-

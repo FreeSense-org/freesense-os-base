@@ -24,6 +24,31 @@ USER_AGENT = "FreeSense-build/1"
 OPTIONAL_PACKAGE_CONFIG_PATHS = (
     "tools/conf/pfPorts/make.conf",
 )
+SEMVER = re.compile(r"^([0-9]+)\.([0-9]+)\.([0-9]+)$")
+TRAIN = re.compile(r"^[0-9]+\.[0-9]+$")
+
+
+def release_policy(policy: dict, channel: str, version: str) -> tuple[str, str]:
+    configured = policy.get("release")
+    if not isinstance(configured, dict):
+        raise SystemExit("build policy has no release policy")
+    match = SEMVER.fullmatch(version) if isinstance(version, str) else None
+    if match is None:
+        raise SystemExit("release version must be semantic X.Y.Z")
+    train = f"{match.group(1)}.{match.group(2)}"
+    key = "stable_train" if channel == "stable" else "development_train"
+    expected = configured.get(key)
+    if not isinstance(expected, str) or not TRAIN.fullmatch(expected):
+        raise SystemExit(f"build policy has an invalid {key}")
+    if train != expected:
+        raise SystemExit(f"{channel} release {version} does not match configured train {expected}")
+    lifecycle = configured.get(
+        "stable_lifecycle" if channel == "stable" else "development_lifecycle"
+    )
+    expected_lifecycle = "supported" if channel == "stable" else "experimental"
+    if lifecycle != expected_lifecycle:
+        raise SystemExit(f"{channel} release lifecycle must be {expected_lifecycle}")
+    return train, lifecycle
 
 
 def remote_sha(repository: str, branch: str = "main") -> str:
@@ -135,13 +160,13 @@ def current_component(manifest_url: str, component: str) -> str:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("kind", choices=("system", "packages", "iso"))
+    parser.add_argument("kind", choices=("system", "packages", "iso", "cloud"))
     parser.add_argument("--github-output", type=Path)
     parser.add_argument("--os-base-sha", default=os.environ.get("GITHUB_SHA", ""))
     parser.add_argument("--system-closure", type=Path)
     args = parser.parse_args()
 
-    if args.kind in {"packages", "iso"}:
+    if args.kind in {"packages", "iso", "cloud"}:
         if args.system_closure is None:
             raise SystemExit("--system-closure is required")
         try:
@@ -280,7 +305,7 @@ def main() -> int:
         })
 
     selected_package_train = policy["package_train"]
-    if args.kind in {"packages", "iso"}:
+    if args.kind in {"packages", "iso", "cloud"}:
         sha_inputs = {
             "source": system_source_sha,
             "system": system_system_sha,
@@ -288,7 +313,7 @@ def main() -> int:
             "FreeBSD": system_freebsd_sha,
             "ports": system_ports_sha,
         }
-        if args.kind == "iso":
+        if args.kind in {"iso", "cloud"}:
             sha_inputs["optional packages"] = system_packages_sha
         sha256_inputs = {
             "System": system_id,
@@ -315,9 +340,8 @@ def main() -> int:
                 raise SystemExit("selected channel has an invalid packages fingerprint")
         else:
             if channel_name not in {"devel", "stable"} or not isinstance(channel_generation, int) or channel_generation <= 0:
-                raise SystemExit("selected ISO channel identity is invalid")
-            if not isinstance(channel_release_version, str) or not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", channel_release_version):
-                raise SystemExit("selected ISO release version is invalid")
+                raise SystemExit("selected release channel identity is invalid")
+            release_policy(policy, channel_name, channel_release_version)
             if (
                 channel_system_verified != "true"
                 or not SHA256.fullmatch(current_packages_fingerprint)
@@ -325,17 +349,17 @@ def main() -> int:
                 or current_packages_generation <= 0
                 or current_packages_verified != "true"
             ):
-                raise SystemExit("selected ISO channel is not a verified System/Packages pair")
+                raise SystemExit("selected release channel is not a verified System/Packages pair")
             try:
                 payload = base64.b64decode(channel_payload_base64, validate=True)
                 signature = base64.b64decode(channel_signature_base64, validate=True)
             except (TypeError, ValueError) as error:
-                raise SystemExit("selected ISO channel document is invalid") from error
+                raise SystemExit("selected release channel document is invalid") from error
             if (not isinstance(channel_payload_sha256, str)
                     or not SHA256.fullmatch(channel_payload_sha256)
                     or hashlib.sha256(payload).hexdigest() != channel_payload_sha256
                     or not signature):
-                raise SystemExit("selected ISO channel document is invalid")
+                raise SystemExit("selected release channel document is invalid")
         selected_package_train = channel_package_train
         source_sha = system_source_sha
         system_sha = system_system_sha
@@ -388,9 +412,15 @@ def main() -> int:
             ROOT / "scripts/runner/stages/packages.sh",
         ]),
     })
-    iso = fingerprint({
-        "schema": 2,
-        "kind": "iso",
+    release_version = (
+        channel_release_version
+        if args.kind in {"iso", "cloud"}
+        else policy["release"]["development_version"]
+    )
+    if args.kind in {"iso", "cloud"}:
+        release_policy(policy, channel_name, release_version)
+    shared_assembly = {
+        "schema": 1,
         "system": system,
         "packages": current_packages_fingerprint,
         "platform": platform,
@@ -398,25 +428,47 @@ def main() -> int:
         "freebsd_source": freebsd_sha,
         "freebsd_ports": ports_sha,
         "worker_image": image_sha256,
+        "worker_tools": worker_tools_sha256,
         "channel": channel_name,
         "channel_payload": channel_payload_sha256,
-        "release_version": channel_release_version if args.kind == "iso" else "1.1.0",
+        "release_version": release_version,
         "package_train": selected_package_train,
         "signing_public_key": signing_public_key_sha256,
         "runner_policy": policy["runner"],
         "runner_recipe": runner_recipe,
-        "recipe": recipe_digest([
+        "assembly_recipe": recipe_digest([
             ROOT / "scripts/render-worker.py",
             ROOT / "scripts/runner/install-worker-tools.sh",
             ROOT / "scripts/runner/worker-common.sh",
+            ROOT / "scripts/runner/assembly-common.sh",
+        ]),
+        "iso_recipe": recipe_digest([
             ROOT / "scripts/runner/stages/iso.sh",
             ROOT / "patches/0005-installer.patch",
         ]),
+        "cloud_recipe": recipe_digest([
+            ROOT / "scripts/runner/stages/cloud.sh",
+        ]),
+        "cloud_policy": policy["cloud"],
+    }
+    bundle = fingerprint(shared_assembly)
+    iso = fingerprint({
+        "schema": 3,
+        "kind": "iso",
+        "bundle": bundle,
     })
-    identifiers = {"platform": platform, "system": system, "packages": packages, "iso": iso}
+    cloud = fingerprint({
+        "schema": 1,
+        "kind": "cloud",
+        "bundle": bundle,
+    })
+    identifiers = {
+        "platform": platform, "system": system, "packages": packages,
+        "bundle": bundle, "iso": iso, "cloud": cloud,
+    }
     selected = identifiers[args.kind]
     manifest_url = policy["public_base_url"] + "/repos.manifest.json"
-    if args.kind == "iso":
+    if args.kind in {"iso", "cloud"}:
         current = ""
     elif args.kind == "packages":
         current = current_packages_fingerprint
@@ -431,7 +483,7 @@ def main() -> int:
         "system_sha": system_sha,
         "packages_sha": packages_sha,
         "packages_fingerprint": (
-            current_packages_fingerprint if args.kind == "iso" else ""
+            current_packages_fingerprint if args.kind in {"iso", "cloud"} else ""
         ),
         "package_build_config_sha256": package_build_config,
         "os_base_sha": os_base_sha,
@@ -447,15 +499,15 @@ def main() -> int:
         "public_base_url": policy["public_base_url"],
         "channel": channel_name,
         "channel_generation": channel_generation,
-        "release_version": channel_release_version if args.kind == "iso" else "1.1.0",
+        "release_version": release_version,
         "channel_payload_sha256": channel_payload_sha256,
         "channel_payload_base64": channel_payload_base64,
         "channel_signature_base64": channel_signature_base64,
         "signing_public_key_sha256": signing_public_key_sha256,
         "freebsd_pin_id": freebsd_pin_id,
-        "product_version": (f"{channel_release_version}-RELEASE"
-                            if args.kind == "iso" and channel_name == "stable"
-                            else "1.1.0-DEVELOPMENT"),
+        "product_version": (f"{release_version}-RELEASE"
+                            if args.kind in {"iso", "cloud"} and channel_name == "stable"
+                            else f"{release_version}-DEVELOPMENT"),
     }
     print(json.dumps(values, indent=2, sort_keys=True))
     if args.github_output:

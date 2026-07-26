@@ -5,7 +5,7 @@ on:
     inputs:
       operation:
         type: choice
-        options: [verify, iso, retry-stable-1.0-iso, sync-downloads]
+        options: [verify, bundle, retry-stable-bundle, sync-downloads]
         default: verify
         required: true
       channel:
@@ -164,13 +164,15 @@ jobs:
     if: >-
       always() &&
       ((github.event_name == 'workflow_dispatch' &&
-       (inputs.operation == 'iso' || inputs.operation == 'retry-stable-1.0-iso')) ||
+       (inputs.operation == 'bundle' || inputs.operation == 'retry-stable-bundle')) ||
        (github.event_name == 'workflow_run' &&
         needs.release_gate.result == 'success' && needs.release_gate.outputs.ready == 'true'))
     runs-on: ubuntu-24.04
     environment: build-coordinator
     outputs:
       fingerprint: ${{ steps.plan.outputs.iso }}
+      cloud_fingerprint: ${{ steps.plan.outputs.cloud }}
+      bundle_fingerprint: ${{ steps.plan.outputs.bundle }}
       system: ${{ steps.plan.outputs.system }}
       generation: ${{ steps.reserve.outputs.generation }}
       system_generation: ${{ steps.plan.outputs.channel_generation }}
@@ -200,7 +202,7 @@ jobs:
         with: {go-version-file: go.mod, cache: false}
       - name: Read signed selected channel
         env:
-          SELECTED_CHANNEL: ${{ inputs.operation == 'retry-stable-1.0-iso' && 'stable' || (github.event_name == 'workflow_dispatch' && inputs.channel || 'devel') }}
+          SELECTED_CHANNEL: ${{ inputs.operation == 'retry-stable-bundle' && 'stable' || (github.event_name == 'workflow_dispatch' && inputs.channel || 'devel') }}
         run: |
           python3 scripts/channel.py --public-key config/channel-signing-public.pem \
             --channel "${SELECTED_CHANNEL}" --component system \
@@ -229,19 +231,20 @@ jobs:
           FSBUILD_STORE_PREFIX: v1
         run: |
           "${RUNNER_TEMP}/fsbuild" state reserve-generation \
-            --fingerprint "${{ steps.plan.outputs.iso }}" --proposed "${GITHUB_RUN_NUMBER}" \
+            --fingerprint "${{ steps.plan.outputs.bundle }}" --proposed "${GITHUB_RUN_NUMBER}" \
             --output "${RUNNER_TEMP}/generation.json"
           echo "generation=$(jq -r .generation "${RUNNER_TEMP}/generation.json")" >>"${GITHUB_OUTPUT}"
-      - name: Restrict recovery operation to sealed 1.0.x
-        if: github.event_name == 'workflow_dispatch' && inputs.operation == 'retry-stable-1.0-iso'
+      - name: Restrict recovery operation to configured sealed Stable train
+        if: github.event_name == 'workflow_dispatch' && inputs.operation == 'retry-stable-bundle'
         env:
           RELEASE_VERSION: ${{ steps.plan.outputs.release_version }}
           SELECTED_CHANNEL: ${{ steps.plan.outputs.channel }}
         run: |
-          case "${SELECTED_CHANNEL}:${RELEASE_VERSION}" in
-            stable:1.0.*) ;;
-            *) echo "recovery operation requires a sealed stable 1.0.x channel" >&2; exit 1 ;;
-          esac
+          stable_train=$(jq -er .release.stable_train config/build-policy.json)
+          [[ "${SELECTED_CHANNEL}" == stable && "${RELEASE_VERSION%.*}" == "${stable_train}" ]] || {
+            echo "recovery operation requires the configured sealed Stable train" >&2
+            exit 1
+          }
 
   iso:
     needs: iso-plan
@@ -271,10 +274,42 @@ jobs:
       channel_payload_sha256: ${{ needs.iso-plan.outputs.channel_payload_sha256 }}
       channel_payload_base64: ${{ needs.iso-plan.outputs.channel_payload_base64 }}
       channel_signature_base64: ${{ needs.iso-plan.outputs.channel_signature_base64 }}
+      bundle_id: ${{ needs.iso-plan.outputs.bundle_fingerprint }}
+    secrets: inherit
+
+  cloud:
+    needs: iso-plan
+    uses: ./.github/workflows/runner-build.yml
+    with:
+      stage: cloud
+      fingerprint: ${{ needs.iso-plan.outputs.cloud_fingerprint }}
+      platform_id: ${{ needs.iso-plan.outputs.platform }}
+      system_id: ${{ needs.iso-plan.outputs.system }}
+      source_sha: ${{ needs.iso-plan.outputs.source_sha }}
+      system_sha: ${{ needs.iso-plan.outputs.system_sha }}
+      packages_sha: ${{ needs.iso-plan.outputs.packages_sha }}
+      packages_id: ${{ needs.iso-plan.outputs.packages_fingerprint }}
+      os_base_sha: ${{ needs.iso-plan.outputs.os_base_sha }}
+      freebsd_sha: ${{ needs.iso-plan.outputs.freebsd_sha }}
+      ports_sha: ${{ needs.iso-plan.outputs.ports_sha }}
+      image_sha256: ${{ needs.iso-plan.outputs.image_sha256 }}
+      worker_tools_sha256: ${{ needs.iso-plan.outputs.worker_tools_sha256 }}
+      jail_object: ${{ needs.iso-plan.outputs.jail_object }}
+      freebsd_pin_id: ${{ needs.iso-plan.outputs.freebsd_pin_id }}
+      product_version: ${{ needs.iso-plan.outputs.product_version }}
+      package_train: ${{ needs.iso-plan.outputs.package_train }}
+      generation: ${{ needs.iso-plan.outputs.generation }}
+      system_generation: ${{ needs.iso-plan.outputs.system_generation }}
+      public_base_url: ${{ needs.iso-plan.outputs.public_base_url }}
+      channel: ${{ needs.iso-plan.outputs.channel }}
+      channel_payload_sha256: ${{ needs.iso-plan.outputs.channel_payload_sha256 }}
+      channel_payload_base64: ${{ needs.iso-plan.outputs.channel_payload_base64 }}
+      channel_signature_base64: ${{ needs.iso-plan.outputs.channel_signature_base64 }}
+      bundle_id: ${{ needs.iso-plan.outputs.bundle_fingerprint }}
     secrets: inherit
 
   publish-download:
-    needs: [iso-plan, iso]
+    needs: [iso-plan, iso, cloud]
     runs-on: ubuntu-24.04
     environment: channel-publisher
     steps:
@@ -289,6 +324,8 @@ jobs:
           python3 scripts/publish_download.py --channel "${{ needs.iso-plan.outputs.channel }}" \
             --version "${{ needs.iso-plan.outputs.release_version }}" \
             --fingerprint "${{ needs.iso-plan.outputs.fingerprint }}" \
+            --bundle-fingerprint "${{ needs.iso-plan.outputs.bundle_fingerprint }}" \
+            --cloud-fingerprint "${{ needs.iso-plan.outputs.cloud_fingerprint }}" \
             --system "${{ needs.iso-plan.outputs.system }}" \
             --generation "${{ needs.iso-plan.outputs.generation }}" \
             --source "${{ needs.iso-plan.outputs.source_sha }}" \

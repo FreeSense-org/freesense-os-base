@@ -7,7 +7,7 @@ import argparse
 import json
 from pathlib import Path
 
-from publish_download import (DOWNLOAD_BASE_URL, DOWNLOAD_SCHEMA, fetch_json,
+from publish_download import (DOWNLOAD_BASE_URL, LEGACY_DOWNLOAD_SCHEMA, fetch_json,
                               public_iso_url, validate_download)
 
 
@@ -29,13 +29,20 @@ def main() -> int:
     for channel in ("stable", "devel"):
         legacy_release = legacy["channels"].get(channel)
         existing = fetch_json(f"{args.base_url}/releases/{channel}.json", missing=None)
+        if existing is not None:
+            validate_download(existing, channel, args.base_url, args.download_base_url,
+                              allow_legacy_url=True)
+            available += 1
+            continue
         release = existing if existing is not None else legacy_release
         if release is None:
             continue
         available += 1
         if not isinstance(release, dict):
             raise SystemExit(f"legacy {channel} download entry is invalid")
-        release = {**release, "schema_version": DOWNLOAD_SCHEMA}
+        # Historical ISO-only documents remain v1. They cannot truthfully be
+        # upgraded to an atomic v2 bundle without cloud completion markers.
+        release = {**release, "schema_version": LEGACY_DOWNLOAD_SCHEMA}
         validate_download(release, channel, args.base_url,
                           args.download_base_url, allow_legacy_url=True)
         release["url"] = public_iso_url(release, channel, args.download_base_url)

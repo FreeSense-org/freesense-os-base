@@ -92,6 +92,22 @@ def iso_marker(
     return marker
 
 
+def cloud_marker(number: int, generation: int, system: str, packages: str) -> dict:
+    return {
+        "schema_version": "freesense.cloud-image/v1",
+        "fingerprint": fingerprint(number),
+        "bundle_fingerprint": fingerprint(number + 3000),
+        "generation": generation,
+        "channel": "devel",
+        "inputs": {
+            "system": system, "packages": packages, "package_train": "1.1"
+        },
+        "files": [
+            {"format": "qcow2"}, {"format": "raw"},
+        ],
+    }
+
+
 def add_artifact(inventory: dict, prefix: str, marker: dict) -> None:
     marker_key = prefix + "/complete.json"
     inventory["objects"].extend(
@@ -115,6 +131,55 @@ def inventory(kind: str, bucket: str) -> dict:
 
 
 class RetentionPlanTests(unittest.TestCase):
+    def test_latest_four_development_bundles_keep_iso_and_cloud(self):
+        build = inventory("build", "builds")
+        downloads = inventory("downloads", "downloads")
+        system = system_marker(50, 5)
+        packages = packages_marker(60, 5, system["fingerprint"])
+        add_artifact(build, f"v1/artifacts/system/{system['fingerprint']}", system)
+        add_artifact(
+            build,
+            f"v1/artifacts/packages/1.1/{packages['fingerprint']}",
+            packages,
+        )
+        images = []
+        for generation in range(1, 6):
+            iso = iso_marker(
+                100 + generation, generation, system["fingerprint"],
+                packages=packages["fingerprint"],
+            )
+            cloud = cloud_marker(
+                200 + generation, generation, system["fingerprint"],
+                packages["fingerprint"],
+            )
+            add_artifact(build, f"v1/artifacts/iso/{iso['fingerprint']}", iso)
+            add_artifact(build, f"v1/artifacts/cloud/{cloud['fingerprint']}", cloud)
+            images.append((iso, cloud))
+        manifest = {
+            "schema_version": "freesense.channels/v3",
+            "channels": {
+                "devel": {
+                    "package_train": "1.1",
+                    "system": {"fingerprint": system["fingerprint"]},
+                    "packages": {"fingerprint": packages["fingerprint"]},
+                }
+            },
+        }
+        report = retention.plan_retention(
+            build, downloads, manifest, set(), NOW,
+            keep_devel=4, grace=timedelta(days=7),
+        )
+        candidates = {item["prefix"] for item in report["candidates"]}
+        self.assertIn(
+            f"v1/artifacts/iso/{images[0][0]['fingerprint']}/", candidates
+        )
+        self.assertIn(
+            f"v1/artifacts/cloud/{images[0][1]['fingerprint']}/", candidates
+        )
+        for iso, cloud in images[1:]:
+            self.assertNotIn(f"v1/artifacts/iso/{iso['fingerprint']}/", candidates)
+            self.assertNotIn(f"v1/artifacts/cloud/{cloud['fingerprint']}/", candidates)
+
     def test_packages_follow_current_channel_and_retained_iso_references(self):
         build = inventory("build", "builds")
         downloads = inventory("downloads", "downloads")

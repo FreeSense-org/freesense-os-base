@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build one canonical channel download document from a boot-tested ISO marker."""
+"""Build one atomic channel document from boot-tested ISO and cloud markers."""
 
 from __future__ import annotations
 
@@ -17,7 +17,8 @@ SHA = re.compile(r"^[0-9a-f]{40}$")
 SHA256 = re.compile(r"^[0-9a-f]{64}$")
 VERSION = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+$")
 ISO_FILE = re.compile(r"^FreeSense-[A-Za-z0-9.-]+-amd64\.iso$")
-DOWNLOAD_SCHEMA = "freesense.download/v1"
+DOWNLOAD_SCHEMA = "freesense.download/v2"
+LEGACY_DOWNLOAD_SCHEMA = "freesense.download/v1"
 DOWNLOAD_BASE_URL = "https://downloads.freesense.org/v1"
 CHANGE_TYPES = {
     "security", "fix", "feature", "ui", "package", "documentation", "build", "other",
@@ -167,40 +168,85 @@ def public_iso_url(release, channel: str, download_base_url: str) -> str:
             f"{release_identity(release, channel)}/{release['iso']}")
 
 
+def public_artifact_url(release: dict, channel: str, file: str,
+                        download_base_url: str) -> str:
+    return (f"{download_base_url}/releases/{channel}/"
+            f"{release_identity(release, channel)}/{file}")
+
+
 def validate_download(release, channel: str, base_url: str,
                       download_base_url: str = DOWNLOAD_BASE_URL,
                       allow_legacy_url: bool = False) -> None:
-    if (not isinstance(release, dict) or release.get("schema_version") != DOWNLOAD_SCHEMA
+    if not isinstance(release, dict):
+        raise SystemExit(f"existing {channel} download document is invalid")
+    if release.get("schema_version") == LEGACY_DOWNLOAD_SCHEMA:
+        validate_legacy_download(
+            release, channel, base_url, download_base_url, allow_legacy_url
+        )
+        return
+    artifacts = release.get("artifacts")
+    if (release.get("schema_version") != DOWNLOAD_SCHEMA
             or release.get("channel") != channel
             or not VERSION.fullmatch(release.get("version", ""))
-            or not SHA256.fullmatch(release.get("fingerprint", ""))
+            or not SHA256.fullmatch(release.get("bundle_fingerprint", ""))
             or not SHA256.fullmatch(release.get("system", ""))
             or not isinstance(release.get("generation"), int) or release["generation"] <= 0
-            or not ISO_FILE.fullmatch(release.get("iso", ""))
-            or not SHA256.fullmatch(release.get("sha256", ""))
-            or not isinstance(release.get("size"), int) or release["size"] <= 0
+            or not isinstance(artifacts, list) or len(artifacts) != 3
             or not isinstance(release.get("published_at"), str)
             or ("changes" in release and not valid_changes(release["changes"]))):
         raise SystemExit(f"existing {channel} download document is invalid")
-    artifact_url = f"{base_url}/artifacts/iso/{release['fingerprint']}"
-    legacy_url = artifact_url + "/" + release["iso"]
-    expected_url = public_iso_url(release, channel, download_base_url)
-    if (release.get("release_id") != release_identity(release, channel)
-            or release.get("marker_url") != artifact_url + "/complete.json"
-            or (release.get("url") != expected_url
-                and not (allow_legacy_url and release.get("url") == legacy_url))):
+    expected = {("installer", "iso"), ("cloud", "qcow2"), ("cloud", "raw")}
+    actual = set()
+    for artifact in artifacts:
+        if not isinstance(artifact, dict):
+            raise SystemExit(f"existing {channel} download document has invalid artifacts")
+        actual.add((artifact.get("kind"), artifact.get("format")))
+        if (artifact.get("filesystem") not in {None, "ufs"}
+                or artifact.get("compression") not in {"none", "xz"}
+                or not SHA256.fullmatch(artifact.get("sha256", ""))
+                or not SHA256.fullmatch(artifact.get("build_fingerprint", ""))
+                or not isinstance(artifact.get("size"), int) or artifact["size"] <= 0
+                or not isinstance(artifact.get("file"), str)
+                or artifact.get("url") != public_artifact_url(
+                    release, channel, artifact["file"], download_base_url
+                )
+                or not isinstance(artifact.get("marker_url"), str)):
+            raise SystemExit(f"existing {channel} download document has invalid artifacts")
+        if artifact["format"] in {"qcow2", "raw"} and (
+            artifact.get("virtual_size") != 16 * 1024 * 1024 * 1024
+            or artifact.get("compression") != "xz"
+            or artifact.get("filesystem") != "ufs"
+        ):
+            raise SystemExit(f"existing {channel} cloud artifact is invalid")
+    if actual != expected or release.get("release_id") != release_identity(release, channel):
         raise SystemExit(f"existing {channel} download document has non-canonical URLs")
     provenance = release.get("provenance")
     if (not isinstance(provenance, dict)
             or any(not SHA.fullmatch(provenance.get(name, ""))
                    for name in ("source", "ports", "os_definition", "freebsd"))):
         raise SystemExit(f"existing {channel} download document has invalid provenance")
-    if channel == "stable" and (not release["version"].startswith("1.0.")
-            or release.get("support_tier") != "supported"):
-        raise SystemExit("stable download document violates the 1.0.x policy")
-    if channel == "devel" and (not release["version"].startswith("1.1.")
-            or release.get("support_tier") != "development"):
-        raise SystemExit("development download document violates the 1.1.x policy")
+    if release.get("support_tier") not in {"supported", "development"}:
+        raise SystemExit(f"existing {channel} download document has invalid lifecycle")
+
+
+def validate_legacy_download(release, channel: str, base_url: str,
+                             download_base_url: str, allow_legacy_url: bool) -> None:
+    if (release.get("channel") != channel
+            or not VERSION.fullmatch(release.get("version", ""))
+            or not SHA256.fullmatch(release.get("fingerprint", ""))
+            or not SHA256.fullmatch(release.get("system", ""))
+            or not isinstance(release.get("generation"), int) or release["generation"] <= 0
+            or not ISO_FILE.fullmatch(release.get("iso", ""))
+            or not SHA256.fullmatch(release.get("sha256", ""))
+            or not isinstance(release.get("size"), int) or release["size"] <= 0):
+        raise SystemExit(f"existing {channel} legacy download document is invalid")
+    artifact_url = f"{base_url}/artifacts/iso/{release['fingerprint']}"
+    expected_url = public_iso_url(release, channel, download_base_url)
+    if (release.get("release_id") != release_identity(release, channel)
+            or release.get("marker_url") != artifact_url + "/complete.json"
+            or (release.get("url") != expected_url
+                and not (allow_legacy_url and release.get("url") == artifact_url + "/" + release["iso"]))):
+        raise SystemExit(f"existing {channel} legacy download document has non-canonical URLs")
 
 
 def main() -> int:
@@ -208,6 +254,8 @@ def main() -> int:
     parser.add_argument("--channel", choices=("stable", "devel"), required=True)
     parser.add_argument("--version", required=True)
     parser.add_argument("--fingerprint", required=True)
+    parser.add_argument("--bundle-fingerprint", required=True)
+    parser.add_argument("--cloud-fingerprint", required=True)
     parser.add_argument("--system", required=True)
     parser.add_argument("--generation", required=True, type=int)
     parser.add_argument("--source", required=True)
@@ -223,7 +271,14 @@ def main() -> int:
     args = parser.parse_args()
 
     requested_version = version_tuple(args.version)
+    policy = json.loads((Path(__file__).resolve().parents[1] / "config/build-policy.json").read_text())
+    release_policy = policy["release"]
+    expected_train = release_policy[
+        "stable_train" if args.channel == "stable" else "development_train"
+    ]
     if (not SHA256.fullmatch(args.fingerprint)
+            or not SHA256.fullmatch(args.bundle_fingerprint)
+            or not SHA256.fullmatch(args.cloud_fingerprint)
             or not SHA256.fullmatch(args.system)
             or not SHA256.fullmatch(args.packages_fingerprint)):
         raise SystemExit("invalid artifact identity")
@@ -231,21 +286,18 @@ def main() -> int:
         (args.source, args.system_ports, args.packages, args.ports,
          args.os_definition, args.freebsd)):
         raise SystemExit("invalid release provenance")
-    if args.channel == "stable" and not args.version.startswith("1.0."):
-        raise SystemExit("stable downloads must be exact 1.0.x releases")
-    if args.channel == "devel" and not args.version.startswith("1.1."):
-        raise SystemExit("development downloads must be 1.1.x releases")
+    if ".".join(args.version.split(".")[:2]) != expected_train:
+        raise SystemExit(f"{args.channel} download does not match configured train {expected_train}")
 
     artifact_url = f"{args.base_url}/artifacts/iso/{args.fingerprint}"
     marker_url = artifact_url + "/complete.json"
     marker = fetch_json(marker_url)
     marker_inputs = marker.get("inputs", {}) if isinstance(marker, dict) else {}
-    legacy_marker = (marker.get("schema_version") == "freesense.iso/v1"
-                     and "packages" not in marker_inputs) if isinstance(marker, dict) else False
     current_marker = (marker.get("schema_version") == "freesense.iso/v2"
                       and marker_inputs.get("packages") == args.packages_fingerprint
+                      and marker.get("bundle_fingerprint") == args.bundle_fingerprint
                       ) if isinstance(marker, dict) else False
-    if (not isinstance(marker, dict) or not (legacy_marker or current_marker)
+    if (not isinstance(marker, dict) or not current_marker
             or marker.get("fingerprint") != args.fingerprint
             or marker.get("system") != args.system
             or marker.get("generation") != args.generation
@@ -255,6 +307,23 @@ def main() -> int:
             or not isinstance(marker.get("file"), str)):
         raise SystemExit("boot-tested ISO marker does not match the release")
 
+    cloud_artifact_url = f"{args.base_url}/artifacts/cloud/{args.cloud_fingerprint}"
+    cloud_marker_url = cloud_artifact_url + "/complete.json"
+    cloud_marker = fetch_json(cloud_marker_url)
+    cloud_files = cloud_marker.get("files", []) if isinstance(cloud_marker, dict) else []
+    if (not isinstance(cloud_marker, dict)
+            or cloud_marker.get("schema_version") != "freesense.cloud-image/v1"
+            or cloud_marker.get("fingerprint") != args.cloud_fingerprint
+            or cloud_marker.get("bundle_fingerprint") != args.bundle_fingerprint
+            or cloud_marker.get("generation") != args.generation
+            or cloud_marker.get("system") not in {None, args.system}
+            or cloud_marker.get("inputs", {}).get("system") != args.system
+            or cloud_marker.get("inputs", {}).get("packages") != args.packages_fingerprint
+            or cloud_marker.get("channel") != args.channel
+            or not isinstance(cloud_files, list) or len(cloud_files) != 2
+            or {item.get("format") for item in cloud_files} != {"qcow2", "raw"}):
+        raise SystemExit("boot-tested cloud marker does not match the release bundle")
+
     release_url = f"{args.base_url}/releases/{args.channel}.json"
     existing = fetch_json(release_url, missing=None)
     if existing is not None:
@@ -263,15 +332,16 @@ def main() -> int:
         current_version = version_tuple(existing["version"])
         if requested_version < current_version:
             raise SystemExit(f"{args.channel} download cannot move backwards")
+        existing_identity = existing.get("bundle_fingerprint", existing.get("fingerprint"))
         if (args.channel == "stable" and requested_version == current_version
-                and existing.get("fingerprint") != args.fingerprint):
+                and existing_identity != args.bundle_fingerprint):
             raise SystemExit("an immutable stable download cannot be rewritten")
         if (args.channel == "devel" and requested_version == current_version
                 and args.generation < existing["generation"]):
             raise SystemExit("development download generation cannot move backwards")
         if (args.channel == "devel" and requested_version == current_version
                 and args.generation == existing["generation"]
-                and existing.get("fingerprint") != args.fingerprint):
+                and existing_identity != args.bundle_fingerprint):
             raise SystemExit("an immutable development generation cannot be rewritten")
 
     release_id = args.version if args.channel == "stable" else f"{args.version}-g{args.generation}"
@@ -284,7 +354,7 @@ def main() -> int:
         "ports": args.ports,
         "os_definition": args.os_definition,
         "freebsd": args.freebsd,
-        "fingerprint": args.fingerprint,
+        "fingerprint": args.bundle_fingerprint,
     }
     release = {
         "schema_version": DOWNLOAD_SCHEMA,
@@ -294,21 +364,32 @@ def main() -> int:
         "support_tier": "supported" if args.channel == "stable" else "development",
         "channel": args.channel,
         "generation": args.generation,
-        "fingerprint": args.fingerprint,
+        "bundle_fingerprint": args.bundle_fingerprint,
         "system": args.system,
-        "iso": marker["file"],
-        "marker_url": marker_url,
-        "url": "",
-        "size": marker["size"],
-        "sha256": marker["sha256"],
+        "artifacts": [],
         "published_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
         "provenance": {key: value for key, value in provenance.items() if key != "fingerprint"},
         "changes": build_changes(existing, provenance),
     }
-    release["url"] = public_iso_url(release, args.channel, args.download_base_url)
+    release["artifacts"].append({
+        "kind": "installer", "format": "iso", "filesystem": None,
+        "compression": "none", "file": marker["file"],
+        "url": public_artifact_url(release, args.channel, marker["file"], args.download_base_url),
+        "marker_url": marker_url, "sha256": marker["sha256"], "size": marker["size"],
+        "build_fingerprint": args.fingerprint,
+    })
+    for item in sorted(cloud_files, key=lambda value: value["format"]):
+        release["artifacts"].append({
+            "kind": "cloud", "format": item["format"], "filesystem": "ufs",
+            "compression": "xz", "file": item["file"],
+            "url": public_artifact_url(release, args.channel, item["file"], args.download_base_url),
+            "marker_url": cloud_marker_url, "sha256": item["sha256"],
+            "size": item["size"], "virtual_size": item["virtual_size"],
+            "build_fingerprint": args.cloud_fingerprint,
+        })
     if (existing is not None and existing["version"] == args.version
             and existing["generation"] == args.generation
-            and existing["fingerprint"] == args.fingerprint):
+            and existing.get("bundle_fingerprint") == args.bundle_fingerprint):
         release["published_at"] = existing["published_at"]
     validate_download(release, args.channel, args.base_url, args.download_base_url)
     args.output.write_text(json.dumps(release, indent=2, sort_keys=True) + "\n", encoding="utf-8")

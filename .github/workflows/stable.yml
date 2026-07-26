@@ -1,4 +1,4 @@
-name: Publish FreeSense 1.0.x
+name: Publish FreeSense Stable train
 
 on:
   workflow_dispatch:
@@ -6,7 +6,6 @@ on:
       release:
         description: Exact checked release lock to publish
         type: string
-        default: 1.0.4
         required: true
       queue_development:
         description: Start a fresh Development build after Stable is fully published
@@ -182,6 +181,8 @@ jobs:
     runs-on: ubuntu-24.04
     outputs:
       fingerprint: ${{ steps.plan.outputs.iso }}
+      cloud_fingerprint: ${{ steps.plan.outputs.cloud }}
+      bundle_fingerprint: ${{ steps.plan.outputs.bundle }}
       packages_fingerprint: ${{ steps.plan.outputs.packages_fingerprint }}
       generation: ${{ steps.plan.outputs.channel_generation }}
       channel_payload_sha256: ${{ steps.plan.outputs.channel_payload_sha256 }}
@@ -227,10 +228,41 @@ jobs:
       channel_payload_sha256: ${{ needs.iso-plan.outputs.channel_payload_sha256 }}
       channel_payload_base64: ${{ needs.iso-plan.outputs.channel_payload_base64 }}
       channel_signature_base64: ${{ needs.iso-plan.outputs.channel_signature_base64 }}
+      bundle_id: ${{ needs.iso-plan.outputs.bundle_fingerprint }}
+    secrets: inherit
+
+  cloud:
+    needs: [plan, iso-plan]
+    uses: ./.github/workflows/runner-build.yml
+    with:
+      stage: cloud
+      fingerprint: ${{ needs.iso-plan.outputs.cloud_fingerprint }}
+      platform_id: ${{ needs.plan.outputs.platform }}
+      system_id: ${{ needs.plan.outputs.system }}
+      source_sha: ${{ needs.plan.outputs.source_sha }}
+      system_sha: ${{ needs.plan.outputs.system_sha }}
+      packages_sha: ${{ needs.plan.outputs.packages_sha }}
+      packages_id: ${{ needs.iso-plan.outputs.packages_fingerprint }}
+      os_base_sha: ${{ needs.plan.outputs.os_base_sha }}
+      freebsd_sha: ${{ needs.plan.outputs.freebsd_sha }}
+      ports_sha: ${{ needs.plan.outputs.ports_sha }}
+      image_sha256: ${{ needs.plan.outputs.image_sha256 }}
+      worker_tools_sha256: ${{ needs.plan.outputs.worker_tools_sha256 }}
+      jail_object: ${{ needs.plan.outputs.jail_object }}
+      freebsd_pin_id: ${{ needs.plan.outputs.freebsd_pin_id }}
+      product_version: ${{ needs.plan.outputs.product_version }}
+      package_train: ${{ needs.plan.outputs.package_train }}
+      generation: ${{ needs.iso-plan.outputs.generation }}
+      public_base_url: ${{ needs.plan.outputs.public_base_url }}
+      channel: stable
+      channel_payload_sha256: ${{ needs.iso-plan.outputs.channel_payload_sha256 }}
+      channel_payload_base64: ${{ needs.iso-plan.outputs.channel_payload_base64 }}
+      channel_signature_base64: ${{ needs.iso-plan.outputs.channel_signature_base64 }}
+      bundle_id: ${{ needs.iso-plan.outputs.bundle_fingerprint }}
     secrets: inherit
 
   publish-download:
-    needs: [plan, iso-plan, iso]
+    needs: [plan, iso-plan, iso, cloud]
     runs-on: ubuntu-24.04
     environment: channel-publisher
     steps:
@@ -245,6 +277,8 @@ jobs:
           python3 scripts/publish_download.py --channel stable \
             --version "${{ needs.plan.outputs.release_version }}" \
             --fingerprint "${{ needs.iso-plan.outputs.fingerprint }}" \
+            --bundle-fingerprint "${{ needs.iso-plan.outputs.bundle_fingerprint }}" \
+            --cloud-fingerprint "${{ needs.iso-plan.outputs.cloud_fingerprint }}" \
             --system "${{ needs.plan.outputs.system }}" \
             --generation "${{ needs.iso-plan.outputs.generation }}" \
             --source "${{ needs.plan.outputs.source_sha }}" \
@@ -266,7 +300,7 @@ jobs:
           --audience "${R2_CREDENTIAL_BROKER_AUDIENCE}" --role download-writer
           --expected-bucket "${R2_BUCKET}" --expected-prefix v1 --expected-endpoint "${R2_ENDPOINT}"
           --github-env "${GITHUB_ENV}"
-      - name: Publish boot-tested ISO to downloads
+      - name: Publish boot-tested release bundle to downloads
         env:
           R2_BUCKET: ${{ vars.R2_DOWNLOAD_BUCKET }}
           R2_ENDPOINT: ${{ vars.R2_ENDPOINT }}

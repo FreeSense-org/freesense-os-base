@@ -180,6 +180,7 @@ def stable_values(*, package_build_config: str, system_ports_sha: str = "2" * 40
             "altabi": "freebsd:16:x86:64",
             "public_base_url": "https://pkg.freesense.org/v1",
             "runner": {"vcpus": 12, "memory_mib": 32768, "disk_gib": 160},
+            "release": {"stable_train": "1.0"},
         }))
         (root / "config/channel-signing-public.pem").write_bytes(b"test-key")
         (root / "config/releases/1.0.1.json").write_text(json.dumps({
@@ -216,6 +217,41 @@ def stable_values(*, package_build_config: str, system_ports_sha: str = "2" * 40
 
 
 class PlannerChannelTests(unittest.TestCase):
+    def test_release_policy_accepts_future_train_and_rejects_mismatch(self):
+        policy = {
+            "release": {
+                "stable_train": "1.1",
+                "development_train": "1.2",
+                "stable_lifecycle": "supported",
+                "development_lifecycle": "experimental",
+            }
+        }
+        self.assertEqual(
+            plan.release_policy(policy, "devel", "1.2.0"),
+            ("1.2", "experimental"),
+        )
+        with self.assertRaisesRegex(SystemExit, "does not match configured train"):
+            plan.release_policy(policy, "devel", "1.1.9")
+        policy["release"]["development_lifecycle"] = "supported"
+        with self.assertRaisesRegex(SystemExit, "lifecycle must be experimental"):
+            plan.release_policy(policy, "devel", "1.2.0")
+
+    def test_cloud_and_iso_share_one_bundle_identity(self):
+        with tempfile.TemporaryDirectory() as directory:
+            closure = Path(directory, "system.json")
+            closure.write_text(json.dumps(system_closure()))
+            argv = ["plan.py", "cloud", "--system-closure", str(closure)]
+            with mock.patch.object(sys, "argv", argv), \
+                    mock.patch.object(
+                        plan, "remote_sha",
+                        side_effect=AssertionError("unexpected remote resolution"),
+                    ), redirect_stdout(io.StringIO()) as rendered:
+                self.assertEqual(plan.main(), 0)
+            values = json.loads(rendered.getvalue())
+        self.assertRegex(values["bundle"], r"^[0-9a-f]{64}$")
+        self.assertRegex(values["cloud"], r"^[0-9a-f]{64}$")
+        self.assertNotEqual(values["cloud"], values["iso"])
+
     def test_system_plan_uses_the_pinned_worker_bundle(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -244,6 +280,16 @@ class PlannerChannelTests(unittest.TestCase):
                 "altabi": "freebsd:16:x86:64",
                 "public_base_url": "https://pkg.freesense.org/v1",
                 "runner": {"vcpus": 12, "memory_mib": 32768, "disk_gib": 160},
+                "release": {
+                    "stable_train": "1.0", "development_train": "1.1",
+                    "development_version": "1.1.0",
+                    "stable_lifecycle": "supported",
+                    "development_lifecycle": "experimental",
+                },
+                "cloud": {
+                    "architecture": "amd64", "filesystem": "ufs",
+                    "virtual_size_gib": 16, "formats": ["qcow2", "raw"],
+                },
             }))
             (root / "config/channel-signing-public.pem").write_bytes(b"test-key")
             argv = ["plan.py", "system", "--os-base-sha", "6" * 40]

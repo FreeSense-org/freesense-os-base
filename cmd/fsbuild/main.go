@@ -110,6 +110,13 @@ func commandChannel(ctx context.Context, args []string) error {
 		if err := parseFlags(flags, args[1:]); err != nil {
 			return err
 		}
+		policy, err := readReleasePolicy()
+		if err != nil {
+			return err
+		}
+		if err := validatePolicyVersion(*version, *packageTrain, policy.DevelopmentTrain, "Development"); err != nil {
+			return err
+		}
 		when, err := time.Parse(time.RFC3339, *publishedAt)
 		if err != nil {
 			return errors.New("--published-at must be RFC3339")
@@ -131,7 +138,7 @@ func commandChannel(ctx context.Context, args []string) error {
 			return control.Verify(payload, *component, *fingerprint)
 		}
 	case "seal-stable":
-		version := flags.String("version", "", "exact immutable 1.0.x release version")
+		version := flags.String("version", "", "exact immutable Stable release version")
 		systemFingerprint := flags.String("system-fingerprint", "", "sealed System fingerprint")
 		systemURL := flags.String("system-url", "", "immutable System URL")
 		systemGeneration := flags.Uint64("system-generation", 0, "System build generation")
@@ -140,12 +147,19 @@ func commandChannel(ctx context.Context, args []string) error {
 		packagesGeneration := flags.Uint64("packages-generation", 0, "Packages build generation")
 		packagesBuiltAgainstSystem := flags.String("packages-built-against-system", "", "immutable System used to build Packages")
 		freeBSDPinID := flags.String("freebsd-pin-id", "", "exact FreeBSD compatibility pin")
-		packageTrain := flags.String("package-train", "1.0", "sealed package train")
+		packageTrain := flags.String("package-train", "", "sealed package train from build policy")
 		abi := flags.String("abi", "FreeBSD:16:amd64", "pkg ABI")
 		altABI := flags.String("altabi", "freebsd:16:x86:64", "pkg alternate ABI")
 		osVersion := flags.Uint64("osversion", 0, "exact System __FreeBSD_version")
 		publishedAt := flags.String("published-at", "", "RFC3339 publication time")
 		if err := parseFlags(flags, args[1:]); err != nil {
+			return err
+		}
+		policy, err := readReleasePolicy()
+		if err != nil {
+			return err
+		}
+		if err := validatePolicyVersion(*version, *packageTrain, policy.StableTrain, "Stable"); err != nil {
 			return err
 		}
 		when, err := time.Parse(time.RFC3339, *publishedAt)
@@ -244,12 +258,57 @@ func commandChannel(ctx context.Context, args []string) error {
 	return errors.New("channel manifest changed repeatedly; refusing a lost update")
 }
 
+type releasePolicy struct {
+	StableTrain      string `json:"stable_train"`
+	DevelopmentTrain string `json:"development_train"`
+}
+
+func readReleasePolicy() (releasePolicy, error) {
+	candidates := []string{os.Getenv("FSBUILD_POLICY"), filepath.Join("config", "build-policy.json"),
+		filepath.Join("..", "..", "config", "build-policy.json")}
+	var data []byte
+	var err error
+	for _, candidate := range candidates {
+		if candidate == "" {
+			continue
+		}
+		data, err = os.ReadFile(candidate)
+		if err == nil {
+			break
+		}
+	}
+	if err != nil {
+		return releasePolicy{}, fmt.Errorf("read build policy: %w", err)
+	}
+	var document struct {
+		Release releasePolicy `json:"release"`
+	}
+	if err := json.Unmarshal(data, &document); err != nil {
+		return releasePolicy{}, fmt.Errorf("parse build policy: %w", err)
+	}
+	if !regexp.MustCompile(`^[0-9]+\.[0-9]+$`).MatchString(document.Release.StableTrain) ||
+		!regexp.MustCompile(`^[0-9]+\.[0-9]+$`).MatchString(document.Release.DevelopmentTrain) ||
+		document.Release.StableTrain == document.Release.DevelopmentTrain {
+		return releasePolicy{}, errors.New("build policy has invalid release trains")
+	}
+	return document.Release, nil
+}
+
+func validatePolicyVersion(version, packageTrain, configuredTrain, lifecycle string) error {
+	match := regexp.MustCompile(`^([0-9]+)\.([0-9]+)\.[0-9]+$`).FindStringSubmatch(version)
+	if len(match) != 3 || packageTrain != configuredTrain ||
+		match[1]+"."+match[2] != configuredTrain {
+		return fmt.Errorf("%s version and package train must match configured train %s", lifecycle, configuredTrain)
+	}
+	return nil
+}
+
 func commandResult(ctx context.Context, args []string) error {
 	if len(args) == 0 || args[0] != "check" {
 		return errors.New("usage: fsbuild result check --stage NAME --id SHA256 --platform-id SHA256 [--generation NUMBER] [--system-id SHA256] --github-output PATH")
 	}
 	flags := newFlagSet("result check")
-	stage := flags.String("stage", "", "platform, system, packages, or iso")
+	stage := flags.String("stage", "", "system, packages, iso, or cloud")
 	id := flags.String("id", "", "content-derived result ID")
 	systemID := flags.String("system-id", "", "exact required system for packages or ISO")
 	packagesID := flags.String("packages-id", "", "exact Packages artifact required for ISO")
@@ -261,15 +320,15 @@ func commandResult(ctx context.Context, args []string) error {
 	if err := parseFlags(flags, args[1:]); err != nil {
 		return err
 	}
-	if !map[string]bool{"system": true, "packages": true, "iso": true}[*stage] ||
+	if !map[string]bool{"system": true, "packages": true, "iso": true, "cloud": true}[*stage] ||
 		!sha256Pattern.MatchString(*id) || !sha256Pattern.MatchString(*platformID) {
 		return errors.New("result stage or ID is invalid")
 	}
-	if (*stage == "packages" || *stage == "iso") && !sha256Pattern.MatchString(*systemID) {
-		return errors.New("packages and ISO result checks require --system-id")
+	if (*stage == "packages" || *stage == "iso" || *stage == "cloud") && !sha256Pattern.MatchString(*systemID) {
+		return errors.New("packages and release image result checks require --system-id")
 	}
-	if *stage == "iso" && !sha256Pattern.MatchString(*packagesID) {
-		return errors.New("ISO result checks require --packages-id")
+	if (*stage == "iso" || *stage == "cloud") && !sha256Pattern.MatchString(*packagesID) {
+		return errors.New("release image result checks require --packages-id")
 	}
 	if *stage == "packages" && !sha256Pattern.MatchString(*freeBSDPinID) {
 		return errors.New("package result checks require --freebsd-pin-id")
@@ -301,6 +360,13 @@ func commandResult(ctx context.Context, args []string) error {
 			if headErr != nil || info.Size != marker.Size || (info.SHA256 != "" && info.SHA256 != marker.SHA256) {
 				return errors.New("ISO completion marker does not match its immutable image")
 			}
+		} else if *stage == "cloud" {
+			for _, file := range marker.Files {
+				info, headErr := store.HeadArtifact(ctx, backend, fmt.Sprintf("artifacts/cloud/%s/%s", *id, file.File))
+				if headErr != nil || info.Size != file.Size || (info.SHA256 != "" && info.SHA256 != file.SHA256) {
+					return errors.New("cloud completion marker does not match its immutable image")
+				}
+			}
 		} else {
 			prefix := fmt.Sprintf("artifacts/%s/%s/amd64", *stage, *id)
 			if *stage == "packages" {
@@ -328,15 +394,23 @@ func commandResult(ctx context.Context, args []string) error {
 }
 
 type resultMarker struct {
-	SchemaVersion string `json:"schema_version"`
-	Stage         string `json:"stage"`
-	Fingerprint   string `json:"fingerprint"`
-	Generation    uint64 `json:"generation"`
-	System        string `json:"system"`
-	SHA256        string `json:"sha256"`
-	Size          int64  `json:"size"`
-	File          string `json:"file"`
-	Inputs        struct {
+	SchemaVersion     string `json:"schema_version"`
+	Stage             string `json:"stage"`
+	Fingerprint       string `json:"fingerprint"`
+	Generation        uint64 `json:"generation"`
+	System            string `json:"system"`
+	SHA256            string `json:"sha256"`
+	Size              int64  `json:"size"`
+	File              string `json:"file"`
+	BundleFingerprint string `json:"bundle_fingerprint"`
+	Files             []struct {
+		Format      string `json:"format"`
+		SHA256      string `json:"sha256"`
+		Size        int64  `json:"size"`
+		File        string `json:"file"`
+		VirtualSize int64  `json:"virtual_size"`
+	} `json:"files"`
+	Inputs struct {
 		Platform     string `json:"platform"`
 		System       string `json:"system"`
 		Packages     string `json:"packages"`
@@ -359,6 +433,28 @@ func validateResultMarker(stage, id, systemID, packagesID, platformID, freeBSDPi
 			marker.Inputs.Platform != platformID || !sha256Pattern.MatchString(marker.SHA256) || marker.Size <= 0 ||
 			!regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*\.iso$`).MatchString(marker.File) {
 			return resultMarker{}, errors.New("ISO completion marker has an invalid closure")
+		}
+		return marker, nil
+	}
+	if stage == "cloud" {
+		if marker.SchemaVersion != "freesense.cloud-image/v1" ||
+			marker.Inputs.System != systemID || marker.Inputs.Packages != packagesID ||
+			marker.Inputs.Platform != platformID || !sha256Pattern.MatchString(marker.BundleFingerprint) ||
+			len(marker.Files) != 2 {
+			return resultMarker{}, errors.New("cloud completion marker has an invalid closure")
+		}
+		formats := map[string]bool{}
+		for _, file := range marker.Files {
+			if !map[string]bool{"qcow2": true, "raw": true}[file.Format] ||
+				!sha256Pattern.MatchString(file.SHA256) || file.Size <= 0 ||
+				file.VirtualSize != 16*1024*1024*1024 ||
+				!regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*\.(qcow2|raw)\.xz$`).MatchString(file.File) {
+				return resultMarker{}, errors.New("cloud completion marker has an invalid file")
+			}
+			formats[file.Format] = true
+		}
+		if len(formats) != 2 {
+			return resultMarker{}, errors.New("cloud completion marker is missing a format")
 		}
 		return marker, nil
 	}

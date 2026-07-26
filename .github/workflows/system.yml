@@ -38,6 +38,7 @@ jobs:
       public_base_url: ${{ steps.plan.outputs.public_base_url }}
       freebsd_pin_id: ${{ steps.plan.outputs.freebsd_pin_id }}
       product_version: ${{ steps.plan.outputs.product_version }}
+      release_version: ${{ steps.plan.outputs.release_version }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
@@ -123,7 +124,7 @@ jobs:
         run: |
           key=$(mktemp); trap 'rm -f "$key"' EXIT; chmod 600 "$key"; printf '%s' "${SIGNING_KEY}" >"$key"
           "${RUNNER_TEMP}/fsbuild" channel update --component system \
-            --version "1.1.0" \
+            --version "${{ needs.plan.outputs.release_version }}" \
             --fingerprint "${{ needs.plan.outputs.system }}" \
             --url "${{ needs.plan.outputs.public_base_url }}/artifacts/system/${{ needs.plan.outputs.system }}/amd64" \
             --generation "${{ needs.plan.outputs.generation }}" --package-train "${{ needs.plan.outputs.package_train }}" \

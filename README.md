@@ -4,7 +4,8 @@ This repository pins FreeBSD 16 and defines the complete FreeSense build. GitHub
 Actions only plans and publishes; all FreeBSD work runs in a fresh KVM guest on
 the single 16-thread, 32-GiB build runner.
 
-There are two independently invalidated package repositories for rolling 1.1:
+There are two independently invalidated package repositories for the
+policy-configured Development train:
 
 - `system.yml` builds the pinned FreeBSD world/kernel plus the complete
   FreeSense system closure from the pinned ports tree.
@@ -24,13 +25,17 @@ The only mutable object is `v1/repos.manifest.json`: one RSA-signed document tha
 maps `devel` and `stable` to exact repository URLs. The appliance verifies that
 signature before changing its pkg configuration.
 
-`stable-1.0.yml` manually publishes an exact checked 1.0.x lock such as
-`config/releases/1.0.4.json`. Each patch is immutable once published. The
-`stable` pointer may move only to a higher 1.0 patch and always moves as one
-verified System/Packages pair. Rolling workflows never promote 1.1 into stable.
+`stable.yml` manually publishes an exact checked lock such as
+`config/releases/1.0.4.json` in the policy-configured Stable train. Each patch
+is immutable once published. The `stable` pointer may move only to a higher
+patch in that train and always moves as one verified System/Packages pair.
 
-`release.yml` verifies a complete development pair and assembles an ISO from an
-exact selected System repository. During a FreeBSD pin rollover, a newly
+`release.yml` verifies a complete repository pair and assembles one atomic
+release bundle: installer ISO, amd64 UFS QCOW2, and amd64 UFS raw GPT image.
+All images consume the same sealed repositories, channel payload, source pins,
+and worker tools. The channel's `freesense.download/v2` document advances only
+after all three immutable artifacts pass their smoke checks. Historical v1
+ISO-only documents remain readable. During a FreeBSD pin rollover, a newly
 published System remains pending until the new compatible Packages repository
 arrives. `pin.yml` checks daily at 02:00 UTC, performs the expensive validation
 only near the end of the active window, and advances the pin by exactly 14 days
@@ -44,9 +49,9 @@ same successful output again.
 `retention.yml` inventories R2 daily at 04:30 UTC and applies a reference-aware
 retention plan only after the exact candidate set appears in two observations
 at least 20 hours apart. Every Stable 1.0.x artifact remains permanent.
-Development keeps the latest four completed System and ISO artifacts. Optional
-Packages retention follows the active signed channel and the exact Packages
-fingerprints recorded by those retained ISOs. Legacy ISOs without that binding
+Development keeps the latest four completed System and release-image bundles.
+Optional Packages retention follows the active signed channel and the exact
+Packages fingerprints recorded by retained ISO/cloud markers. Legacy ISOs without that binding
 conservatively protect all Development Packages until they rotate out.
 Incomplete and unreferenced data receives a seven-day grace period, and each
 bucket keeps its newest broker smoke marker.

@@ -16,6 +16,7 @@ FIELDS = (
     "SYSTEM_SHA", "PACKAGES_SHA", "PACKAGES_ID", "OS_BASE_SHA", "FREEBSD_SHA", "PORTS_SHA",
     "IMAGE_SHA256", "WORKER_TOOLS_SHA256", "JAIL_OBJECT", "FREEBSD_PIN_ID", "PACKAGE_TRAIN", "PRODUCT_VERSION", "GENERATION", "SYSTEM_GENERATION", "PUBLIC_BASE_URL",
     "CHANNEL", "CHANNEL_PAYLOAD_SHA256", "CHANNEL_PAYLOAD_B64", "CHANNEL_SIGNATURE_B64",
+    "BUNDLE_ID",
 )
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -30,11 +31,12 @@ def main() -> int:
     if missing:
         raise SystemExit("missing worker inputs: " + ", ".join(missing))
     stage = os.environ["STAGE"]
-    if stage not in {"system", "packages", "iso"}:
+    if stage not in {"system", "packages", "iso", "cloud"}:
         raise SystemExit(f"invalid stage: {stage}")
     parts = [
         ROOT / "scripts/runner/install-worker-tools.sh",
         args.common,
+        ROOT / "scripts/runner/assembly-common.sh",
         args.stages / f"{stage}.sh",
     ]
     lines = ["#!/bin/sh", "set -eu"]
