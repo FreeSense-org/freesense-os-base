@@ -24,7 +24,7 @@ def require(condition: bool, message: str) -> None:
 
 expected_workflows = {
     "broker.yml", "ci.yml", "packages.yml", "pin.yml", "release.yml",
-    "retention.yml", "runner-build.yml", "stable-1.0.yml", "system.yml",
+    "retention.yml", "runner-build.yml", "stable.yml", "system.yml",
 }
 workflow_paths = sorted(WORKFLOWS.glob("*.yml"))
 require({path.name for path in workflow_paths} == expected_workflows,
@@ -45,7 +45,7 @@ pin_workflow = read(".github/workflows/pin.yml")
 for workflow in (reusable, pin_workflow):
     require("apt-get" not in workflow,
             "dedicated runners must be provisioned outside build workflows")
-for name in ("system.yml", "packages.yml", "release.yml", "stable-1.0.yml"):
+for name in ("system.yml", "packages.yml", "release.yml", "stable.yml"):
     require("uses: ./.github/workflows/runner-build.yml" in read(f".github/workflows/{name}"),
             f"{name} bypasses the reusable KVM executor")
 require("schedule:" in read(".github/workflows/system.yml"),
@@ -75,15 +75,15 @@ retention_source = read("scripts/r2_retention.py")
 for value in ("minimum_interval: timedelta = timedelta(hours=20)",
               "retention deletion exceeds the per-run safety cap",
               '"/stable/" in key', "superseded broker smoke marker",
-              'for kind in ("system", "iso")',
+              'for entry in devel["iso"] + devel["cloud"]',
               'inputs.get("packages")',
               "retained legacy Development ISO has no Packages fingerprint"):
     require(value in retention_source,
             f"R2 retention safety boundary is missing {value!r}")
-stable_workflow = read(".github/workflows/stable-1.0.yml")
+stable_workflow = read(".github/workflows/stable.yml")
 require("schedule:" not in stable_workflow and "channel seal-stable" in stable_workflow and
         '--release "${{ inputs.release }}"' in stable_workflow,
-        "stable 1.0.x is not an explicit checked patch publication")
+        "Stable train is not an explicit checked patch publication")
 for value in ("--packages-built-against-system", "packages-complete.json",
               ".inputs.built_against_system // .inputs.system"):
     require(value in stable_workflow,
@@ -93,16 +93,16 @@ for value in ("queue_development", "needs: publish-download",
     require(value in stable_workflow,
             f"stable-to-development ordered handoff is missing {value!r}")
 release_workflow = read(".github/workflows/release.yml")
-require("retry-stable-1.0-iso" in release_workflow and
-        "recovery operation requires a sealed stable 1.0.x channel" in release_workflow,
-        "the ISO-only stable 1.0 recovery entry point is missing or unguarded")
+require("retry-stable-bundle" in release_workflow and
+        "recovery operation requires the configured sealed Stable train" in release_workflow,
+        "the Stable bundle recovery entry point is missing or unguarded")
 for value in ("Require an upstream publication and complete release pair",
               'select(.name == "publish")', "packages_verified",
               "needs.release_gate.outputs.ready == 'true'"):
     require(value in release_workflow,
             f"automatic ISO publication gating is missing {value!r}")
 for value in ("Reserve immutable release generation", "system_generation",
-              "--fingerprint \"${{ steps.plan.outputs.iso }}\"",
+              "--fingerprint \"${{ steps.plan.outputs.bundle }}\"",
               "--proposed \"${GITHUB_RUN_NUMBER}\""):
     require(value in release_workflow,
             f"independent ISO release generation is missing {value!r}")
@@ -180,11 +180,12 @@ require("pkg add -f" not in installer,
         "worker-tool installation bypasses package ABI checks")
 
 stage_dir = ROOT / "scripts" / "runner" / "stages"
-require({path.stem for path in stage_dir.glob("*.sh")} == {"system", "packages", "iso"},
-        "stage surface differs from system/packages/iso")
+require({path.stem for path in stage_dir.glob("*.sh")} == {"system", "packages", "iso", "cloud"},
+        "stage surface differs from system/packages/iso/cloud")
 system_stage = read("scripts/runner/stages/system.sh")
 packages_stage = read("scripts/runner/stages/packages.sh")
 iso_stage = read("scripts/runner/stages/iso.sh")
+cloud_stage = read("scripts/runner/stages/cloud.sh")
 require("-S115200 -Dh" in iso_stage and not re.search(
             r'(?m)^console="comconsole,vidconsole"$', iso_stage),
         "ISO console selection is not firmware-aware dual-console mode")
@@ -212,14 +213,26 @@ iso_payload = iso_stage.rfind('upload_immutable "${iso}"')
 iso_complete = iso_stage.rfind('upload_immutable /tmp/complete.json')
 require(iso_payload >= 0 and iso_complete > iso_payload,
         "ISO completion marker is not uploaded last")
-require("repos.manifest.json" not in iso_stage and
-        "CHANNEL_PAYLOAD_B64" in iso_stage and "CHANNEL_SIGNATURE_B64" in iso_stage,
+cloud_payload = cloud_stage.rfind('upload_immutable /root/')
+cloud_complete = cloud_stage.rfind('upload_immutable /tmp/complete.json')
+require(cloud_payload >= 0 and cloud_complete > cloud_payload,
+        "cloud completion marker is not uploaded last")
+assembly_common = read("scripts/runner/assembly-common.sh")
+require("repos.manifest.json" not in iso_stage + assembly_common and
+        "CHANNEL_PAYLOAD_B64" in assembly_common and "CHANNEL_SIGNATURE_B64" in assembly_common,
         "ISO does not consume the exact selected signed channel payload")
 planner_source = read("scripts/plan.py")
 require('"packages": current_packages_fingerprint' in planner_source and
         '"packages_fingerprint": (' in planner_source and
         '"channel_payload": channel_payload_sha256' in planner_source,
         "ISO identity omits the optional package pair or signed channel payload")
+for value in ('"bundle": bundle', '"kind": "cloud"', '"cloud_policy": policy["cloud"]'):
+    require(value in planner_source, f"bundle/cloud identity is missing {value!r}")
+for value in ("freesense.cloud-image/v1", "qemu-img convert",
+              "CLOUD_VIRTUAL_SIZE_GIB", "CLOUD_FILESYSTEM",
+              "FreeSense/ROOT/default", "gptzfsboot", "zpool online -e",
+              "FreeSense-cloud-init", "qemu-guest-agent", "prepare_release_inputs"):
+    require(value in cloud_stage, f"cloud image stage is missing {value!r}")
 require('schema_version:"freesense.iso/v2"' in iso_stage and
         "packages:$packages" in iso_stage,
         "ISO completion markers omit the exact Packages artifact")

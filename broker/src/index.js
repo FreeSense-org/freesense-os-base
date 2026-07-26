@@ -18,7 +18,7 @@ const PACKAGES_WORKFLOW =
 const RUNNER_BUILD_WORKFLOW =
   `${GITHUB_REPOSITORY}/.github/workflows/runner-build.yml@${MAIN_REF}`;
 const STABLE_WORKFLOW =
-  `${GITHUB_REPOSITORY}/.github/workflows/stable-1.0.yml@${MAIN_REF}`;
+  `${GITHUB_REPOSITORY}/.github/workflows/stable.yml@${MAIN_REF}`;
 const BUILD_ENTRY_WORKFLOWS = Object.freeze([
   SYSTEM_WORKFLOW,
   PACKAGES_WORKFLOW,

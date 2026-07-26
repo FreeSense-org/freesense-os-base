@@ -94,26 +94,27 @@ type UpdateOptions struct {
 	PublishedAt        time.Time
 }
 
-// SealStable publishes one complete immutable 1.0.x System/Packages pair. A
+// SealStable publishes one complete immutable Stable-train System/Packages pair. A
 // later call may advance stable to a strictly newer patch, but can never rewrite
 // a published version or move the channel backwards.
 func SealStable(payload Payload, system, packages UpdateOptions) (Payload, error) {
 	if system.Component != "system" || packages.Component != "packages" {
 		return Payload{}, errors.New("stable release requires System and Packages components")
 	}
-	if system.PackageTrain != "1.0" || packages.PackageTrain != "1.0" {
-		return Payload{}, errors.New("stable release must use package train 1.0")
+	if system.PackageTrain == "" || system.PackageTrain != packages.PackageTrain {
+		return Payload{}, errors.New("stable release components must use one package train")
 	}
-	if system.Version != packages.Version || !strings.HasPrefix(system.Version, "1.0.") ||
-		!releaseVersionPattern.MatchString(system.Version) {
-		return Payload{}, errors.New("stable release version must be an exact matching 1.0.x version")
+	versionMatch := releaseVersionPattern.FindStringSubmatch(system.Version)
+	if system.Version != packages.Version || len(versionMatch) != 4 ||
+		versionMatch[1]+"."+versionMatch[2] != system.PackageTrain {
+		return Payload{}, errors.New("stable release version must exactly match its package train")
 	}
 	if system.FreeBSDPinID != packages.FreeBSDPinID ||
 		packages.SystemFingerprint != system.Fingerprint {
 		return Payload{}, errors.New("sealed stable release has incompatible component bindings")
 	}
-	// An older channel cannot be mixed into the v3 envelope. Stable 1.0 is the
-	// first v3 release, so replace the legacy development selection rather than
+	// An older channel cannot be mixed into the v3 envelope. Replace the legacy
+	// development selection rather than
 	// carrying unsigned compatibility assumptions into the new schema.
 	if payload.SchemaVersion == "freesense.channels/v1" || payload.SchemaVersion == "freesense.channels/v2" {
 		payload = Payload{SchemaVersion: PayloadSchema, Channels: map[string]Channel{}}
@@ -167,7 +168,7 @@ func SealStable(payload Payload, system, packages UpdateOptions) (Payload, error
 			return Payload{}, errors.New("an immutable stable version cannot be rewritten")
 		}
 		if !stablePatchAdvances(existing.Version, desired.Version) {
-			return Payload{}, errors.New("stable release must advance to a newer 1.0 patch")
+			return Payload{}, errors.New("stable release must advance to a newer patch in its configured train")
 		}
 	}
 	desired.Default = true
@@ -419,7 +420,7 @@ func Update(payload Payload, options UpdateOptions) (Payload, error) {
 	}
 	payload.SchemaVersion = PayloadSchema
 	payload.Channels[options.Channel] = channel
-	// The first stable seal is initially the default. As soon as rolling 1.1 is
+	// The first stable seal is initially the default. As soon as rolling development is
 	// published, devel becomes the one default without changing stable artifacts.
 	for name, other := range payload.Channels {
 		if name != options.Channel && other.Default {
@@ -453,7 +454,7 @@ func Verify(payload Payload, component, fingerprint string) (Payload, error) {
 }
 
 func Promote(payload Payload, component string, now time.Time, soak time.Duration) (Payload, error) {
-	return Payload{}, errors.New("component promotion is disabled; publish a checked immutable 1.0.x pair")
+	return Payload{}, errors.New("component promotion is disabled; publish a checked immutable Stable pair")
 }
 
 func channelMetadataMatches(channel Channel, options UpdateOptions) bool {
@@ -469,8 +470,8 @@ func channelMetadataMatches(channel Channel, options UpdateOptions) bool {
 func stablePatchAdvances(current, next string) bool {
 	currentMatch := releaseVersionPattern.FindStringSubmatch(current)
 	nextMatch := releaseVersionPattern.FindStringSubmatch(next)
-	if len(currentMatch) != 4 || len(nextMatch) != 4 || currentMatch[1] != "1" || currentMatch[2] != "0" ||
-		nextMatch[1] != "1" || nextMatch[2] != "0" {
+	if len(currentMatch) != 4 || len(nextMatch) != 4 ||
+		currentMatch[1] != nextMatch[1] || currentMatch[2] != nextMatch[2] {
 		return false
 	}
 	var currentPatch, nextPatch int

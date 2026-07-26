@@ -1,6 +1,37 @@
 {
-  "schema_version": "freesense.build-policy/v1",
+  "schema_version": "freesense.build-policy/v2",
   "package_train": "1.1",
+  "release": {
+    "stable_train": "1.0",
+    "development_train": "1.1",
+    "development_version": "1.1.0",
+    "stable_lifecycle": "supported",
+    "development_lifecycle": "experimental",
+    "allow_stable_to_development": true,
+    "allow_development_to_stable": false
+  },
+  "cloud": {
+    "architecture": "amd64",
+    "formats": ["qcow2", "raw"],
+    "partition_scheme": "gpt",
+    "firmware": ["bios", "uefi"],
+    "swap": "none",
+    "variants": {
+      "ufs": {
+        "virtual_size_gib": 16,
+        "root_growth": true
+      },
+      "zfs": {
+        "virtual_size_gib": 32,
+        "root_growth": true,
+        "pool": "FreeSense",
+        "root_dataset": "FreeSense/ROOT/default",
+        "topology": "stripe",
+        "boot_environments": true,
+        "autotrim": false
+      }
+    }
+  },
   "abi": "FreeBSD:16:amd64",
   "altabi": "freebsd:16:x86:64",
   "public_base_url": "https://pkg.freesense.org/v1",

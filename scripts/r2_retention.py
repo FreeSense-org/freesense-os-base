@@ -40,6 +40,9 @@ PACKAGES_KEY = re.compile(
 ISO_KEY = re.compile(
     r"^v1/artifacts/iso/(?P<fingerprint>[0-9a-f]{64})/(?P<relative>.+)$"
 )
+CLOUD_KEY = re.compile(
+    r"^v1/artifacts/cloud/(?P<fingerprint>[0-9a-f]{64})/(?P<relative>.+)$"
+)
 DEVEL_DOWNLOAD = re.compile(
     r"^v1/releases/devel/(?P<release>[0-9]+\.[0-9]+\.[0-9]+-g(?P<generation>[1-9][0-9]*))/"
 )
@@ -292,6 +295,14 @@ def classify_artifact_key(key: str) -> tuple[str, str, str | None, str] | None:
             None,
             match["fingerprint"],
         )
+    match = CLOUD_KEY.fullmatch(key)
+    if match:
+        return (
+            "cloud",
+            f"v1/artifacts/cloud/{match['fingerprint']}",
+            None,
+            match["fingerprint"],
+        )
     return None
 
 
@@ -320,7 +331,7 @@ def marker_identity(
             fail(f"System completion marker has an invalid closure: {prefix}")
         if kind == "packages" and inputs.get("package_train") != train:
             fail(f"Packages completion marker has an invalid train: {prefix}")
-    else:
+    elif kind == "iso":
         schema = marker.get("schema_version")
         legacy = schema == "freesense.iso/v1" and inputs.get("packages") is None
         current = schema == "freesense.iso/v2" and SHA256.fullmatch(
@@ -332,6 +343,19 @@ def marker_identity(
             or inputs.get("channel") not in {"stable", "devel"}
         ):
             fail(f"ISO completion marker has an invalid closure: {prefix}")
+    else:
+        files = marker.get("files")
+        if (
+            marker.get("schema_version") != "freesense.cloud-image/v1"
+            or not SHA256.fullmatch(str(marker.get("bundle_fingerprint", "")))
+            or marker.get("channel") not in {"stable", "devel"}
+            or not isinstance(files, list)
+            or {item.get("format") for item in files if isinstance(item, dict)}
+            != {"qcow2", "raw"}
+            or not SHA256.fullmatch(str(inputs.get("system", "")))
+            or not SHA256.fullmatch(str(inputs.get("packages", "")))
+        ):
+            fail(f"cloud completion marker has an invalid closure: {prefix}")
     return {
         "prefix": prefix,
         "kind": kind,
@@ -397,6 +421,8 @@ def plan_retention(
     grace: timedelta,
     completed_grace: timedelta = timedelta(0),
     smoke_keep: int = 1,
+    stable_train: str | None = None,
+    development_train: str | None = None,
 ) -> dict[str, Any]:
     if keep_devel < 1:
         fail("Development retention must keep at least one completed build")
@@ -407,6 +433,16 @@ def plan_retention(
         fail("retention grace periods cannot be negative")
     if smoke_keep < 1:
         fail("retention must keep at least one smoke marker per bucket")
+    channels = manifest.get("channels", {})
+    if stable_train is None:
+        stable_train = channels.get("stable", {}).get("package_train")
+    if development_train is None:
+        development_train = channels.get("devel", {}).get("package_train")
+    for name, train in (("Stable", stable_train), ("Development", development_train)):
+        if train is not None and (
+            not isinstance(train, str) or not re.fullmatch(r"[0-9]+\.[0-9]+", train)
+        ):
+            fail(f"retention has an invalid {name} train policy")
     orphan_cutoff = now - grace
     completed_cutoff = now - completed_grace
     for inventory, kind in ((build, "build"), (downloads, "downloads")):
@@ -449,9 +485,9 @@ def plan_retention(
         inputs = entry["marker"]["inputs"]
         if entry["kind"] == "system":
             train = inputs.get("package_train")
-            if train == "1.0":
+            if train == stable_train:
                 protected_prefixes.add(entry["prefix"])
-            elif train == "1.1":
+            elif train == development_train:
                 devel["system"].append(entry)
             else:
                 protected_prefixes.add(entry["prefix"])
@@ -459,9 +495,9 @@ def plan_retention(
                     f"protected System artifact with unknown package train at {entry['prefix']}"
                 )
         elif entry["kind"] == "packages":
-            if entry["train"] == "1.0":
+            if entry["train"] == stable_train:
                 protected_prefixes.add(entry["prefix"])
-            elif entry["train"] == "1.1":
+            elif entry["train"] == development_train:
                 devel["packages"].append(entry)
             else:
                 protected_prefixes.add(entry["prefix"])
@@ -470,13 +506,46 @@ def plan_retention(
                 )
         elif inputs.get("channel") == "stable":
             protected_prefixes.add(entry["prefix"])
-        else:
+        elif entry["kind"] == "iso":
             devel["iso"].append(entry)
+        else:
+            devel["cloud"].append(entry)
 
-    for kind in ("system", "iso"):
-        entries = devel[kind]
-        entries.sort(key=lambda item: (item["generation"], item["prefix"]), reverse=True)
-        protected_prefixes.update(item["prefix"] for item in entries[:keep_devel])
+    entries = devel["system"]
+    entries.sort(key=lambda item: (item["generation"], item["prefix"]), reverse=True)
+    protected_prefixes.update(item["prefix"] for item in entries[:keep_devel])
+
+    # ISO and every filesystem-specific cloud result form one release bundle.
+    # Retain complete generations as a unit instead of counting cloud variants
+    # independently.
+    bundles: dict[str, dict[str, Any]] = {}
+    legacy_images = []
+    for entry in devel["iso"] + devel["cloud"]:
+        bundle = entry["marker"].get("bundle_fingerprint")
+        if not isinstance(bundle, str) or not SHA256.fullmatch(bundle):
+            legacy_images.append(entry)
+            continue
+        group = bundles.setdefault(bundle, {
+            "generation": entry["generation"], "entries": [],
+        })
+        group["generation"] = max(group["generation"], entry["generation"])
+        group["entries"].append(entry)
+    ordered_bundles = sorted(
+        bundles.values(),
+        key=lambda item: (
+            item["generation"],
+            sorted(entry["prefix"] for entry in item["entries"]),
+        ),
+        reverse=True,
+    )
+    for group in ordered_bundles[:keep_devel]:
+        protected_prefixes.update(entry["prefix"] for entry in group["entries"])
+    legacy_images.sort(
+        key=lambda item: (item["generation"], item["prefix"]), reverse=True
+    )
+    protected_prefixes.update(
+        item["prefix"] for item in legacy_images[:keep_devel]
+    )
 
     channels = manifest.get("channels")
     if not isinstance(channels, dict):
@@ -520,7 +589,7 @@ def plan_retention(
         protected_prefixes.update(item["prefix"] for item in devel["packages"])
         warnings.append(
             "retained legacy Development ISO has no Packages fingerprint; "
-            "protected all 1.1 package repositories"
+            f"protected all {development_train} package repositories"
         )
 
     changed = True
@@ -537,8 +606,14 @@ def plan_retention(
                     value = marker["inputs"].get(name)
                     if isinstance(value, str) and SHA256.fullmatch(value):
                         references.append(f"v1/artifacts/system/{value}")
-            if entry["kind"] == "iso":
-                references.append(f"v1/artifacts/system/{marker['system']}")
+            if entry["kind"] in {"iso", "cloud"}:
+                image_system = marker.get("system", marker["inputs"].get("system"))
+                if isinstance(image_system, str) and SHA256.fullmatch(image_system):
+                    references.append(f"v1/artifacts/system/{image_system}")
+                packages = marker["inputs"].get("packages")
+                train = marker["inputs"].get("package_train")
+                if isinstance(packages, str) and SHA256.fullmatch(packages) and train:
+                    references.append(f"v1/artifacts/packages/{train}/{packages}")
             for reference in references:
                 if reference not in protected_prefixes:
                     protected_prefixes.add(reference)
@@ -945,6 +1020,15 @@ def main() -> None:
     if envelope is None:
         fail("build inventory has no signed repository manifest")
     manifest = verify_manifest(envelope, args.public_key)
+    policy = load_json(args.config / "build-policy.json")
+    release_policy = policy.get("release", {})
+    stable_train = release_policy.get("stable_train")
+    development_train = release_policy.get("development_train")
+    if (not isinstance(stable_train, str) or not isinstance(development_train, str)
+            or not re.fullmatch(r"[0-9]+\.[0-9]+", stable_train)
+            or not re.fullmatch(r"[0-9]+\.[0-9]+", development_train)
+            or stable_train == development_train):
+        fail("build policy has invalid release trains")
     report = plan_retention(
         build,
         downloads,
@@ -955,6 +1039,8 @@ def main() -> None:
         timedelta(hours=args.orphan_grace_hours),
         timedelta(hours=args.completed_grace_hours),
         args.keep_smoke,
+        stable_train,
+        development_train,
     )
     args.output.write_text(
         json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8"

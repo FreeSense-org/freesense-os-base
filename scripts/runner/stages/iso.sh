@@ -1,7 +1,6 @@
-# Assemble only from the exact signed system repository selected by the channel.
-fetch_input "${JAIL_OBJECT}" /root/jail-base.txz
-configure_source
-fetch_repository system "${SYSTEM_ID}" /root/system-repo
+# Assemble only from the exact signed repositories selected by the channel.
+prepare_release_inputs
+verify_release_channel
 cd /root/freesense-src
 grep -Fqx '# FREESENSE_ISO_ASSEMBLY_API=2' \
   tools/ci/freesense-assemble-iso.sh || {
@@ -153,28 +152,6 @@ grep -Fq '"${_repoc_root}/etc/version"' \
   echo "ISO release version stamp was not applied" >&2
   exit 1
 }
-phase channel-fetch
-printf '%s' "${CHANNEL_PAYLOAD_B64}" | openssl base64 -d -A >/tmp/channel-payload.json
-printf '%s' "${CHANNEL_SIGNATURE_B64}" | openssl base64 -d -A >/tmp/channel-signature.bin
-openssl dgst -sha256 -verify /root/sign/channel-public.pem \
-  -signature /tmp/channel-signature.bin /tmp/channel-payload.json >/dev/null
-test "$(sha256 -q /tmp/channel-payload.json)" = "${CHANNEL_PAYLOAD_SHA256}"
-jq -e --arg channel "${CHANNEL}" --arg system "${SYSTEM_ID}" \
-  --arg packages "${PACKAGES_ID}" \
-  --arg train "${PACKAGE_TRAIN}" --argjson system_generation "${SYSTEM_GENERATION}" \
-  '.schema_version == "freesense.channels/v3" and
-   .channels[$channel].package_train == $train and
-   .channels[$channel].system.fingerprint == $system and
-   .channels[$channel].system.generation == $system_generation and
-   .channels[$channel].system.verified == true and
-   (.channels[$channel].packages | type) == "object" and
-   .channels[$channel].packages.fingerprint == $packages and
-   .channels[$channel].packages.verified == true and
-   .channels[$channel].packages.system_fingerprint == $system' \
-  /tmp/channel-payload.json >/dev/null
-export FREESENSE_ASSEMBLY_CHANNEL="${CHANNEL}"
-export FREESENSE_ASSEMBLY_CHANNEL_PAYLOAD=/tmp/channel-payload.json
-phase channel-ready
 phase iso-tools-fetch
 mkdir -p /root/freebsd-tools/release/amd64 /root/freebsd-tools/release/scripts
 fetch -qo /root/freebsd-tools/release/amd64/mkisoimages.sh \
@@ -261,6 +238,7 @@ fi
 phase iso-publish
 upload_immutable "${iso}" "${RESULT}/${name}"
 jq -n --arg fingerprint "${FINGERPRINT}" --arg sha256 "${sha}" --arg file "${name}" \
+  --arg bundle "${BUNDLE_ID}" \
   --arg system "${SYSTEM_ID}" --arg platform "${PLATFORM_ID}" --arg source "${SOURCE_SHA}" \
   --arg freebsd "${FREEBSD_SHA}" --arg worker_image "${IMAGE_SHA256}" \
   --arg worker_tools "${WORKER_TOOLS_SHA256}" \
@@ -268,7 +246,7 @@ jq -n --arg fingerprint "${FINGERPRINT}" --arg sha256 "${sha}" --arg file "${nam
   --arg packages "${PACKAGES_ID}" \
   --arg channel_payload "${CHANNEL_PAYLOAD_SHA256}" --argjson size "${size}" \
   --argjson generation "${GENERATION}" \
-  '{schema_version:"freesense.iso/v2",fingerprint:$fingerprint,sha256:$sha256,size:$size,file:$file,system:$system,generation:$generation,inputs:{platform:$platform,source:$source,freebsd:$freebsd,worker_image:$worker_image,worker_tools:$worker_tools,package_train:$package_train,packages:$packages,channel:$channel,channel_payload:$channel_payload}}' \
+  '{schema_version:"freesense.iso/v2",fingerprint:$fingerprint,bundle_fingerprint:$bundle,sha256:$sha256,size:$size,file:$file,system:$system,generation:$generation,inputs:{platform:$platform,source:$source,freebsd:$freebsd,worker_image:$worker_image,worker_tools:$worker_tools,package_train:$package_train,packages:$packages,channel:$channel,channel_payload:$channel_payload}}' \
   >/tmp/complete.json
 upload_immutable /tmp/complete.json "${RESULT}/complete.json"
 phase iso-complete
