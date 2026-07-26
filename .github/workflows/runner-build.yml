@@ -10,6 +10,7 @@ on:
       source_sha: {type: string, required: true}
       system_sha: {type: string, required: true}
       packages_sha: {type: string, required: true}
+      packages_id: {type: string, required: false, default: ""}
       os_base_sha: {type: string, required: true}
       freebsd_sha: {type: string, required: true}
       ports_sha: {type: string, required: true}
@@ -51,6 +52,7 @@ jobs:
       SOURCE_SHA: ${{ inputs.source_sha }}
       SYSTEM_SHA: ${{ inputs.system_sha }}
       PACKAGES_SHA: ${{ inputs.packages_sha }}
+      PACKAGES_ID: ${{ inputs.packages_id }}
       OS_BASE_SHA: ${{ inputs.os_base_sha }}
       FREEBSD_SHA: ${{ inputs.freebsd_sha }}
       PORTS_SHA: ${{ inputs.ports_sha }}
@@ -97,6 +99,7 @@ jobs:
           args=(--stage "${STAGE}" --id "${FINGERPRINT}" --platform-id "${PLATFORM_ID}" \
             --generation "${GENERATION}" --github-output "${GITHUB_OUTPUT}")
           if [[ "${STAGE}" == packages || "${STAGE}" == iso ]]; then args+=(--system-id "${SYSTEM_ID}"); fi
+          if [[ "${STAGE}" == iso ]]; then args+=(--packages-id "${PACKAGES_ID}"); fi
           if [[ "${STAGE}" == packages ]]; then args+=(--package-train "${PACKAGE_TRAIN}"); fi
           if [[ "${STAGE}" == packages ]]; then args+=(--freebsd-pin-id "${FREEBSD_PIN_ID}"); fi
           "${RUNNER_TEMP}/fsbuild" result check "${args[@]}"
@@ -131,6 +134,7 @@ jobs:
           --public-base-url "${PUBLIC_BASE_URL}"
           --fingerprint "${FINGERPRINT}"
           --system "${SYSTEM_ID}"
+          --packages "${PACKAGES_ID}"
           --generation "${GENERATION}"
           --channel "${CHANNEL}"
           --package-train "${PACKAGE_TRAIN}"

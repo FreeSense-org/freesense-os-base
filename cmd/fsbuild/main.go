@@ -252,6 +252,7 @@ func commandResult(ctx context.Context, args []string) error {
 	stage := flags.String("stage", "", "platform, system, packages, or iso")
 	id := flags.String("id", "", "content-derived result ID")
 	systemID := flags.String("system-id", "", "exact required system for packages or ISO")
+	packagesID := flags.String("packages-id", "", "exact Packages artifact required for ISO")
 	platformID := flags.String("platform-id", "", "exact platform closure")
 	packageTrain := flags.String("package-train", "", "required for optional package results")
 	freeBSDPinID := flags.String("freebsd-pin-id", "", "required compatibility pin for optional package results")
@@ -266,6 +267,9 @@ func commandResult(ctx context.Context, args []string) error {
 	}
 	if (*stage == "packages" || *stage == "iso") && !sha256Pattern.MatchString(*systemID) {
 		return errors.New("packages and ISO result checks require --system-id")
+	}
+	if *stage == "iso" && !sha256Pattern.MatchString(*packagesID) {
+		return errors.New("ISO result checks require --packages-id")
 	}
 	if *stage == "packages" && !sha256Pattern.MatchString(*freeBSDPinID) {
 		return errors.New("package result checks require --freebsd-pin-id")
@@ -288,7 +292,7 @@ func commandResult(ctx context.Context, args []string) error {
 	} else if err != nil {
 		return err
 	} else {
-		marker, validateErr := validateResultMarker(*stage, *id, *systemID, *platformID, *freeBSDPinID, *generation, object.Data)
+		marker, validateErr := validateResultMarker(*stage, *id, *systemID, *packagesID, *platformID, *freeBSDPinID, *generation, object.Data)
 		if validateErr != nil {
 			return validateErr
 		}
@@ -335,11 +339,12 @@ type resultMarker struct {
 	Inputs        struct {
 		Platform     string `json:"platform"`
 		System       string `json:"system"`
+		Packages     string `json:"packages"`
 		FreeBSDPinID string `json:"freebsd_pin_id"`
 	} `json:"inputs"`
 }
 
-func validateResultMarker(stage, id, systemID, platformID, freeBSDPinID string, generation uint64, data []byte) (resultMarker, error) {
+func validateResultMarker(stage, id, systemID, packagesID, platformID, freeBSDPinID string, generation uint64, data []byte) (resultMarker, error) {
 	var marker resultMarker
 	if err := json.Unmarshal(data, &marker); err != nil || marker.Fingerprint != id || marker.Generation == 0 {
 		return resultMarker{}, errors.New("result completion marker conflicts with its content ID")
@@ -348,7 +353,9 @@ func validateResultMarker(stage, id, systemID, platformID, freeBSDPinID string, 
 		return resultMarker{}, errors.New("result completion marker belongs to a different generation")
 	}
 	if stage == "iso" {
-		if marker.SchemaVersion != "freesense.iso/v1" || marker.System != systemID ||
+		legacy := marker.SchemaVersion == "freesense.iso/v1" && marker.Inputs.Packages == ""
+		current := marker.SchemaVersion == "freesense.iso/v2" && marker.Inputs.Packages == packagesID
+		if (!legacy && !current) || marker.System != systemID ||
 			marker.Inputs.Platform != platformID || !sha256Pattern.MatchString(marker.SHA256) || marker.Size <= 0 ||
 			!regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*\.iso$`).MatchString(marker.File) {
 			return resultMarker{}, errors.New("ISO completion marker has an invalid closure")

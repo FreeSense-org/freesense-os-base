@@ -133,6 +133,36 @@ function claimsFor(role, overrides = {}) {
       job_workflow_sha: "b".repeat(40),
       event_name: "workflow_run",
     },
+    "retention-build-reader": {
+      environment: "retention",
+      workflow_ref: protocol.workflows.retention,
+      job_workflow_ref: protocol.workflows.retention,
+      job_workflow_sha: "b".repeat(40),
+    },
+    "retention-build-deleter": {
+      environment: "retention",
+      workflow_ref: protocol.workflows.retention,
+      job_workflow_ref: protocol.workflows.retention,
+      job_workflow_sha: "b".repeat(40),
+    },
+    "retention-download-reader": {
+      environment: "retention",
+      workflow_ref: protocol.workflows.retention,
+      job_workflow_ref: protocol.workflows.retention,
+      job_workflow_sha: "b".repeat(40),
+    },
+    "retention-download-deleter": {
+      environment: "retention",
+      workflow_ref: protocol.workflows.retention,
+      job_workflow_ref: protocol.workflows.retention,
+      job_workflow_sha: "b".repeat(40),
+    },
+    "retention-state-writer": {
+      environment: "retention",
+      workflow_ref: protocol.workflows.retention,
+      job_workflow_ref: protocol.workflows.retention,
+      job_workflow_sha: "b".repeat(40),
+    },
     "broker-smoke": {
       environment: "broker",
       workflow_ref: protocol.workflows.broker,
@@ -240,15 +270,30 @@ describe("configuration and protocol", () => {
 
 describe("least-privilege role policies", () => {
   const cases = [
-    ["coordinator", BUCKET, 2700, ["v1/state/generations/"], []],
+    [
+      "coordinator",
+      BUCKET,
+      2700,
+      ["v1/state/generations/"],
+      [],
+      ["GetObject", "HeadObject", "PutObject"],
+    ],
     [
       "artifact-writer",
       BUCKET,
       20700,
       ["v1/inputs/sha256/", "v1/artifacts/"],
       [],
+      ["GetObject", "HeadObject", "ListObjectsV2", "PutObject"],
     ],
-    ["pin-writer", BUCKET, 20700, ["v1/inputs/sha256/"], []],
+    [
+      "pin-writer",
+      BUCKET,
+      20700,
+      ["v1/inputs/sha256/"],
+      [],
+      ["GetObject", "HeadObject", "PutObject"],
+    ],
     [
       "channel-writer",
       BUCKET,
@@ -259,13 +304,80 @@ describe("least-privilege role policies", () => {
         "v1/releases/stable.json",
         "v1/releases/devel.json",
       ],
+      ["GetObject", "HeadObject", "PutObject"],
     ],
-    ["download-writer", DOWNLOAD_BUCKET, 4500, ["v1/releases/"], []],
-    ["broker-smoke", BUCKET, 900, [], [`v1/smoke/broker/${"a".repeat(40)}.json`]],
-    ["download-smoke", DOWNLOAD_BUCKET, 900, [], [`v1/smoke/broker/${"a".repeat(40)}.json`]],
+    [
+      "download-writer",
+      DOWNLOAD_BUCKET,
+      4500,
+      ["v1/releases/"],
+      [],
+      ["GetObject", "HeadObject", "PutObject"],
+    ],
+    [
+      "retention-build-reader",
+      BUCKET,
+      1800,
+      ["v1/artifacts/", "v1/inputs/sha256/", "v1/smoke/broker/"],
+      [
+        "v1/repos.manifest.json",
+        "v1/releases/stable.json",
+        "v1/releases/devel.json",
+        "v1/state/retention.json",
+      ],
+      ["GetObject", "HeadObject", "ListObjectsV2"],
+    ],
+    [
+      "retention-download-reader",
+      DOWNLOAD_BUCKET,
+      1800,
+      ["v1/releases/", "v1/smoke/broker/"],
+      [],
+      ["GetObject", "HeadObject", "ListObjectsV2"],
+    ],
+    [
+      "retention-build-deleter",
+      BUCKET,
+      900,
+      ["v1/artifacts/", "v1/inputs/sha256/", "v1/smoke/broker/"],
+      [],
+      ["DeleteObject"],
+    ],
+    [
+      "retention-download-deleter",
+      DOWNLOAD_BUCKET,
+      900,
+      ["v1/releases/devel/", "v1/smoke/broker/"],
+      [],
+      ["DeleteObject"],
+    ],
+    [
+      "retention-state-writer",
+      BUCKET,
+      900,
+      [],
+      ["v1/state/retention.json"],
+      ["GetObject", "HeadObject", "PutObject"],
+    ],
+    [
+      "broker-smoke",
+      BUCKET,
+      900,
+      [],
+      [`v1/smoke/broker/${"a".repeat(40)}.json`],
+      ["HeadObject", "PutObject"],
+    ],
+    [
+      "download-smoke",
+      DOWNLOAD_BUCKET,
+      900,
+      [],
+      [`v1/smoke/broker/${"a".repeat(40)}.json`],
+      ["HeadObject", "PutObject"],
+    ],
   ];
 
-  for (const [role, bucket, ttl, prefixes, objects] of cases) {
+  for (const [role, bucket, ttl, prefixes, objects, actions] of cases) {
     it(`issues only the ${role} scope`, async () => {
       const response = await request(role);
       assert.equal(response.status, 200);
@@ -278,13 +390,44 @@ describe("least-privilege role policies", () => {
       assert.deepEqual(session.paths.prefixPaths, prefixes);
       assert.deepEqual(session.paths.objectPaths, objects);
       assert.equal(session.exp - session.iat, ttl);
-      assert.ok(session.actions.includes("PutObject"));
-      assert.equal(
-        session.actions.includes("ListObjectsV2"),
-        role === "artifact-writer",
-      );
-      assert.ok(!session.actions.includes("DeleteObject"));
+      assert.deepEqual(session.actions, actions);
       assert.ok(!session.actions.some((action) => /Multipart/u.test(action)));
+      assert.ok(
+        !(
+          session.actions.includes("DeleteObject") &&
+          session.actions.includes("PutObject")
+        ),
+      );
+    });
+  }
+});
+
+describe("retention workflow identity", () => {
+  for (const role of [
+    "retention-build-reader",
+    "retention-build-deleter",
+    "retention-download-reader",
+    "retention-download-deleter",
+    "retention-state-writer",
+  ]) {
+    it(`allows scheduled ${role} access only from protected main`, async () => {
+      const response = await request(role);
+      assert.equal(response.status, 200);
+      for (const overrides of [
+        { event_name: "push" },
+        { workflow_ref: protocol.workflows.system },
+        { ref: "refs/heads/feature" },
+        { ref_protected: "false" },
+        { environment: "build" },
+        { runner_environment: "self-hosted" },
+      ]) {
+        const rejected = await request(
+          role,
+          claimsFor(role, overrides),
+        );
+        assert.equal(rejected.status, 403);
+        assert.deepEqual(await rejected.json(), { error: "access_denied" });
+      }
     });
   }
 });

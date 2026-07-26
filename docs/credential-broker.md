@@ -21,6 +21,7 @@ Environments:
 - `build`: immutable inputs/artifacts from the reusable build-runner workflow
 - `pin`: weekly input mirroring on the build runner
 - `channel-publisher`: signed repository/release metadata and immutable public ISOs
+- `retention`: daily inventories, exact-key retention, and one small observation record
 
 The organization secret `FREESENSE_PKG_SIGNING_KEY` signs both pkg repository
 catalogs and the channel document. Its public key is checked in at
@@ -37,7 +38,26 @@ The `broker` environment additionally holds:
 The parent R2 credential must cover only buckets `freesense-pkg` and
 `freesense-downloads`. Build-artifact
 sessions may list objects so a stage can copy an immutable dependency repository;
-other sessions cannot list. The downloads session can write only under
-`v1/releases/`. No session grants delete or multipart actions.
+other sessions cannot list. The downloads publishing session can write only
+under `v1/releases/`. Retention uses separate read, delete-only, and
+state-write-only sessions; no session can both write and delete. No session
+grants multipart actions.
 Published files remain under prefix `v1`; failed partial uploads are safe because
 `complete.json` is always last.
+
+The daily retention workflow runs at 04:30 UTC. Its reader sessions can list
+and read only the build/input, download-release, and broker-smoke prefixes
+needed to construct a reference-aware plan. Stable 1.0.x artifacts are kept
+forever. Development retains four completed System and ISO artifacts. Optional
+Packages follow the active signed channel and the exact Packages fingerprints
+recorded by retained ISOs, together with their transitive inputs. A retained
+legacy ISO without that fingerprint protects every Development Packages
+repository until it rotates out. Each bucket keeps its newest broker smoke
+marker. Incomplete artifacts and unreferenced inputs must be seven days old.
+
+No candidate is deleted on first observation. The exact candidate set must be
+seen again at least 20 hours later. Delete-only credentials are then issued
+separately for the build and downloads buckets, with Stable, state, and control
+paths rejected again by the client and a 5,000-object/50-GiB per-run cap. The
+workflow stores only its small confirmation record at
+`v1/state/retention.json`.

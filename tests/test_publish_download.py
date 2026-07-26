@@ -28,16 +28,18 @@ FINGERPRINT = "a" * 64
 SYSTEM = "b" * 64
 SHA = "c" * 40
 ISO_SHA = "d" * 64
+PACKAGES_FINGERPRINT = "e" * 64
 BASE_URL = "https://pkg.freesense.org/v1"
 DOWNLOAD_BASE_URL = "https://downloads.freesense.org/v1"
 
 
-def marker(channel="stable", generation=2, fingerprint=FINGERPRINT):
+def marker(channel="stable", generation=2, fingerprint=FINGERPRINT,
+           packages=PACKAGES_FINGERPRINT, legacy=False):
     version = "1.0.0" if channel == "stable" else "1.1.0"
     file = (f"FreeSense-{version}-amd64.iso" if channel == "stable"
             else f"FreeSense-{version}-g{generation}-amd64.iso")
-    return {
-        "schema_version": "freesense.iso/v1",
+    value = {
+        "schema_version": "freesense.iso/v1" if legacy else "freesense.iso/v2",
         "fingerprint": fingerprint,
         "system": SYSTEM,
         "generation": generation,
@@ -46,13 +48,16 @@ def marker(channel="stable", generation=2, fingerprint=FINGERPRINT):
         "size": 1024,
         "inputs": {"channel": channel},
     }
+    if not legacy:
+        value["inputs"]["packages"] = packages
+    return value
 
 
 def release(channel="stable", generation=2, fingerprint=FINGERPRINT, legacy=False):
     version = "1.0.0" if channel == "stable" else "1.1.0"
     item = marker(channel, generation, fingerprint)
     artifact = f"{BASE_URL}/artifacts/iso/{fingerprint}"
-    return {
+    value = {
         "schema_version": publish.DOWNLOAD_SCHEMA,
         "version": version,
         "release_id": version if channel == "stable" else f"{version}-g{generation}",
@@ -77,6 +82,7 @@ def release(channel="stable", generation=2, fingerprint=FINGERPRINT, legacy=Fals
         },
         "changes": [],
     }
+    return value
 
 
 def publisher_argv(output: Path, channel="stable", generation=2, fingerprint=FINGERPRINT):
@@ -87,10 +93,38 @@ def publisher_argv(output: Path, channel="stable", generation=2, fingerprint=FIN
         "--generation", str(generation), "--source", SHA,
         "--system-ports", SHA, "--packages", SHA, "--ports", SHA,
         "--os-definition", SHA, "--freebsd", SHA, "--output", str(output),
+        "--packages-fingerprint", PACKAGES_FINGERPRINT,
     ]
 
 
 class PublishDownloadTests(unittest.TestCase):
+    def test_legacy_iso_marker_remains_publishable_during_rotation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory, "stable.json")
+            responses = iter((marker(legacy=True), None))
+            with mock.patch.object(sys, "argv", publisher_argv(output)), \
+                    mock.patch.object(
+                        publish,
+                        "fetch_json",
+                        side_effect=lambda *_args, **_kwargs: next(responses),
+                    ):
+                self.assertEqual(publish.main(), 0)
+
+    def test_v2_iso_marker_must_match_selected_packages(self):
+        with tempfile.TemporaryDirectory() as directory:
+            responses = iter((marker(packages="f" * 64), None))
+            with mock.patch.object(
+                sys,
+                "argv",
+                publisher_argv(Path(directory, "stable.json")),
+            ), mock.patch.object(
+                publish,
+                "fetch_json",
+                side_effect=lambda *_args, **_kwargs: next(responses),
+            ):
+                with self.assertRaisesRegex(SystemExit, "does not match"):
+                    publish.main()
+
     def test_publishes_one_independent_stable_document(self):
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory, "stable.json")

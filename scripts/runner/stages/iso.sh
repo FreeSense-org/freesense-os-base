@@ -160,6 +160,7 @@ openssl dgst -sha256 -verify /root/sign/channel-public.pem \
   -signature /tmp/channel-signature.bin /tmp/channel-payload.json >/dev/null
 test "$(sha256 -q /tmp/channel-payload.json)" = "${CHANNEL_PAYLOAD_SHA256}"
 jq -e --arg channel "${CHANNEL}" --arg system "${SYSTEM_ID}" \
+  --arg packages "${PACKAGES_ID}" \
   --arg train "${PACKAGE_TRAIN}" --argjson system_generation "${SYSTEM_GENERATION}" \
   '.schema_version == "freesense.channels/v3" and
    .channels[$channel].package_train == $train and
@@ -167,6 +168,7 @@ jq -e --arg channel "${CHANNEL}" --arg system "${SYSTEM_ID}" \
    .channels[$channel].system.generation == $system_generation and
    .channels[$channel].system.verified == true and
    (.channels[$channel].packages | type) == "object" and
+   .channels[$channel].packages.fingerprint == $packages and
    .channels[$channel].packages.verified == true and
    .channels[$channel].packages.system_fingerprint == $system' \
   /tmp/channel-payload.json >/dev/null
@@ -263,9 +265,10 @@ jq -n --arg fingerprint "${FINGERPRINT}" --arg sha256 "${sha}" --arg file "${nam
   --arg freebsd "${FREEBSD_SHA}" --arg worker_image "${IMAGE_SHA256}" \
   --arg worker_tools "${WORKER_TOOLS_SHA256}" \
   --arg package_train "${PACKAGE_TRAIN}" --arg channel "${CHANNEL}" \
+  --arg packages "${PACKAGES_ID}" \
   --arg channel_payload "${CHANNEL_PAYLOAD_SHA256}" --argjson size "${size}" \
   --argjson generation "${GENERATION}" \
-  '{schema_version:"freesense.iso/v1",fingerprint:$fingerprint,sha256:$sha256,size:$size,file:$file,system:$system,generation:$generation,inputs:{platform:$platform,source:$source,freebsd:$freebsd,worker_image:$worker_image,worker_tools:$worker_tools,package_train:$package_train,channel:$channel,channel_payload:$channel_payload}}' \
+  '{schema_version:"freesense.iso/v2",fingerprint:$fingerprint,sha256:$sha256,size:$size,file:$file,system:$system,generation:$generation,inputs:{platform:$platform,source:$source,freebsd:$freebsd,worker_image:$worker_image,worker_tools:$worker_tools,package_train:$package_train,packages:$packages,channel:$channel,channel_payload:$channel_payload}}' \
   >/tmp/complete.json
 upload_immutable /tmp/complete.json "${RESULT}/complete.json"
 phase iso-complete

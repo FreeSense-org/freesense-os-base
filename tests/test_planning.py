@@ -501,6 +501,7 @@ class PlannerChannelTests(unittest.TestCase):
         self.assertEqual(values["system"], "a" * 64)
         self.assertEqual(values["source_sha"], "1" * 40)
         self.assertEqual(values["packages_sha"], "6" * 40)
+        self.assertEqual(values["packages_fingerprint"], PACKAGES_FINGERPRINT)
         self.assertEqual(values["os_base_sha"], "3" * 40)
         self.assertEqual(values["image_sha256"], "6" * 64)
         self.assertEqual(values["worker_tools_sha256"], "9" * 64)

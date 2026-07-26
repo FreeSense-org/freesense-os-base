@@ -24,7 +24,7 @@ def require(condition: bool, message: str) -> None:
 
 expected_workflows = {
     "broker.yml", "ci.yml", "packages.yml", "pin.yml", "release.yml",
-    "runner-build.yml", "stable-1.0.yml", "system.yml",
+    "retention.yml", "runner-build.yml", "stable-1.0.yml", "system.yml",
 }
 workflow_paths = sorted(WORKFLOWS.glob("*.yml"))
 require({path.name for path in workflow_paths} == expected_workflows,
@@ -59,6 +59,27 @@ require("--built-against-system" in packages_workflow,
         "optional package publication omits its immutable build System")
 require('cron: "0 6 * * *"' in read(".github/workflows/system.yml"),
         "the daily System check is not fixed at 06:00 UTC")
+retention_workflow = read(".github/workflows/retention.yml")
+for value in ('cron: "30 4 * * *"', "scripts/r2_retention.py",
+              "--keep-devel 4", "--orphan-grace-hours 168",
+              "--completed-grace-hours 0", "--keep-smoke 1",
+              "--role retention-build-reader",
+              "--role retention-download-reader",
+              "--role retention-build-deleter",
+              "--role retention-download-deleter",
+              "--role retention-state-writer",
+              "v1/state/retention.json", "two-run-confirmation"):
+    require(value in retention_workflow,
+            f"daily guarded R2 retention is missing {value!r}")
+retention_source = read("scripts/r2_retention.py")
+for value in ("minimum_interval: timedelta = timedelta(hours=20)",
+              "retention deletion exceeds the per-run safety cap",
+              '"/stable/" in key', "superseded broker smoke marker",
+              'for kind in ("system", "iso")',
+              'inputs.get("packages")',
+              "retained legacy Development ISO has no Packages fingerprint"):
+    require(value in retention_source,
+            f"R2 retention safety boundary is missing {value!r}")
 stable_workflow = read(".github/workflows/stable-1.0.yml")
 require("schedule:" not in stable_workflow and "channel seal-stable" in stable_workflow and
         '--release "${{ inputs.release }}"' in stable_workflow,
@@ -124,6 +145,10 @@ for value in ("https://downloads.freesense.org/v1/releases/", "sha256sum --check
     require(value in publisher, f"ISO publisher is missing {value!r}")
 require("freebsd_pin_id" in reusable and "product_version" in reusable,
         "reusable builds omit the release or FreeBSD pin identity")
+for value in ("packages_id", "PACKAGES_ID", '--packages-id "${PACKAGES_ID}"',
+              '--packages "${PACKAGES_ID}"'):
+    require(value in reusable,
+            f"reusable ISO build omits the Packages identity binding {value!r}")
 require("system_generation" in reusable and "SYSTEM_GENERATION" in
         read("scripts/runner/worker-common.sh") + read("scripts/runner/stages/iso.sh"),
         "ISO builds do not separate release and signed System generations")
@@ -192,8 +217,12 @@ require("repos.manifest.json" not in iso_stage and
         "ISO does not consume the exact selected signed channel payload")
 planner_source = read("scripts/plan.py")
 require('"packages": current_packages_fingerprint' in planner_source and
+        '"packages_fingerprint": (' in planner_source and
         '"channel_payload": channel_payload_sha256' in planner_source,
         "ISO identity omits the optional package pair or signed channel payload")
+require('schema_version:"freesense.iso/v2"' in iso_stage and
+        "packages:$packages" in iso_stage,
+        "ISO completion markers omit the exact Packages artifact")
 for value in ("FREESENSE_INSTALLER_PATCH_B64", "git apply --check",
               "FREESENSE_ASSEMBLY_INSTALLER_OVERLAY", "startbsdinstall",
               "copy_configxml_from_usb", "fix_fstab"):
@@ -258,7 +287,10 @@ for value in ("scripts/resolve_worker_tools.py", "packagesite.yaml.sig",
 
 broker = read("broker/src/index.js")
 for role in ("coordinator", "artifact-writer", "pin-writer", "channel-writer",
-             "download-writer", "broker-smoke", "download-smoke"):
+             "download-writer", "retention-build-reader",
+             "retention-download-reader", "retention-build-deleter",
+             "retention-download-deleter", "retention-state-writer",
+             "broker-smoke", "download-smoke"):
     require(role in broker, f"credential broker lacks {role}")
 require("GITHUB_REPOSITORY_ID" in broker and "ref_protected" in broker,
         "credential broker is not bound to protected main")

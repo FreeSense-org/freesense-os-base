@@ -2,13 +2,14 @@
 set -euo pipefail
 
 usage() {
-  echo "usage: smoke-iso.sh --public-base-url URL --fingerprint SHA256 --system SHA256 --generation NUMBER --channel CHANNEL --package-train TRAIN --channel-payload SHA256" >&2
+  echo "usage: smoke-iso.sh --public-base-url URL --fingerprint SHA256 --system SHA256 --packages SHA256 --generation NUMBER --channel CHANNEL --package-train TRAIN --channel-payload SHA256" >&2
   exit 2
 }
 
 public_base_url=""
 fingerprint=""
 system=""
+packages=""
 generation=""
 channel=""
 package_train=""
@@ -18,6 +19,7 @@ while (($#)); do
     --public-base-url) public_base_url=${2:-}; shift 2 ;;
     --fingerprint) fingerprint=${2:-}; shift 2 ;;
     --system) system=${2:-}; shift 2 ;;
+    --packages) packages=${2:-}; shift 2 ;;
     --generation) generation=${2:-}; shift 2 ;;
     --channel) channel=${2:-}; shift 2 ;;
     --package-train) package_train=${2:-}; shift 2 ;;
@@ -29,6 +31,7 @@ done
 [[ $public_base_url == "https://pkg.freesense.org/v1" ]] || usage
 [[ $fingerprint =~ ^[0-9a-f]{64}$ ]] || usage
 [[ $system =~ ^[0-9a-f]{64}$ ]] || usage
+[[ $packages =~ ^[0-9a-f]{64}$ ]] || usage
 [[ $generation =~ ^[1-9][0-9]*$ ]] || usage
 [[ $channel == devel || $channel == stable ]] || usage
 [[ $package_train =~ ^[0-9]+[.][0-9]+$ ]] || usage
@@ -80,10 +83,11 @@ curl --fail --location --silent --show-error --proto '=https' \
   --retry-delay 5 --connect-timeout 15 --max-time 45 \
   --output "$marker" "${artifact_url}/complete.json"
 
-jq -e --arg fingerprint "$fingerprint" --arg system "$system" \
+jq -e --arg fingerprint "$fingerprint" --arg system "$system" --arg packages "$packages" \
   --arg channel "$channel" --arg train "$package_train" \
   --arg payload "$channel_payload" --argjson generation "$generation" '
-  .schema_version == "freesense.iso/v1" and
+  ((.schema_version == "freesense.iso/v1" and (.inputs | has("packages") | not)) or
+   (.schema_version == "freesense.iso/v2" and .inputs.packages == $packages)) and
   .fingerprint == $fingerprint and
   .system == $system and
   .generation == $generation and

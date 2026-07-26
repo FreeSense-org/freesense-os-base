@@ -430,6 +430,9 @@ def main() -> int:
         "source_sha": source_sha,
         "system_sha": system_sha,
         "packages_sha": packages_sha,
+        "packages_fingerprint": (
+            current_packages_fingerprint if args.kind == "iso" else ""
+        ),
         "package_build_config_sha256": package_build_config,
         "os_base_sha": os_base_sha,
         "freebsd_sha": freebsd_sha,

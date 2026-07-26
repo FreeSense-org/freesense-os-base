@@ -47,6 +47,14 @@ func TestValidateResultMarkerAcceptsCompleteClosures(t *testing.T) {
 			platformID: platformID,
 			marker:     isoMarker(resultID, systemID, platformID, "FreeSense-16-devel.iso"),
 		},
+		{
+			name:       "legacy iso",
+			stage:      "iso",
+			id:         resultID,
+			systemID:   systemID,
+			platformID: platformID,
+			marker:     legacyISOMarker(resultID, systemID, platformID, "FreeSense-16-devel.iso"),
+		},
 	}
 
 	for _, test := range tests {
@@ -55,6 +63,7 @@ func TestValidateResultMarkerAcceptsCompleteClosures(t *testing.T) {
 				test.stage,
 				test.id,
 				test.systemID,
+				resultID,
 				test.platformID,
 				freeBSDPinID,
 				1,
@@ -132,6 +141,15 @@ func TestValidateResultMarkerRejectsBrokenClosures(t *testing.T) {
 			wantError:  "invalid closure",
 		},
 		{
+			name:       "iso Packages mismatch",
+			stage:      "iso",
+			id:         resultID,
+			systemID:   systemID,
+			platformID: platformID,
+			marker:     isoMarkerWithPackages(resultID, systemID, otherID, platformID, "FreeSense.iso"),
+			wantError:  "invalid closure",
+		},
+		{
 			name:       "unsafe iso file",
 			stage:      "iso",
 			id:         resultID,
@@ -161,6 +179,7 @@ func TestValidateResultMarkerRejectsBrokenClosures(t *testing.T) {
 				test.stage,
 				test.id,
 				test.systemID,
+				resultID,
 				test.platformID,
 				freeBSDPinID,
 				expectedGeneration,
@@ -194,8 +213,12 @@ func repositoryMarkerWithPin(stage, fingerprint, boundSystem, platform, pinID st
 }
 
 func isoMarker(fingerprint, system, platform, file string) resultMarker {
+	return isoMarkerWithPackages(fingerprint, system, resultID, platform, file)
+}
+
+func isoMarkerWithPackages(fingerprint, system, packages, platform, file string) resultMarker {
 	marker := resultMarker{
-		SchemaVersion: "freesense.iso/v1",
+		SchemaVersion: "freesense.iso/v2",
 		Fingerprint:   fingerprint,
 		Generation:    1,
 		System:        system,
@@ -204,6 +227,14 @@ func isoMarker(fingerprint, system, platform, file string) resultMarker {
 		File:          file,
 	}
 	marker.Inputs.Platform = platform
+	marker.Inputs.Packages = packages
+	return marker
+}
+
+func legacyISOMarker(fingerprint, system, platform, file string) resultMarker {
+	marker := isoMarker(fingerprint, system, platform, file)
+	marker.SchemaVersion = "freesense.iso/v1"
+	marker.Inputs.Packages = ""
 	return marker
 }
 
