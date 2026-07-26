@@ -49,6 +49,19 @@ class WorkerVersionValidationTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("does not match package train", result.stderr)
 
+    def test_heavy_ports_use_disk_for_every_poudriere_stage(self) -> None:
+        common = (ROOT / "scripts/runner/worker-common.sh").read_text(encoding="utf-8")
+        packages = (ROOT / "scripts/runner/stages/packages.sh").read_text(
+            encoding="utf-8"
+        )
+        for value in (
+            'TMPFS_BLACKLIST="rust telegraf"',
+            "TMPFS_BLACKLIST_TMPDIR=/usr/local/poudriere/data/cache/tmp",
+        ):
+            with self.subTest(value=value):
+                self.assertIn(value, common)
+                self.assertNotIn(value, packages)
+
     def test_poudriere_failure_emits_the_exact_error_log(self) -> None:
         if self.shell is None:
             self.skipTest("POSIX shell is unavailable")
