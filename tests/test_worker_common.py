@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import tempfile
 import unittest
 
 
@@ -47,3 +48,32 @@ class WorkerVersionValidationTests(unittest.TestCase):
         result = self.validate("1.1.0-DEVELOPMENT", "1.0")
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("does not match package train", result.stderr)
+
+    def test_poudriere_failure_emits_the_exact_error_log(self) -> None:
+        if self.shell is None:
+            self.skipTest("POSIX shell is unavailable")
+        source = (ROOT / "scripts/runner/worker-common.sh").read_text(encoding="utf-8")
+        start = source.index("run_poudriere_build()")
+        end = source.index("\npackage_metadata()", start)
+        fragment = source[start:end]
+        with tempfile.TemporaryDirectory() as directory:
+            error_directory = Path(directory, "run", "logs", "errors")
+            error_directory.mkdir(parents=True)
+            Path(error_directory, "rust.log").write_text(
+                "exact rust extraction failure\n", encoding="utf-8"
+            )
+            result = subprocess.run(
+                [
+                    self.shell,
+                    "-eu",
+                    "-c",
+                    fragment + "\nrun_poudriere_build sh -c 'exit 7'",
+                ],
+                text=True,
+                capture_output=True,
+                env={**os.environ, "POUDRIERE_LOGS_ROOT": directory},
+                check=False,
+            )
+        self.assertEqual(result.returncode, 7)
+        self.assertIn("exact rust extraction failure", result.stderr)
+        self.assertIn("failure diagnostics end status=7", result.stderr)

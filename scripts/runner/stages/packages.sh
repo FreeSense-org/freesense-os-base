@@ -19,7 +19,7 @@ phase optional-system-seed-ready
 
 create_source_archive
 phase optional-packages-build
-env NOLINUX=yes ./build.sh --update-pkg-repo
+run_poudriere_build env NOLINUX=yes ./build.sh --update-pkg-repo
 phase optional-packages-ready
 latest=$(poudriere_latest_repository)
 mkdir -p /root/work/packages/All

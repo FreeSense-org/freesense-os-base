@@ -198,6 +198,13 @@ for value in ('TMPFS_BLACKLIST="rust telegraf"',
               "TMPFS_BLACKLIST_TMPDIR=/usr/local/poudriere/data/cache/tmp"):
     require(value in packages_stage,
             f"optional heavy-package disk workdir contract is missing {value!r}")
+for value in ("run_poudriere_build()", "logs/errors/*.log",
+              "FreeSense Poudriere failure diagnostics begin"):
+    require(value in common,
+            f"Poudriere failure diagnostics are missing {value!r}")
+require("run_poudriere_build env NOLINUX=yes" in system_stage and
+        "run_poudriere_build env NOLINUX=yes" in packages_stage,
+        "System and Optional Packages builds do not preserve failed port logs")
 for value in ("verify_repository()", "packagesite.yaml.sig",
               "repository packages do not match the signed catalog"):
     require(value in common, f"signed repository verification is missing {value!r}")

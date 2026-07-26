@@ -29,7 +29,7 @@ phase system-ports-tree
 cp tools/conf/pfPorts/poudriere_system tools/conf/pfPorts/poudriere_bulk
 create_source_archive
 phase system-packages-build
-env NOLINUX=yes ./build.sh --update-pkg-repo
+run_poudriere_build env NOLINUX=yes ./build.sh --update-pkg-repo
 phase system-packages-ready
 latest=$(poudriere_latest_repository)
 for package in "${latest}"/All/*.pkg; do
