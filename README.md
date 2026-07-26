@@ -31,10 +31,11 @@ is immutable once published. The `stable` pointer may move only to a higher
 patch in that train and always moves as one verified System/Packages pair.
 
 `release.yml` verifies a complete repository pair and assembles one atomic
-release bundle: installer ISO, amd64 UFS QCOW2, and amd64 UFS raw GPT image.
+release bundle: installer ISO plus amd64 UFS and ZFS QCOW2/raw GPT images.
 All images consume the same sealed repositories, channel payload, source pins,
 and worker tools. The channel's `freesense.download/v2` document advances only
-after all three immutable artifacts pass their smoke checks. Historical v1
+after the ISO and both cloud variants pass their smoke checks and all five
+immutable files verify. Historical v1
 ISO-only documents remain readable. During a FreeBSD pin rollover, a newly
 published System remains pending until the new compatible Packages repository
 arrives. `pin.yml` checks daily at 02:00 UTC, performs the expensive validation

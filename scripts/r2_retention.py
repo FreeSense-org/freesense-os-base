@@ -511,10 +511,41 @@ def plan_retention(
         else:
             devel["cloud"].append(entry)
 
-    for kind in ("system", "iso", "cloud"):
-        entries = devel[kind]
-        entries.sort(key=lambda item: (item["generation"], item["prefix"]), reverse=True)
-        protected_prefixes.update(item["prefix"] for item in entries[:keep_devel])
+    entries = devel["system"]
+    entries.sort(key=lambda item: (item["generation"], item["prefix"]), reverse=True)
+    protected_prefixes.update(item["prefix"] for item in entries[:keep_devel])
+
+    # ISO and every filesystem-specific cloud result form one release bundle.
+    # Retain complete generations as a unit instead of counting cloud variants
+    # independently.
+    bundles: dict[str, dict[str, Any]] = {}
+    legacy_images = []
+    for entry in devel["iso"] + devel["cloud"]:
+        bundle = entry["marker"].get("bundle_fingerprint")
+        if not isinstance(bundle, str) or not SHA256.fullmatch(bundle):
+            legacy_images.append(entry)
+            continue
+        group = bundles.setdefault(bundle, {
+            "generation": entry["generation"], "entries": [],
+        })
+        group["generation"] = max(group["generation"], entry["generation"])
+        group["entries"].append(entry)
+    ordered_bundles = sorted(
+        bundles.values(),
+        key=lambda item: (
+            item["generation"],
+            sorted(entry["prefix"] for entry in item["entries"]),
+        ),
+        reverse=True,
+    )
+    for group in ordered_bundles[:keep_devel]:
+        protected_prefixes.update(entry["prefix"] for entry in group["entries"])
+    legacy_images.sort(
+        key=lambda item: (item["generation"], item["prefix"]), reverse=True
+    )
+    protected_prefixes.update(
+        item["prefix"] for item in legacy_images[:keep_devel]
+    )
 
     channels = manifest.get("channels")
     if not isinstance(channels, dict):

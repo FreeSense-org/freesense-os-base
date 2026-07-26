@@ -28,6 +28,8 @@ on:
       channel_payload_base64: {type: string, required: false, default: ""}
       channel_signature_base64: {type: string, required: false, default: ""}
       bundle_id: {type: string, required: false, default: ""}
+      cloud_filesystem: {type: string, required: false, default: ""}
+      cloud_virtual_size_gib: {type: string, required: false, default: "0"}
 
 jobs:
   build:
@@ -71,6 +73,8 @@ jobs:
       CHANNEL_PAYLOAD_B64: ${{ inputs.channel_payload_base64 }}
       CHANNEL_SIGNATURE_B64: ${{ inputs.channel_signature_base64 }}
       BUNDLE_ID: ${{ inputs.bundle_id }}
+      CLOUD_FILESYSTEM: ${{ inputs.cloud_filesystem }}
+      CLOUD_VIRTUAL_SIZE_GIB: ${{ inputs.cloud_virtual_size_gib }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
@@ -102,6 +106,9 @@ jobs:
             --generation "${GENERATION}" --github-output "${GITHUB_OUTPUT}")
           if [[ "${STAGE}" == packages || "${STAGE}" == iso || "${STAGE}" == cloud ]]; then args+=(--system-id "${SYSTEM_ID}"); fi
           if [[ "${STAGE}" == iso || "${STAGE}" == cloud ]]; then args+=(--packages-id "${PACKAGES_ID}"); fi
+          if [[ "${STAGE}" == cloud ]]; then
+            args+=(--filesystem "${CLOUD_FILESYSTEM}" --virtual-size-gib "${CLOUD_VIRTUAL_SIZE_GIB}")
+          fi
           if [[ "${STAGE}" == packages ]]; then args+=(--package-train "${PACKAGE_TRAIN}"); fi
           if [[ "${STAGE}" == packages ]]; then args+=(--freebsd-pin-id "${FREEBSD_PIN_ID}"); fi
           "${RUNNER_TEMP}/fsbuild" result check "${args[@]}"
@@ -152,6 +159,8 @@ jobs:
           --packages "${PACKAGES_ID}"
           --generation "${GENERATION}"
           --channel "${CHANNEL}"
+          --filesystem "${CLOUD_FILESYSTEM}"
+          --virtual-size-gib "${CLOUD_VIRTUAL_SIZE_GIB}"
       - name: Clean sensitive runner files
         if: always()
         run: >-

@@ -2,6 +2,7 @@
 set -euo pipefail
 
 declare public_base_url= fingerprint= bundle= system= packages= generation= channel=
+declare filesystem= virtual_size_gib=
 while (($#)); do
   case "$1" in
     --public-base-url) public_base_url=$2; shift 2 ;;
@@ -11,9 +12,14 @@ while (($#)); do
     --packages) packages=$2; shift 2 ;;
     --generation) generation=$2; shift 2 ;;
     --channel) channel=$2; shift 2 ;;
+    --filesystem) filesystem=$2; shift 2 ;;
+    --virtual-size-gib) virtual_size_gib=$2; shift 2 ;;
     *) echo "unknown cloud smoke argument: $1" >&2; exit 2 ;;
   esac
 done
+[[ "$filesystem" == ufs || "$filesystem" == zfs ]]
+[[ "$virtual_size_gib" =~ ^[1-9][0-9]*$ ]]
+virtual_size=$((virtual_size_gib * 1024 * 1024 * 1024))
 for value in "$fingerprint" "$bundle" "$system" "$packages"; do
   [[ "$value" =~ ^[0-9a-f]{64}$ ]] || { echo "invalid cloud smoke identity" >&2; exit 2; }
 done
@@ -29,10 +35,12 @@ curl --fail --silent --show-error --location --retry 5 \
   "${base}/complete.json" -o "${work}/complete.json"
 jq -e --arg fingerprint "$fingerprint" --arg bundle "$bundle" \
   --arg system "$system" --arg packages "$packages" \
-  --arg channel "$channel" --argjson generation "$generation" '
+  --arg channel "$channel" --arg filesystem "$filesystem" \
+  --argjson generation "$generation" --argjson virtual_size "$virtual_size" '
   .schema_version == "freesense.cloud-image/v1" and
   .fingerprint == $fingerprint and .bundle_fingerprint == $bundle and
   .generation == $generation and .channel == $channel and
+  .filesystem == $filesystem and .disk.virtual_size == $virtual_size and
   .inputs.system == $system and .inputs.packages == $packages and
   .disk.scheme == "gpt" and .disk.root_growth == true and
   (.disk.firmware | sort) == ["bios","uefi"] and
@@ -71,7 +79,7 @@ ethernets:
 EOF
 cloud-localds --network-config="${work}/network-config" \
   "${work}/cidata.iso" "${work}/user-data" "${work}/meta-data"
-qemu-img resize "${work}/disk.qcow2" 20G
+qemu-img resize "${work}/disk.qcow2" "$((virtual_size_gib + 8))G"
 
 boot_and_wait() {
   local disk=$1 format=$2 firmware=$3 log=$4
@@ -104,18 +112,33 @@ boot_and_wait() {
 
 boot_and_wait "${work}/disk.qcow2" qcow2 bios "${work}/bios.log"
 ssh_args=(-q -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i "${work}/id" -p 10022 admin@127.0.0.1)
-"${ssh_args[@]}" 'test "$(sysrc -n qemu_guest_agent_enable)" = YES &&
+"${ssh_args[@]}" "test \"\$(sysrc -n qemu_guest_agent_enable)\" = YES &&
   service qemu_guest_agent status &&
   test -s /etc/ssh/ssh_host_ed25519_key &&
   grep -q freesense-cloud-smoke /conf/config.xml &&
-  test "$(df -k / | awk "NR == 2 {print \$2}")" -gt 17000000 &&
-  test "$(cloud-init status --wait)" = "status: done"'
+  test \"\$(cloud-init status --wait)\" = \"status: done\" &&
+  if [ '${filesystem}' = ufs ]; then
+    test \"\$(df -k / | awk 'NR == 2 {print \$2}')\" -gt $((virtual_size_gib * 1024 * 1024))
+  else
+    test \"\$(zpool get -H -o value bootfs FreeSense)\" = FreeSense/ROOT/default &&
+    test \"\$(zpool list -Hp -o size FreeSense)\" -gt ${virtual_size} &&
+    zpool status -x FreeSense | grep -q healthy &&
+    /sbin/bectl check &&
+    zfs list -H -o name,mountpoint |
+      awk '\$2 == \"/cf\" { found = (\$1 ~ /^FreeSense\\/ROOT\\/default\\//) } END { exit !found }' &&
+    zfs list -H -o name,mountpoint |
+      awk '\$2 == \"/var\\/db\\/pkg\" { found = (\$1 ~ /^FreeSense\\/ROOT\\/default\\//) } END { exit !found }'
+  fi"
 if ssh -q -o BatchMode=yes -o PreferredAuthentications=password \
   -o PubkeyAuthentication=no -o StrictHostKeyChecking=no \
   -o UserKnownHostsFile=/dev/null -o ConnectTimeout=3 \
   -p 10022 admin@127.0.0.1 true; then
   echo "SSH password authentication was accepted" >&2
   exit 1
+fi
+if [[ "$filesystem" == zfs ]]; then
+  "${ssh_args[@]}" '/usr/local/sbin/freesense-be create cloud-smoke-be &&
+    /usr/local/sbin/freesense-be activate cloud-smoke-be'
 fi
 if curl --insecure --fail --silent --connect-timeout 3 https://127.0.0.1:10443/ >/dev/null 2>&1; then
   echo "WebUI was exposed automatically on one-NIC WAN" >&2
@@ -127,8 +150,13 @@ unset qemu_pid
 
 # A clean second boot of the same disk proves instance-ID idempotency.
 boot_and_wait "${work}/disk.qcow2" qcow2 bios "${work}/bios-second.log"
-"${ssh_args[@]}" 'test "$(grep -c "<instance_id>freesense-smoke-" /conf/config.xml)" = 1 &&
-  test "$(grep -c "FreeSense cloud temporary SSH" /conf/config.xml)" = 1'
+"${ssh_args[@]}" "test \"\$(grep -c '<instance_id>freesense-smoke-' /conf/config.xml)\" = 1 &&
+  test \"\$(grep -c 'FreeSense cloud temporary SSH' /conf/config.xml)\" = 1 &&
+  if [ '${filesystem}' = zfs ]; then
+    df / | grep -q 'FreeSense/ROOT/cloud-smoke-be'
+  else
+    true
+  fi"
 kill "$qemu_pid"
 wait "$qemu_pid" || true
 unset qemu_pid

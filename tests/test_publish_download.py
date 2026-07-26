@@ -30,6 +30,7 @@ SHA = "c" * 40
 ISO_SHA = "d" * 64
 PACKAGES_FINGERPRINT = "e" * 64
 CLOUD_FINGERPRINT = "f" * 64
+ZFS_CLOUD_FINGERPRINT = "6" * 64
 BUNDLE_FINGERPRINT = "1" * 64
 BASE_URL = "https://pkg.freesense.org/v1"
 DOWNLOAD_BASE_URL = "https://downloads.freesense.org/v1"
@@ -56,22 +57,30 @@ def marker(channel="stable", generation=2, fingerprint=FINGERPRINT,
     return value
 
 
-def cloud_marker(channel="stable", generation=2,
-                 fingerprint=CLOUD_FINGERPRINT, bundle=BUNDLE_FINGERPRINT):
+def cloud_marker(channel="stable", generation=2, filesystem="ufs",
+                 fingerprint=None, bundle=BUNDLE_FINGERPRINT):
+    fingerprint = fingerprint or (
+        CLOUD_FINGERPRINT if filesystem == "ufs" else ZFS_CLOUD_FINGERPRINT
+    )
     version = "1.0.0" if channel == "stable" else "1.1.0"
     prefix = f"FreeSense-{version}" if channel == "stable" else f"FreeSense-{version}-g{generation}"
+    virtual_size = (16 if filesystem == "ufs" else 32) * 1024**3
     return {
         "schema_version": "freesense.cloud-image/v1",
         "fingerprint": fingerprint,
         "bundle_fingerprint": bundle,
         "generation": generation,
         "channel": channel,
+        "filesystem": filesystem,
+        "disk": {"virtual_size": virtual_size},
         "inputs": {"system": SYSTEM, "packages": PACKAGES_FINGERPRINT},
         "files": [
-            {"kind": "cloud", "format": "qcow2", "file": f"{prefix}-amd64-ufs.qcow2.xz",
-             "sha256": "2" * 64, "size": 2048, "virtual_size": 16 * 1024**3},
-            {"kind": "cloud", "format": "raw", "file": f"{prefix}-amd64-ufs.raw.xz",
-             "sha256": "3" * 64, "size": 3072, "virtual_size": 16 * 1024**3},
+            {"kind": "cloud", "format": "qcow2", "file": f"{prefix}-amd64-{filesystem}.qcow2.xz",
+             "sha256": ("2" if filesystem == "ufs" else "7") * 64,
+             "size": 2048, "virtual_size": virtual_size},
+            {"kind": "cloud", "format": "raw", "file": f"{prefix}-amd64-{filesystem}.raw.xz",
+             "sha256": ("3" if filesystem == "ufs" else "8") * 64,
+             "size": 3072, "virtual_size": virtual_size},
         ],
     }
 
@@ -150,7 +159,8 @@ def publisher_argv(output: Path, channel="stable", generation=2, fingerprint=FIN
         "publish_download.py", "--channel", channel, "--version", version,
         "--fingerprint", fingerprint, "--system", SYSTEM,
         "--bundle-fingerprint", BUNDLE_FINGERPRINT,
-        "--cloud-fingerprint", CLOUD_FINGERPRINT,
+        "--cloud-ufs-fingerprint", CLOUD_FINGERPRINT,
+        "--cloud-zfs-fingerprint", ZFS_CLOUD_FINGERPRINT,
         "--generation", str(generation), "--source", SHA,
         "--system-ports", SHA, "--packages", SHA, "--ports", SHA,
         "--os-definition", SHA, "--freebsd", SHA, "--output", str(output),
@@ -167,7 +177,7 @@ class PublishDownloadTests(unittest.TestCase):
 
     def test_v2_iso_marker_must_match_selected_packages(self):
         with tempfile.TemporaryDirectory() as directory:
-            responses = iter((marker(packages="f" * 64), cloud_marker(), None))
+            responses = iter((marker(packages="f" * 64), cloud_marker(), cloud_marker(filesystem="zfs"), None))
             with mock.patch.object(
                 sys,
                 "argv",
@@ -183,7 +193,7 @@ class PublishDownloadTests(unittest.TestCase):
     def test_publishes_one_independent_stable_document(self):
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory, "stable.json")
-            responses = iter((marker(), cloud_marker(), None))
+            responses = iter((marker(), cloud_marker(), cloud_marker(filesystem="zfs"), None))
             with mock.patch.object(sys, "argv", publisher_argv(output)), \
                     mock.patch.object(publish, "fetch_json", side_effect=lambda *_args, **_kwargs: next(responses)), \
                     redirect_stdout(io.StringIO()):
@@ -193,6 +203,12 @@ class PublishDownloadTests(unittest.TestCase):
         self.assertEqual(value["schema_version"], "freesense.download/v2")
         self.assertEqual(value["channel"], "stable")
         self.assertEqual(value["version"], "1.0.0")
+        self.assertEqual(len(value["artifacts"]), 5)
+        self.assertEqual(
+            {(item["filesystem"], item["format"]) for item in value["artifacts"]
+             if item["kind"] == "cloud"},
+            {("ufs", "qcow2"), ("ufs", "raw"), ("zfs", "qcow2"), ("zfs", "raw")},
+        )
         self.assertEqual(
             value["artifacts"][0]["url"],
             "https://downloads.freesense.org/v1/releases/stable/1.0.0/"
@@ -204,7 +220,7 @@ class PublishDownloadTests(unittest.TestCase):
         existing = release()
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory, "stable.json")
-            responses = iter((marker(), cloud_marker(), existing))
+            responses = iter((marker(), cloud_marker(), cloud_marker(filesystem="zfs"), existing))
             with mock.patch.object(sys, "argv", publisher_argv(output)), \
                     mock.patch.object(publish, "fetch_json", side_effect=lambda *_args, **_kwargs: next(responses)):
                 self.assertEqual(publish.main(), 0)
@@ -218,7 +234,7 @@ class PublishDownloadTests(unittest.TestCase):
         compared = [{"type": "fix", "title": "Fix ZFS configuration recovery"}]
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory, "devel.json")
-            responses = iter((marker("devel", generation=8), cloud_marker("devel", 8), existing))
+            responses = iter((marker("devel", generation=8), cloud_marker("devel", 8), cloud_marker("devel", 8, "zfs"), existing))
             with mock.patch.object(
                 sys, "argv", publisher_argv(output, "devel", 8)
             ), mock.patch.object(
@@ -239,7 +255,7 @@ class PublishDownloadTests(unittest.TestCase):
     def test_immutable_stable_version_cannot_be_rewritten(self):
         existing = release(fingerprint="e" * 64)
         with tempfile.TemporaryDirectory() as directory:
-            responses = iter((marker(), cloud_marker(), existing))
+            responses = iter((marker(), cloud_marker(), cloud_marker(filesystem="zfs"), existing))
             with mock.patch.object(sys, "argv", publisher_argv(Path(directory, "stable.json"))), \
                     mock.patch.object(publish, "fetch_json", side_effect=lambda *_args, **_kwargs: next(responses)):
                 with self.assertRaisesRegex(SystemExit, "cannot be rewritten"):
@@ -248,7 +264,7 @@ class PublishDownloadTests(unittest.TestCase):
     def test_development_generation_cannot_move_backwards(self):
         existing = release("devel", generation=8)
         with tempfile.TemporaryDirectory() as directory:
-            responses = iter((marker("devel", generation=7), cloud_marker("devel", 7), existing))
+            responses = iter((marker("devel", generation=7), cloud_marker("devel", 7), cloud_marker("devel", 7, "zfs"), existing))
             with mock.patch.object(
                 sys, "argv", publisher_argv(Path(directory, "devel.json"), "devel", 7)
             ), mock.patch.object(

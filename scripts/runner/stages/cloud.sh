@@ -1,4 +1,4 @@
-# Build a provider-neutral, dual BIOS/UEFI UFS disk from the same sealed
+# Build one provider-neutral cloud filesystem variant from the same sealed
 # release inputs used by the installer ISO.
 prepare_release_inputs
 verify_release_channel
@@ -71,16 +71,23 @@ install -m 0444 /tmp/channel-signature.bin \
   "${root}/usr/local/etc/freesense-channel.sig"
 cat >>"${root}/etc/rc.conf" <<'EOF'
 cloudinit_enable="YES"
-growfs_enable="YES"
+freesense_growroot_enable="YES"
 qemu_guest_agent_enable="YES"
 sshd_enable="YES"
 EOF
+if [ "${CLOUD_FILESYSTEM}" = zfs ]; then
+  printf '%s\n' 'zfs_enable="YES"' >>"${root}/etc/rc.conf"
+  cat >>"${root}/boot/loader.conf" <<'EOF'
+zfs_load="YES"
+kern.geom.label.disk_ident.enable="0"
+kern.geom.label.gptid.enable="0"
+EOF
+fi
 cat >"${root}/usr/local/etc/rc.d/freesense_growroot" <<'EOF'
 #!/bin/sh
 # PROVIDE: freesense_growroot
 # REQUIRE: root
 # BEFORE: NETWORKING
-# KEYWORD: firstboot
 
 . /etc/rc.subr
 name=freesense_growroot
@@ -89,13 +96,24 @@ start_cmd=freesense_growroot_start
 
 freesense_growroot_start()
 {
+	fstype=$(mount -p | awk '$2 == "/" { print $3; exit }')
+	case "${fstype}" in
+	ufs) label=freesense-root ;;
+	zfs) label=freesense-zfs ;;
+	*) echo "Unsupported cloud root filesystem: ${fstype}" >&2; return 1 ;;
+	esac
 	for disk in $(sysctl -n kern.disks); do
 		index=$(gpart show -lp "${disk}" 2>/dev/null |
-			awk '$4 == "freesense-root" { print $3; exit }')
+			awk -v label="${label}" '$4 == label { print $3; exit }')
 		[ -n "${index}" ] || continue
 		gpart recover "${disk}" >/dev/null 2>&1 || true
-		gpart resize -i "${index}" "${disk}"
-		growfs -y /
+		gpart resize -i "${index}" "${disk}" >/dev/null 2>&1 || true
+		if [ "${fstype}" = ufs ]; then
+			growfs -y / >/dev/null 2>&1 || true
+		else
+			zpool online -e FreeSense "/dev/gpt/${label}"
+			zpool status -x FreeSense | grep -q "pool 'FreeSense' is healthy"
+		fi
 		return 0
 	done
 	echo "FreeSense cloud root partition was not found" >&2
@@ -108,10 +126,6 @@ run_rc_command "$1"
 EOF
 chmod 0555 "${root}/usr/local/etc/rc.d/freesense_growroot"
 touch "${root}/firstboot"
-cat >"${root}/etc/fstab" <<'EOF'
-/dev/gpt/freesense-root / ufs rw,noatime 1 1
-/dev/gpt/freesense-efi /boot/efi msdosfs rw 2 2
-EOF
 
 # Publication images never carry build identity.
 rm -rf "${root}/var/lib/cloud" "${root}/var/db/cloud-init" \
@@ -126,27 +140,75 @@ rm -f "${root}/etc/hostid" "${root}/etc/machine-id" \
 phase cloud-disk
 raw=/root/FreeSense.raw
 qcow=/root/FreeSense.qcow2
-truncate -s 16G "${raw}"
+truncate -s "${CLOUD_VIRTUAL_SIZE_GIB}G" "${raw}"
 md=$(mdconfig -a -t vnode -f "${raw}")
+cloud_pool=
 cleanup_cloud_disk() {
   umount /mnt/cloud-efi 2>/dev/null || true
+  if [ -n "${cloud_pool}" ]; then
+    zpool export "${cloud_pool}" 2>/dev/null || true
+  fi
   umount /mnt/cloud-root 2>/dev/null || true
   mdconfig -d -u "${md#md}" 2>/dev/null || true
 }
 trap cleanup_cloud_disk EXIT INT TERM
 gpart create -s gpt "${md}"
-gpart add -a 4k -s 512k -t freebsd-boot -l freesense-boot "${md}"
-gpart add -a 1m -s 200m -t efi -l freesense-efi "${md}"
-gpart add -a 1m -t freebsd-ufs -l freesense-root "${md}"
-gpart bootcode -b "${root}/boot/pmbr" -p "${root}/boot/gptboot" -i 1 "${md}"
-newfs -U -L freesense-root "/dev/gpt/freesense-root"
-newfs_msdos -F 32 -L FREESENSE_EFI "/dev/gpt/freesense-efi"
 mkdir -p /mnt/cloud-root /mnt/cloud-efi
-mount "/dev/gpt/freesense-root" /mnt/cloud-root
+
+if [ "${CLOUD_FILESYSTEM}" = ufs ]; then
+  gpart add -a 4k -s 512k -t freebsd-boot -l freesense-boot "${md}"
+  gpart add -a 1m -s 200m -t efi -l freesense-efi "${md}"
+  gpart add -a 1m -t freebsd-ufs -l freesense-root "${md}"
+  gpart bootcode -b "${root}/boot/pmbr" -p "${root}/boot/gptboot" -i 1 "${md}"
+  newfs -U -L freesense-root "/dev/gpt/freesense-root"
+  mount "/dev/gpt/freesense-root" /mnt/cloud-root
+  cat >"${root}/etc/fstab" <<'EOF'
+/dev/gpt/freesense-root / ufs rw,noatime 1 1
+/dev/gpt/freesense-efi /boot/efi msdosfs rw 2 2
+EOF
+else
+  kldload zfs 2>/dev/null || kldstat -q -m zfs
+  gpart add -a 4k -s 260m -t efi -l freesense-efi "${md}"
+  gpart add -a 4k -s 512k -t freebsd-boot -l freesense-boot "${md}"
+  gpart add -a 1m -t freebsd-zfs -l freesense-zfs "${md}"
+  gpart bootcode -b "${root}/boot/pmbr" -p "${root}/boot/gptzfsboot" -i 2 "${md}"
+  zpool create -o altroot=/mnt/cloud-root -o ashift=12 -o autoexpand=on \
+    -O compression=on -O atime=off -m none -f FreeSense \
+    /dev/gpt/freesense-zfs
+  cloud_pool=FreeSense
+  zfs create -o mountpoint=none FreeSense/ROOT
+  zfs create -o mountpoint=/ FreeSense/ROOT/default
+  zfs create -o mountpoint=/cf -o setuid=off -o exec=off FreeSense/ROOT/default/cf
+  zfs create -o mountpoint=/tmp -o exec=on -o setuid=off FreeSense/tmp
+  zfs create -o mountpoint=/home FreeSense/home
+  zfs create -o mountpoint=/var FreeSense/var
+  zfs create -o mountpoint=/var/cache -o setuid=off -o exec=off \
+    -o compression=off FreeSense/var/cache
+  zfs create -o mountpoint=/var/db -o setuid=off -o exec=off FreeSense/var/db
+  zfs create -o mountpoint=/var/empty FreeSense/var/empty
+  zfs create -o mountpoint=/var/log -o setuid=off -o exec=off FreeSense/var/log
+  zfs create -o mountpoint=/var/tmp -o setuid=off FreeSense/var/tmp
+  zfs create -o mountpoint=/var/cache/pkg -o setuid=off -o exec=off \
+    FreeSense/ROOT/default/var_cache_pkg
+  zfs create -o mountpoint=/var/db/pkg -o setuid=off -o exec=off \
+    FreeSense/ROOT/default/var_db_pkg
+  chmod 1777 /mnt/cloud-root/tmp /mnt/cloud-root/var/tmp
+  cat >"${root}/etc/fstab" <<'EOF'
+/dev/gpt/freesense-efi /boot/efi msdosfs rw 2 2
+EOF
+fi
+
+newfs_msdos -F 32 -L FREESENSE_EFI "/dev/gpt/freesense-efi"
 mount -t msdosfs "/dev/gpt/freesense-efi" /mnt/cloud-efi
 (cd "${root}" && tar -cf - .) | (cd /mnt/cloud-root && tar -xpf -)
 mkdir -p /mnt/cloud-efi/EFI/BOOT
 install -m 0444 "${root}/boot/loader.efi" /mnt/cloud-efi/EFI/BOOT/BOOTX64.EFI
+if [ "${CLOUD_FILESYSTEM}" = zfs ]; then
+  zpool set bootfs=FreeSense/ROOT/default FreeSense
+  mkdir -p /mnt/cloud-root/boot/zfs
+  zpool set cachefile=/mnt/cloud-root/boot/zfs/zpool.cache FreeSense
+  zfs set canmount=noauto FreeSense/ROOT/default
+fi
 sync
 cleanup_cloud_disk
 trap - EXIT INT TERM
@@ -154,11 +216,11 @@ trap - EXIT INT TERM
 phase cloud-convert
 qemu-img convert -f raw -O qcow2 -o compat=1.1,lazy_refcounts=on \
   "${raw}" "${qcow}"
-raw_name="FreeSense-${release_version}-amd64-ufs.raw.xz"
-qcow_name="FreeSense-${release_version}-amd64-ufs.qcow2.xz"
+raw_name="FreeSense-${release_version}-amd64-${CLOUD_FILESYSTEM}.raw.xz"
+qcow_name="FreeSense-${release_version}-amd64-${CLOUD_FILESYSTEM}.qcow2.xz"
 if [ "${CHANNEL}" != stable ]; then
-  raw_name="FreeSense-${release_version}-g${GENERATION}-amd64-ufs.raw.xz"
-  qcow_name="FreeSense-${release_version}-g${GENERATION}-amd64-ufs.qcow2.xz"
+  raw_name="FreeSense-${release_version}-g${GENERATION}-amd64-${CLOUD_FILESYSTEM}.raw.xz"
+  qcow_name="FreeSense-${release_version}-g${GENERATION}-amd64-${CLOUD_FILESYSTEM}.qcow2.xz"
 fi
 xz -T0 -9 -c "${raw}" >/root/"${raw_name}"
 xz -T0 -9 -c "${qcow}" >/root/"${qcow_name}"
@@ -166,7 +228,7 @@ raw_sha=$(sha256 -q /root/"${raw_name}")
 qcow_sha=$(sha256 -q /root/"${qcow_name}")
 raw_size=$(stat -f %z /root/"${raw_name}")
 qcow_size=$(stat -f %z /root/"${qcow_name}")
-virtual_size=$((16 * 1024 * 1024 * 1024))
+virtual_size=$((CLOUD_VIRTUAL_SIZE_GIB * 1024 * 1024 * 1024))
 
 phase cloud-publish
 upload_immutable /root/"${raw_name}" "${RESULT}/${raw_name}"
@@ -180,15 +242,20 @@ jq -n \
   --arg source "${SOURCE_SHA}" --arg system_ports "${SYSTEM_SHA}" \
   --arg freebsd "${FREEBSD_SHA}" --arg ports "${PORTS_SHA}" \
   --arg worker_tools "${WORKER_TOOLS_SHA256}" \
+  --arg filesystem "${CLOUD_FILESYSTEM}" \
   --arg raw_file "${raw_name}" --arg raw_sha "${raw_sha}" \
   --arg qcow_file "${qcow_name}" --arg qcow_sha "${qcow_sha}" \
   --argjson generation "${GENERATION}" --argjson virtual_size "${virtual_size}" \
   --argjson raw_size "${raw_size}" --argjson qcow_size "${qcow_size}" \
   '{schema_version:"freesense.cloud-image/v1",fingerprint:$fingerprint,
     bundle_fingerprint:$bundle,generation:$generation,channel:$channel,
-    release_version:$release,architecture:"amd64",filesystem:"ufs",
-    disk:{scheme:"gpt",firmware:["bios","uefi"],virtual_size:$virtual_size,
-      root_growth:true},
+    release_version:$release,architecture:"amd64",filesystem:$filesystem,
+    disk:({scheme:"gpt",firmware:["bios","uefi"],virtual_size:$virtual_size,
+      root_growth:true} +
+      (if $filesystem == "zfs" then
+        {pool:{name:"FreeSense",topology:"stripe",
+          root_dataset:"FreeSense/ROOT/default",boot_environments:true}}
+       else {} end)),
     inputs:{platform:$platform,system:$system,packages:$packages,
       package_train:$package_train,channel_payload:$channel_payload,source:$source,
       system_ports:$system_ports,freebsd:$freebsd,ports:$ports,

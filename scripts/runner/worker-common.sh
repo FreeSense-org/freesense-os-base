@@ -19,7 +19,7 @@ for name in AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN R2_ENDPOIN
   FREESENSE_REPO_SIGNING_KEY STAGE FINGERPRINT PLATFORM_ID SYSTEM_ID SOURCE_SHA \
   SYSTEM_SHA PACKAGES_SHA PACKAGES_ID OS_BASE_SHA FREEBSD_SHA PORTS_SHA JAIL_OBJECT FREEBSD_PIN_ID PACKAGE_TRAIN PRODUCT_VERSION \
   IMAGE_SHA256 WORKER_TOOLS_SHA256 GENERATION SYSTEM_GENERATION PUBLIC_BASE_URL CHANNEL CHANNEL_PAYLOAD_SHA256 \
-  CHANNEL_PAYLOAD_B64 CHANNEL_SIGNATURE_B64 BUNDLE_ID; do
+  CHANNEL_PAYLOAD_B64 CHANNEL_SIGNATURE_B64 BUNDLE_ID CLOUD_FILESYSTEM CLOUD_VIRTUAL_SIZE_GIB; do
   eval "$name=\$(decode \"\${${name}_B64}\")"
 done
 unset AWS_ACCESS_KEY_ID_B64 AWS_SECRET_ACCESS_KEY_B64 AWS_SESSION_TOKEN_B64
@@ -49,6 +49,14 @@ if [ "${STAGE}" = iso ] || [ "${STAGE}" = cloud ]; then
   [ "${#PACKAGES_ID}" -eq 64 ] || { echo "invalid release Packages identity" >&2; exit 1; }
   case "${BUNDLE_ID}" in ''|*[!0-9a-f]*) echo "invalid release bundle identity" >&2; exit 1 ;; esac
   [ "${#BUNDLE_ID}" -eq 64 ] || { echo "invalid release bundle identity" >&2; exit 1; }
+fi
+if [ "${STAGE}" = cloud ]; then
+  case "${CLOUD_FILESYSTEM}" in ufs|zfs) : ;; *)
+    echo "invalid cloud filesystem" >&2; exit 1 ;;
+  esac
+  case "${CLOUD_VIRTUAL_SIZE_GIB}" in ''|*[!0-9]*|0)
+    echo "invalid cloud virtual size" >&2; exit 1 ;;
+  esac
 fi
 case "${FREEBSD_PIN_ID}" in ''|*[!0-9a-f]*) echo "invalid FreeBSD pin identity" >&2; exit 1 ;; esac
 [ "${#FREEBSD_PIN_ID}" -eq 64 ] || { echo "invalid FreeBSD pin identity" >&2; exit 1; }

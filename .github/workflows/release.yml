@@ -171,7 +171,8 @@ jobs:
     environment: build-coordinator
     outputs:
       fingerprint: ${{ steps.plan.outputs.iso }}
-      cloud_fingerprint: ${{ steps.plan.outputs.cloud }}
+      cloud_ufs_fingerprint: ${{ steps.plan.outputs.cloud_ufs }}
+      cloud_zfs_fingerprint: ${{ steps.plan.outputs.cloud_zfs }}
       bundle_fingerprint: ${{ steps.plan.outputs.bundle }}
       system: ${{ steps.plan.outputs.system }}
       generation: ${{ steps.reserve.outputs.generation }}
@@ -277,12 +278,12 @@ jobs:
       bundle_id: ${{ needs.iso-plan.outputs.bundle_fingerprint }}
     secrets: inherit
 
-  cloud:
+  cloud-ufs:
     needs: iso-plan
     uses: ./.github/workflows/runner-build.yml
     with:
       stage: cloud
-      fingerprint: ${{ needs.iso-plan.outputs.cloud_fingerprint }}
+      fingerprint: ${{ needs.iso-plan.outputs.cloud_ufs_fingerprint }}
       platform_id: ${{ needs.iso-plan.outputs.platform }}
       system_id: ${{ needs.iso-plan.outputs.system }}
       source_sha: ${{ needs.iso-plan.outputs.source_sha }}
@@ -306,10 +307,45 @@ jobs:
       channel_payload_base64: ${{ needs.iso-plan.outputs.channel_payload_base64 }}
       channel_signature_base64: ${{ needs.iso-plan.outputs.channel_signature_base64 }}
       bundle_id: ${{ needs.iso-plan.outputs.bundle_fingerprint }}
+      cloud_filesystem: ufs
+      cloud_virtual_size_gib: "16"
+    secrets: inherit
+
+  cloud-zfs:
+    needs: iso-plan
+    uses: ./.github/workflows/runner-build.yml
+    with:
+      stage: cloud
+      fingerprint: ${{ needs.iso-plan.outputs.cloud_zfs_fingerprint }}
+      platform_id: ${{ needs.iso-plan.outputs.platform }}
+      system_id: ${{ needs.iso-plan.outputs.system }}
+      source_sha: ${{ needs.iso-plan.outputs.source_sha }}
+      system_sha: ${{ needs.iso-plan.outputs.system_sha }}
+      packages_sha: ${{ needs.iso-plan.outputs.packages_sha }}
+      packages_id: ${{ needs.iso-plan.outputs.packages_fingerprint }}
+      os_base_sha: ${{ needs.iso-plan.outputs.os_base_sha }}
+      freebsd_sha: ${{ needs.iso-plan.outputs.freebsd_sha }}
+      ports_sha: ${{ needs.iso-plan.outputs.ports_sha }}
+      image_sha256: ${{ needs.iso-plan.outputs.image_sha256 }}
+      worker_tools_sha256: ${{ needs.iso-plan.outputs.worker_tools_sha256 }}
+      jail_object: ${{ needs.iso-plan.outputs.jail_object }}
+      freebsd_pin_id: ${{ needs.iso-plan.outputs.freebsd_pin_id }}
+      product_version: ${{ needs.iso-plan.outputs.product_version }}
+      package_train: ${{ needs.iso-plan.outputs.package_train }}
+      generation: ${{ needs.iso-plan.outputs.generation }}
+      system_generation: ${{ needs.iso-plan.outputs.system_generation }}
+      public_base_url: ${{ needs.iso-plan.outputs.public_base_url }}
+      channel: ${{ needs.iso-plan.outputs.channel }}
+      channel_payload_sha256: ${{ needs.iso-plan.outputs.channel_payload_sha256 }}
+      channel_payload_base64: ${{ needs.iso-plan.outputs.channel_payload_base64 }}
+      channel_signature_base64: ${{ needs.iso-plan.outputs.channel_signature_base64 }}
+      bundle_id: ${{ needs.iso-plan.outputs.bundle_fingerprint }}
+      cloud_filesystem: zfs
+      cloud_virtual_size_gib: "32"
     secrets: inherit
 
   publish-download:
-    needs: [iso-plan, iso, cloud]
+    needs: [iso-plan, iso, cloud-ufs, cloud-zfs]
     runs-on: ubuntu-24.04
     environment: channel-publisher
     steps:
@@ -325,7 +361,8 @@ jobs:
             --version "${{ needs.iso-plan.outputs.release_version }}" \
             --fingerprint "${{ needs.iso-plan.outputs.fingerprint }}" \
             --bundle-fingerprint "${{ needs.iso-plan.outputs.bundle_fingerprint }}" \
-            --cloud-fingerprint "${{ needs.iso-plan.outputs.cloud_fingerprint }}" \
+            --cloud-ufs-fingerprint "${{ needs.iso-plan.outputs.cloud_ufs_fingerprint }}" \
+            --cloud-zfs-fingerprint "${{ needs.iso-plan.outputs.cloud_zfs_fingerprint }}" \
             --system "${{ needs.iso-plan.outputs.system }}" \
             --generation "${{ needs.iso-plan.outputs.generation }}" \
             --source "${{ needs.iso-plan.outputs.source_sha }}" \

@@ -161,10 +161,15 @@ def current_component(manifest_url: str, component: str) -> str:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("kind", choices=("system", "packages", "iso", "cloud"))
+    parser.add_argument("--filesystem", choices=("ufs", "zfs"))
     parser.add_argument("--github-output", type=Path)
     parser.add_argument("--os-base-sha", default=os.environ.get("GITHUB_SHA", ""))
     parser.add_argument("--system-closure", type=Path)
     args = parser.parse_args()
+    if args.kind == "cloud" and args.filesystem is None:
+        raise SystemExit("cloud planning requires --filesystem ufs or zfs")
+    if args.kind != "cloud" and args.filesystem is not None:
+        raise SystemExit("--filesystem is valid only for cloud planning")
 
     if args.kind in {"packages", "iso", "cloud"}:
         if args.system_closure is None:
@@ -457,14 +462,32 @@ def main() -> int:
         "kind": "iso",
         "bundle": bundle,
     })
-    cloud = fingerprint({
-        "schema": 1,
-        "kind": "cloud",
-        "bundle": bundle,
-    })
+    cloud_variants = policy.get("cloud", {}).get("variants", {})
+    if (not isinstance(cloud_variants, dict)
+            or set(cloud_variants) != {"ufs", "zfs"}):
+        raise SystemExit("cloud policy must define exactly ufs and zfs variants")
+    for filesystem, variant in cloud_variants.items():
+        if (not isinstance(variant, dict)
+                or not isinstance(variant.get("virtual_size_gib"), int)
+                or variant["virtual_size_gib"] <= 0
+                or variant.get("root_growth") is not True):
+            raise SystemExit(f"cloud {filesystem} variant is invalid")
+    cloud_ids = {
+        filesystem: fingerprint({
+            "schema": 2,
+            "kind": "cloud",
+            "filesystem": filesystem,
+            "variant": variant,
+            "bundle": bundle,
+        })
+        for filesystem, variant in cloud_variants.items()
+    }
+    selected_filesystem = args.filesystem or "ufs"
+    cloud = cloud_ids[selected_filesystem]
     identifiers = {
         "platform": platform, "system": system, "packages": packages,
         "bundle": bundle, "iso": iso, "cloud": cloud,
+        "cloud_ufs": cloud_ids["ufs"], "cloud_zfs": cloud_ids["zfs"],
     }
     selected = identifiers[args.kind]
     manifest_url = policy["public_base_url"] + "/repos.manifest.json"
@@ -505,6 +528,8 @@ def main() -> int:
         "channel_signature_base64": channel_signature_base64,
         "signing_public_key_sha256": signing_public_key_sha256,
         "freebsd_pin_id": freebsd_pin_id,
+        "cloud_filesystem": selected_filesystem,
+        "cloud_virtual_size_gib": cloud_variants[selected_filesystem]["virtual_size_gib"],
         "product_version": (f"{release_version}-RELEASE"
                             if args.kind in {"iso", "cloud"} and channel_name == "stable"
                             else f"{release_version}-DEVELOPMENT"),

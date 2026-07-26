@@ -191,17 +191,22 @@ def validate_download(release, channel: str, base_url: str,
             or not SHA256.fullmatch(release.get("bundle_fingerprint", ""))
             or not SHA256.fullmatch(release.get("system", ""))
             or not isinstance(release.get("generation"), int) or release["generation"] <= 0
-            or not isinstance(artifacts, list) or len(artifacts) != 3
+            or not isinstance(artifacts, list) or len(artifacts) not in {3, 5}
             or not isinstance(release.get("published_at"), str)
             or ("changes" in release and not valid_changes(release["changes"]))):
         raise SystemExit(f"existing {channel} download document is invalid")
-    expected = {("installer", "iso"), ("cloud", "qcow2"), ("cloud", "raw")}
+    expected = {
+        ("installer", None, "iso"),
+        ("cloud", "ufs", "qcow2"), ("cloud", "ufs", "raw"),
+    }
+    if len(artifacts) == 5:
+        expected.update({("cloud", "zfs", "qcow2"), ("cloud", "zfs", "raw")})
     actual = set()
     for artifact in artifacts:
         if not isinstance(artifact, dict):
             raise SystemExit(f"existing {channel} download document has invalid artifacts")
-        actual.add((artifact.get("kind"), artifact.get("format")))
-        if (artifact.get("filesystem") not in {None, "ufs"}
+        actual.add((artifact.get("kind"), artifact.get("filesystem"), artifact.get("format")))
+        if (artifact.get("filesystem") not in {None, "ufs", "zfs"}
                 or artifact.get("compression") not in {"none", "xz"}
                 or not SHA256.fullmatch(artifact.get("sha256", ""))
                 or not SHA256.fullmatch(artifact.get("build_fingerprint", ""))
@@ -213,9 +218,11 @@ def validate_download(release, channel: str, base_url: str,
                 or not isinstance(artifact.get("marker_url"), str)):
             raise SystemExit(f"existing {channel} download document has invalid artifacts")
         if artifact["format"] in {"qcow2", "raw"} and (
-            artifact.get("virtual_size") != 16 * 1024 * 1024 * 1024
+            artifact.get("virtual_size") != {
+                "ufs": 16 * 1024 * 1024 * 1024,
+                "zfs": 32 * 1024 * 1024 * 1024,
+            }.get(artifact.get("filesystem"))
             or artifact.get("compression") != "xz"
-            or artifact.get("filesystem") != "ufs"
         ):
             raise SystemExit(f"existing {channel} cloud artifact is invalid")
     if actual != expected or release.get("release_id") != release_identity(release, channel):
@@ -255,7 +262,8 @@ def main() -> int:
     parser.add_argument("--version", required=True)
     parser.add_argument("--fingerprint", required=True)
     parser.add_argument("--bundle-fingerprint", required=True)
-    parser.add_argument("--cloud-fingerprint", required=True)
+    parser.add_argument("--cloud-ufs-fingerprint", required=True)
+    parser.add_argument("--cloud-zfs-fingerprint", required=True)
     parser.add_argument("--system", required=True)
     parser.add_argument("--generation", required=True, type=int)
     parser.add_argument("--source", required=True)
@@ -278,7 +286,8 @@ def main() -> int:
     ]
     if (not SHA256.fullmatch(args.fingerprint)
             or not SHA256.fullmatch(args.bundle_fingerprint)
-            or not SHA256.fullmatch(args.cloud_fingerprint)
+            or not SHA256.fullmatch(args.cloud_ufs_fingerprint)
+            or not SHA256.fullmatch(args.cloud_zfs_fingerprint)
             or not SHA256.fullmatch(args.system)
             or not SHA256.fullmatch(args.packages_fingerprint)):
         raise SystemExit("invalid artifact identity")
@@ -307,22 +316,33 @@ def main() -> int:
             or not isinstance(marker.get("file"), str)):
         raise SystemExit("boot-tested ISO marker does not match the release")
 
-    cloud_artifact_url = f"{args.base_url}/artifacts/cloud/{args.cloud_fingerprint}"
-    cloud_marker_url = cloud_artifact_url + "/complete.json"
-    cloud_marker = fetch_json(cloud_marker_url)
-    cloud_files = cloud_marker.get("files", []) if isinstance(cloud_marker, dict) else []
-    if (not isinstance(cloud_marker, dict)
-            or cloud_marker.get("schema_version") != "freesense.cloud-image/v1"
-            or cloud_marker.get("fingerprint") != args.cloud_fingerprint
-            or cloud_marker.get("bundle_fingerprint") != args.bundle_fingerprint
-            or cloud_marker.get("generation") != args.generation
-            or cloud_marker.get("system") not in {None, args.system}
-            or cloud_marker.get("inputs", {}).get("system") != args.system
-            or cloud_marker.get("inputs", {}).get("packages") != args.packages_fingerprint
-            or cloud_marker.get("channel") != args.channel
-            or not isinstance(cloud_files, list) or len(cloud_files) != 2
-            or {item.get("format") for item in cloud_files} != {"qcow2", "raw"}):
-        raise SystemExit("boot-tested cloud marker does not match the release bundle")
+    cloud_results = {}
+    for filesystem, cloud_fingerprint in (
+        ("ufs", args.cloud_ufs_fingerprint), ("zfs", args.cloud_zfs_fingerprint)
+    ):
+        cloud_artifact_url = f"{args.base_url}/artifacts/cloud/{cloud_fingerprint}"
+        cloud_marker_url = cloud_artifact_url + "/complete.json"
+        cloud_marker = fetch_json(cloud_marker_url)
+        cloud_files = cloud_marker.get("files", []) if isinstance(cloud_marker, dict) else []
+        expected_size = policy["cloud"]["variants"][filesystem]["virtual_size_gib"] * 1024**3
+        if (not isinstance(cloud_marker, dict)
+                or cloud_marker.get("schema_version") != "freesense.cloud-image/v1"
+                or cloud_marker.get("fingerprint") != cloud_fingerprint
+                or cloud_marker.get("filesystem") != filesystem
+                or cloud_marker.get("bundle_fingerprint") != args.bundle_fingerprint
+                or cloud_marker.get("generation") != args.generation
+                or cloud_marker.get("system") not in {None, args.system}
+                or cloud_marker.get("inputs", {}).get("system") != args.system
+                or cloud_marker.get("inputs", {}).get("packages") != args.packages_fingerprint
+                or cloud_marker.get("channel") != args.channel
+                or cloud_marker.get("disk", {}).get("virtual_size") != expected_size
+                or not isinstance(cloud_files, list) or len(cloud_files) != 2
+                or {item.get("format") for item in cloud_files} != {"qcow2", "raw"}
+                or any(item.get("virtual_size") != expected_size for item in cloud_files)):
+            raise SystemExit(f"boot-tested {filesystem} cloud marker does not match the release bundle")
+        cloud_results[filesystem] = (
+            cloud_fingerprint, cloud_marker_url, cloud_files
+        )
 
     release_url = f"{args.base_url}/releases/{args.channel}.json"
     existing = fetch_json(release_url, missing=None)
@@ -378,15 +398,17 @@ def main() -> int:
         "marker_url": marker_url, "sha256": marker["sha256"], "size": marker["size"],
         "build_fingerprint": args.fingerprint,
     })
-    for item in sorted(cloud_files, key=lambda value: value["format"]):
-        release["artifacts"].append({
-            "kind": "cloud", "format": item["format"], "filesystem": "ufs",
-            "compression": "xz", "file": item["file"],
-            "url": public_artifact_url(release, args.channel, item["file"], args.download_base_url),
-            "marker_url": cloud_marker_url, "sha256": item["sha256"],
-            "size": item["size"], "virtual_size": item["virtual_size"],
-            "build_fingerprint": args.cloud_fingerprint,
-        })
+    for filesystem in ("ufs", "zfs"):
+        cloud_fingerprint, cloud_marker_url, cloud_files = cloud_results[filesystem]
+        for item in sorted(cloud_files, key=lambda value: value["format"]):
+            release["artifacts"].append({
+                "kind": "cloud", "format": item["format"], "filesystem": filesystem,
+                "compression": "xz", "file": item["file"],
+                "url": public_artifact_url(release, args.channel, item["file"], args.download_base_url),
+                "marker_url": cloud_marker_url, "sha256": item["sha256"],
+                "size": item["size"], "virtual_size": item["virtual_size"],
+                "build_fingerprint": cloud_fingerprint,
+            })
     if (existing is not None and existing["version"] == args.version
             and existing["generation"] == args.generation
             and existing.get("bundle_fingerprint") == args.bundle_fingerprint):

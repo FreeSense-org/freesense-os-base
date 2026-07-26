@@ -144,17 +144,28 @@ class RetentionPlanTests(unittest.TestCase):
         )
         images = []
         for generation in range(1, 6):
+            bundle = fingerprint(5000 + generation)
             iso = iso_marker(
                 100 + generation, generation, system["fingerprint"],
                 packages=packages["fingerprint"],
             )
-            cloud = cloud_marker(
+            iso["bundle_fingerprint"] = bundle
+            cloud_ufs = cloud_marker(
                 200 + generation, generation, system["fingerprint"],
                 packages["fingerprint"],
             )
+            cloud_zfs = cloud_marker(
+                300 + generation, generation, system["fingerprint"],
+                packages["fingerprint"],
+            )
+            cloud_ufs["bundle_fingerprint"] = bundle
+            cloud_zfs["bundle_fingerprint"] = bundle
+            cloud_ufs["filesystem"] = "ufs"
+            cloud_zfs["filesystem"] = "zfs"
             add_artifact(build, f"v1/artifacts/iso/{iso['fingerprint']}", iso)
-            add_artifact(build, f"v1/artifacts/cloud/{cloud['fingerprint']}", cloud)
-            images.append((iso, cloud))
+            add_artifact(build, f"v1/artifacts/cloud/{cloud_ufs['fingerprint']}", cloud_ufs)
+            add_artifact(build, f"v1/artifacts/cloud/{cloud_zfs['fingerprint']}", cloud_zfs)
+            images.append((iso, cloud_ufs, cloud_zfs))
         manifest = {
             "schema_version": "freesense.channels/v3",
             "channels": {
@@ -176,9 +187,13 @@ class RetentionPlanTests(unittest.TestCase):
         self.assertIn(
             f"v1/artifacts/cloud/{images[0][1]['fingerprint']}/", candidates
         )
-        for iso, cloud in images[1:]:
+        self.assertIn(
+            f"v1/artifacts/cloud/{images[0][2]['fingerprint']}/", candidates
+        )
+        for iso, cloud_ufs, cloud_zfs in images[1:]:
             self.assertNotIn(f"v1/artifacts/iso/{iso['fingerprint']}/", candidates)
-            self.assertNotIn(f"v1/artifacts/cloud/{cloud['fingerprint']}/", candidates)
+            self.assertNotIn(f"v1/artifacts/cloud/{cloud_ufs['fingerprint']}/", candidates)
+            self.assertNotIn(f"v1/artifacts/cloud/{cloud_zfs['fingerprint']}/", candidates)
 
     def test_packages_follow_current_channel_and_retained_iso_references(self):
         build = inventory("build", "builds")

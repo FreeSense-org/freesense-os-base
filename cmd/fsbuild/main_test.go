@@ -66,6 +66,8 @@ func TestValidateResultMarkerAcceptsCompleteClosures(t *testing.T) {
 				resultID,
 				test.platformID,
 				freeBSDPinID,
+				"",
+				0,
 				1,
 				marshalMarker(t, test.marker),
 			)
@@ -182,6 +184,8 @@ func TestValidateResultMarkerRejectsBrokenClosures(t *testing.T) {
 				resultID,
 				test.platformID,
 				freeBSDPinID,
+				"",
+				0,
 				expectedGeneration,
 				marshalMarker(t, test.marker),
 			)
@@ -192,6 +196,39 @@ func TestValidateResultMarkerRejectsBrokenClosures(t *testing.T) {
 				t.Fatalf("validateResultMarker() error = %q, want substring %q", err, test.wantError)
 			}
 		})
+	}
+}
+
+func TestValidateCloudResultMarkerChecksFilesystemAndSize(t *testing.T) {
+	marker := map[string]any{
+		"schema_version":     "freesense.cloud-image/v1",
+		"fingerprint":        resultID,
+		"bundle_fingerprint": otherID,
+		"generation":         1,
+		"filesystem":         "zfs",
+		"inputs": map[string]any{
+			"system": systemID, "packages": resultID, "platform": platformID,
+		},
+		"files": []map[string]any{
+			{"format": "qcow2", "file": "FreeSense-amd64-zfs.qcow2.xz", "sha256": otherID, "size": 10, "virtual_size": int64(32 * 1024 * 1024 * 1024)},
+			{"format": "raw", "file": "FreeSense-amd64-zfs.raw.xz", "sha256": otherID, "size": 10, "virtual_size": int64(32 * 1024 * 1024 * 1024)},
+		},
+	}
+	data, err := json.Marshal(marker)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := validateResultMarker(
+		"cloud", resultID, systemID, resultID, platformID, freeBSDPinID,
+		"zfs", 32, 1, data,
+	); err != nil {
+		t.Fatalf("valid ZFS marker rejected: %v", err)
+	}
+	if _, err := validateResultMarker(
+		"cloud", resultID, systemID, resultID, platformID, freeBSDPinID,
+		"ufs", 16, 1, data,
+	); err == nil {
+		t.Fatal("ZFS marker accepted as UFS")
 	}
 }
 

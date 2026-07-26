@@ -75,7 +75,7 @@ retention_source = read("scripts/r2_retention.py")
 for value in ("minimum_interval: timedelta = timedelta(hours=20)",
               "retention deletion exceeds the per-run safety cap",
               '"/stable/" in key', "superseded broker smoke marker",
-              'for kind in ("system", "iso", "cloud")',
+              'for entry in devel["iso"] + devel["cloud"]',
               'inputs.get("packages")',
               "retained legacy Development ISO has no Packages fingerprint"):
     require(value in retention_source,
@@ -228,7 +228,9 @@ require('"packages": current_packages_fingerprint' in planner_source and
         "ISO identity omits the optional package pair or signed channel payload")
 for value in ('"bundle": bundle', '"kind": "cloud"', '"cloud_policy": policy["cloud"]'):
     require(value in planner_source, f"bundle/cloud identity is missing {value!r}")
-for value in ("freesense.cloud-image/v1", "qemu-img convert", "16G",
+for value in ("freesense.cloud-image/v1", "qemu-img convert",
+              "CLOUD_VIRTUAL_SIZE_GIB", "CLOUD_FILESYSTEM",
+              "FreeSense/ROOT/default", "gptzfsboot", "zpool online -e",
               "FreeSense-cloud-init", "qemu-guest-agent", "prepare_release_inputs"):
     require(value in cloud_stage, f"cloud image stage is missing {value!r}")
 require('schema_version:"freesense.iso/v2"' in iso_stage and

@@ -316,6 +316,8 @@ func commandResult(ctx context.Context, args []string) error {
 	packageTrain := flags.String("package-train", "", "required for optional package results")
 	freeBSDPinID := flags.String("freebsd-pin-id", "", "required compatibility pin for optional package results")
 	generation := flags.Uint64("generation", 0, "expected reserved or selected generation")
+	filesystem := flags.String("filesystem", "", "expected cloud filesystem")
+	virtualSizeGiB := flags.Uint64("virtual-size-gib", 0, "expected cloud virtual size in GiB")
 	githubOutput := flags.String("github-output", os.Getenv("GITHUB_OUTPUT"), "GitHub output file")
 	if err := parseFlags(flags, args[1:]); err != nil {
 		return err
@@ -332,6 +334,9 @@ func commandResult(ctx context.Context, args []string) error {
 	}
 	if *stage == "packages" && !sha256Pattern.MatchString(*freeBSDPinID) {
 		return errors.New("package result checks require --freebsd-pin-id")
+	}
+	if *stage == "cloud" && ((*filesystem != "ufs" && *filesystem != "zfs") || *virtualSizeGiB == 0) {
+		return errors.New("cloud result checks require --filesystem and --virtual-size-gib")
 	}
 	backend, err := openStore()
 	if err != nil {
@@ -351,7 +356,7 @@ func commandResult(ctx context.Context, args []string) error {
 	} else if err != nil {
 		return err
 	} else {
-		marker, validateErr := validateResultMarker(*stage, *id, *systemID, *packagesID, *platformID, *freeBSDPinID, *generation, object.Data)
+		marker, validateErr := validateResultMarker(*stage, *id, *systemID, *packagesID, *platformID, *freeBSDPinID, *filesystem, *virtualSizeGiB, *generation, object.Data)
 		if validateErr != nil {
 			return validateErr
 		}
@@ -403,6 +408,7 @@ type resultMarker struct {
 	Size              int64  `json:"size"`
 	File              string `json:"file"`
 	BundleFingerprint string `json:"bundle_fingerprint"`
+	Filesystem        string `json:"filesystem"`
 	Files             []struct {
 		Format      string `json:"format"`
 		SHA256      string `json:"sha256"`
@@ -418,7 +424,7 @@ type resultMarker struct {
 	} `json:"inputs"`
 }
 
-func validateResultMarker(stage, id, systemID, packagesID, platformID, freeBSDPinID string, generation uint64, data []byte) (resultMarker, error) {
+func validateResultMarker(stage, id, systemID, packagesID, platformID, freeBSDPinID, filesystem string, virtualSizeGiB, generation uint64, data []byte) (resultMarker, error) {
 	var marker resultMarker
 	if err := json.Unmarshal(data, &marker); err != nil || marker.Fingerprint != id || marker.Generation == 0 {
 		return resultMarker{}, errors.New("result completion marker conflicts with its content ID")
@@ -440,6 +446,7 @@ func validateResultMarker(stage, id, systemID, packagesID, platformID, freeBSDPi
 		if marker.SchemaVersion != "freesense.cloud-image/v1" ||
 			marker.Inputs.System != systemID || marker.Inputs.Packages != packagesID ||
 			marker.Inputs.Platform != platformID || !sha256Pattern.MatchString(marker.BundleFingerprint) ||
+			marker.Filesystem != filesystem ||
 			len(marker.Files) != 2 {
 			return resultMarker{}, errors.New("cloud completion marker has an invalid closure")
 		}
@@ -447,7 +454,7 @@ func validateResultMarker(stage, id, systemID, packagesID, platformID, freeBSDPi
 		for _, file := range marker.Files {
 			if !map[string]bool{"qcow2": true, "raw": true}[file.Format] ||
 				!sha256Pattern.MatchString(file.SHA256) || file.Size <= 0 ||
-				file.VirtualSize != 16*1024*1024*1024 ||
+				file.VirtualSize != int64(virtualSizeGiB)*1024*1024*1024 ||
 				!regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*\.(qcow2|raw)\.xz$`).MatchString(file.File) {
 				return resultMarker{}, errors.New("cloud completion marker has an invalid file")
 			}

@@ -240,7 +240,8 @@ class PlannerChannelTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             closure = Path(directory, "system.json")
             closure.write_text(json.dumps(system_closure()))
-            argv = ["plan.py", "cloud", "--system-closure", str(closure)]
+            argv = ["plan.py", "cloud", "--filesystem", "zfs",
+                    "--system-closure", str(closure)]
             with mock.patch.object(sys, "argv", argv), \
                     mock.patch.object(
                         plan, "remote_sha",
@@ -250,6 +251,11 @@ class PlannerChannelTests(unittest.TestCase):
             values = json.loads(rendered.getvalue())
         self.assertRegex(values["bundle"], r"^[0-9a-f]{64}$")
         self.assertRegex(values["cloud"], r"^[0-9a-f]{64}$")
+        self.assertRegex(values["cloud_ufs"], r"^[0-9a-f]{64}$")
+        self.assertRegex(values["cloud_zfs"], r"^[0-9a-f]{64}$")
+        self.assertNotEqual(values["cloud_ufs"], values["cloud_zfs"])
+        self.assertEqual(values["cloud_filesystem"], "zfs")
+        self.assertEqual(values["cloud_virtual_size_gib"], 32)
         self.assertNotEqual(values["cloud"], values["iso"])
 
     def test_system_plan_uses_the_pinned_worker_bundle(self):
@@ -287,8 +293,11 @@ class PlannerChannelTests(unittest.TestCase):
                     "development_lifecycle": "experimental",
                 },
                 "cloud": {
-                    "architecture": "amd64", "filesystem": "ufs",
-                    "virtual_size_gib": 16, "formats": ["qcow2", "raw"],
+                    "architecture": "amd64", "formats": ["qcow2", "raw"],
+                    "variants": {
+                        "ufs": {"virtual_size_gib": 16, "root_growth": True},
+                        "zfs": {"virtual_size_gib": 32, "root_growth": True},
+                    },
                 },
             }))
             (root / "config/channel-signing-public.pem").write_bytes(b"test-key")

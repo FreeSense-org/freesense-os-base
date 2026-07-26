@@ -13,7 +13,7 @@ document=$1
 jq -e '.schema_version == "freesense.download/v2"' "$document" >/dev/null
 
 count=$(jq '.artifacts | length' "$document")
-((count == 3))
+((count == 3 || count == 5))
 for ((index=0; index<count; index++)); do
   file=$(jq -er ".artifacts[$index].file" "$document")
   expected_sha=$(jq -er ".artifacts[$index].sha256" "$document")

@@ -32,6 +32,8 @@ jobs:
         run: |
           bash -n scripts/runner/run-vm.sh
           bash -n scripts/runner/smoke-iso.sh
+          bash -n scripts/runner/smoke-cloud.sh
+          bash -n scripts/publish_iso.sh
           bash -n scripts/pin-worker-tools.sh
           bash -n scripts/verify-release.sh
           sh -n scripts/runner/install-worker-tools.sh scripts/runner/probe.sh apply.sh
@@ -44,7 +46,7 @@ jobs:
               print(field)
           PY
           )
-          for stage in system packages iso; do
+          for stage in system packages iso cloud; do
             export STAGE=${stage}
             python3 scripts/render-worker.py --common scripts/runner/worker-common.sh \
               --stages scripts/runner/stages --output "${render_dir}/${stage}.sh"

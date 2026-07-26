@@ -12,13 +12,25 @@
   },
   "cloud": {
     "architecture": "amd64",
-    "filesystem": "ufs",
-    "virtual_size_gib": 16,
     "formats": ["qcow2", "raw"],
     "partition_scheme": "gpt",
     "firmware": ["bios", "uefi"],
     "swap": "none",
-    "root_growth": true
+    "variants": {
+      "ufs": {
+        "virtual_size_gib": 16,
+        "root_growth": true
+      },
+      "zfs": {
+        "virtual_size_gib": 32,
+        "root_growth": true,
+        "pool": "FreeSense",
+        "root_dataset": "FreeSense/ROOT/default",
+        "topology": "stripe",
+        "boot_environments": true,
+        "autotrim": false
+      }
+    }
   },
   "abi": "FreeBSD:16:amd64",
   "altabi": "freebsd:16:x86:64",
