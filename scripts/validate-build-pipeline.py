@@ -196,8 +196,8 @@ for value in ("recover_configxml.sh", "import_foreign_config.sh",
             f"exact ISO assembly omits installer recovery payload {value!r}")
 for value in ('TMPFS_BLACKLIST="rust telegraf"',
               "TMPFS_BLACKLIST_TMPDIR=/usr/local/poudriere/data/cache/tmp"):
-    require(value in packages_stage,
-            f"optional heavy-package disk workdir contract is missing {value!r}")
+    require(value in common and value not in packages_stage,
+            f"shared heavy-package disk workdir contract is missing {value!r}")
 for value in ("run_poudriere_build()", "logs/errors/*.log",
               "FreeSense Poudriere failure diagnostics begin"):
     require(value in common,
