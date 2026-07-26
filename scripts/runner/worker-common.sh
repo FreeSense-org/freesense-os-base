@@ -240,6 +240,38 @@ EOF
   mv -f "${temporary}" "${config}"
 }
 
+run_poudriere_build() {
+  set +e
+  "$@"
+  status=$?
+  set -e
+  [ "${status}" -eq 0 ] && return 0
+
+  logs_root=${POUDRIERE_LOGS_ROOT:-/usr/local/poudriere/data/logs/bulk}
+  error_list=/tmp/freesense-poudriere-error-logs.$$
+  echo "FreeSense Poudriere failure diagnostics begin" >&2
+  if [ -d "${logs_root}" ]; then
+    find -L "${logs_root}" -type f -path '*/logs/errors/*.log' -print 2>/dev/null \
+      | sort | tail -n 10 >"${error_list}"
+  else
+    : >"${error_list}"
+  fi
+  if [ -s "${error_list}" ]; then
+    while IFS= read -r error_log; do
+      echo "----- Poudriere error log: ${error_log} -----" >&2
+      tail -n 1200 "${error_log}" >&2 || true
+      echo "----- End Poudriere error log: ${error_log} -----" >&2
+    done <"${error_list}"
+  else
+    echo "No Poudriere logs/errors files were found; recent log files:" >&2
+    find "${logs_root}" -type f -name '*.log' -print 2>/dev/null \
+      | sort | tail -n 20 >&2 || true
+  fi
+  rm -f "${error_list}"
+  echo "FreeSense Poudriere failure diagnostics end status=${status}" >&2
+  return "${status}"
+}
+
 package_metadata() {
   package=$1
   metadata=$(pkg query -F "${package}" '%n|%v|%o|%q|%Q') || return 1
