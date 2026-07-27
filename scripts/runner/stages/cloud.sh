@@ -216,7 +216,7 @@ else
 EOF
 fi
 
-newfs_msdos -F 32 -L FREESENSE "/dev/gpt/freesense-efi"
+newfs_msdos -F 32 -c 1 -L FREESENSE "/dev/gpt/freesense-efi"
 mount -t msdosfs "/dev/gpt/freesense-efi" /mnt/cloud-efi
 (cd "${root}" && tar -cf - .) | (cd /mnt/cloud-root && tar -xpf -)
 mkdir -p /mnt/cloud-efi/EFI/BOOT
