@@ -244,11 +244,14 @@ for value in ('"bundle": bundle', '"kind": "cloud"', '"cloud_policy": policy["cl
 for value in ("freesense.cloud-image/v1", "qemu-img convert",
               "CLOUD_VIRTUAL_SIZE_GIB", "CLOUD_FILESYSTEM",
               "FreeSense/ROOT/default", "gptzfsboot", "force_growfs",
-              'growfs_swap_size="0"',
+              'growfs_enable="YES"', 'growfs_swap_size="0"',
               "FreeSense-base", "FreeSense-kernel-FreeSense", "FreeSense-repoc",
               "FreeSense-cloud-init", "qemu-guest-agent", "prepare_release_inputs",
               '${root}/boot/kernel/kernel', '${root}/boot/kernel/kernel.gz',
               "for kernel_module in zfs.ko opensolaris.ko",
+              "for boot_hook in FreeSense-rc FreeSense-rc.shutdown",
+              'ln -sf FreeSense-rc "${root}/etc/pfSense-rc"',
+              'ln -sf FreeSense-rc.shutdown "${root}/etc/pfSense-rc.shutdown"',
               'cat >"${root}/boot.config"', "-S115200 -Dh",
               'boot_multicons="YES"', 'boot_serial="YES"',
               'comconsole_speed="115200"'):
@@ -273,6 +276,10 @@ require('signature_type: "pubkey"' not in cloud_stage,
         "cloud assembly uses an incompatible repository trust mode")
 require('pkg -r "${root}"' not in cloud_stage,
         "cloud package installation bypasses the image-root chroot")
+for value in ("prepare_qga()", "-device virtio-serial-pci",
+              "name=org.qemu.guest_agent.0", '"${qga_args[@]}"'):
+    require(value in read("scripts/runner/smoke-cloud.sh"),
+            f"cloud smoke guest-agent channel is missing {value!r}")
 require('schema_version:"freesense.iso/v2"' in iso_stage and
         "packages:$packages" in iso_stage,
         "ISO completion markers omit the exact Packages artifact")

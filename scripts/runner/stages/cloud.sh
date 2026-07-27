@@ -99,6 +99,14 @@ for kernel_module in zfs.ko opensolaris.ko; do
     exit 1
   }
 done
+for boot_hook in FreeSense-rc FreeSense-rc.shutdown; do
+  [ -x "${root}/etc/${boot_hook}" ] || {
+    echo "cloud image root is missing ${boot_hook}" >&2
+    exit 1
+  }
+done
+ln -sf FreeSense-rc "${root}/etc/pfSense-rc"
+ln -sf FreeSense-rc.shutdown "${root}/etc/pfSense-rc.shutdown"
 rm -rf "${root}/tmp/assembly-repo" "${root}/tmp/assembly-repos" \
   "${root}/tmp/assembly-keys" "${root}/tmp/assembly-cache" \
   "${root}/tmp/pkg-bootstrap.pkg"
@@ -140,6 +148,7 @@ install -m 0444 /tmp/channel-signature.bin \
   "${root}/usr/local/etc/freesense-channel.sig"
 cat >>"${root}/etc/rc.conf" <<'EOF'
 cloudinit_enable="YES"
+growfs_enable="YES"
 growfs_swap_size="0"
 qemu_guest_agent_enable="YES"
 sshd_enable="YES"
@@ -165,8 +174,8 @@ kern.geom.label.disk_ident.enable="0"
 kern.geom.label.gptid.enable="0"
 EOF
 fi
-# FreeSense invokes the pinned FreeBSD growfs service through this one-shot
-# marker before checking and mounting the final root filesystem.
+# The native FreeSense boot path consumes this one-shot marker, invokes the
+# pinned FreeBSD growfs service before normal configuration, and removes it.
 touch "${root}/root/force_growfs"
 touch "${root}/firstboot"
 

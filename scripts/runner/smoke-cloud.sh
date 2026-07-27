@@ -100,6 +100,16 @@ prepare_ovmf() {
   ovmf_code=$code
 }
 
+prepare_qga() {
+  local socket=$1
+  rm -f "$socket"
+  qga_args=(
+    -device virtio-serial-pci
+    -chardev "socket,path=${socket},server=on,wait=off,id=qga0"
+    -device "virtserialport,chardev=qga0,name=org.qemu.guest_agent.0"
+  )
+}
+
 boot_and_wait() {
   local disk=$1 format=$2 firmware=$3 log=$4
   local firmware_args=()
@@ -110,8 +120,10 @@ boot_and_wait() {
       -drive "if=pflash,format=raw,file=${work}/OVMF_VARS.fd"
     )
   fi
+  prepare_qga "${work}/qga.sock"
   qemu-system-x86_64 -machine accel=kvm -m 4096 -nographic \
     "${firmware_args[@]}" \
+    "${qga_args[@]}" \
     -drive "if=virtio,format=${format},file=${disk},cache=none" \
     -drive "if=virtio,format=raw,readonly=on,file=${work}/cidata.iso" \
     -netdev user,id=wan,hostfwd=tcp:127.0.0.1:10022-:22,hostfwd=tcp:127.0.0.1:10443-:443 \
@@ -220,9 +232,11 @@ EOF
 cloud-localds --network-config="${work}/network-config-two" \
   "${work}/cidata-two.iso" "${work}/user-data-two" "${work}/meta-data-two"
 prepare_ovmf "${work}/OVMF_VARS-two.fd"
+prepare_qga "${work}/qga-two.sock"
 qemu-system-x86_64 -machine accel=kvm -m 4096 -nographic \
   -drive "if=pflash,format=raw,readonly=on,file=${ovmf_code}" \
   -drive "if=pflash,format=raw,file=${work}/OVMF_VARS-two.fd" \
+  "${qga_args[@]}" \
   -drive "if=virtio,format=raw,file=${work}/disk.raw,cache=none" \
   -drive "if=virtio,format=raw,readonly=on,file=${work}/cidata-two.iso" \
   -netdev user,id=wan -device virtio-net-pci,netdev=wan,mac=52:54:00:12:34:56 \
