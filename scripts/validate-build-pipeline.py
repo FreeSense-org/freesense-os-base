@@ -109,6 +109,9 @@ for value in ("Reserve immutable release generation", "system_generation",
 require(release_workflow.count(
             "if: always() && needs.iso-plan.result == 'success'") == 3,
         "manual bundle artifact jobs do not survive the intentionally skipped release gate")
+for value in ("needs: [iso-plan, iso]", "needs: [iso-plan, cloud-ufs]"):
+    require(value in release_workflow,
+            f"release KVM jobs are not serialized by {value!r}")
 require('expected_system = values["built_against_system"]' in read("scripts/channel.py"),
         "rebound optional packages are not verified against their build System")
 for value in ("sync-downloads", "scripts/migrate_downloads.py",
@@ -249,11 +252,18 @@ for value in ('signature_type: "fingerprints"',
               "FreeBSD: { enabled: no }",
               "FreeBSD-kmods: { enabled: no }",
               "REPOS_DIR=/tmp/cloud-repos",
-              "REPOS_DIR=/tmp/assembly-repos"):
+              "REPOS_DIR=/tmp/assembly-repos",
+              "run_in_cloud_chroot()",
+              "mount -t devfs devfs",
+              'chroot "${cloud_chroot_root}"',
+              "pkg-bootstrap.pkg",
+              'PKG_INSTALL_EPOCH="${SOURCE_DATE_EPOCH}"'):
     require(value in cloud_stage,
             f"cloud package trust boundary is missing {value!r}")
 require('signature_type: "pubkey"' not in cloud_stage,
         "cloud assembly uses an incompatible repository trust mode")
+require('pkg -r "${root}"' not in cloud_stage,
+        "cloud package installation bypasses the image-root chroot")
 require('schema_version:"freesense.iso/v2"' in iso_stage and
         "packages:$packages" in iso_stage,
         "ISO completion markers omit the exact Packages artifact")
