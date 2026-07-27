@@ -127,7 +127,7 @@ install -m 0444 /tmp/channel-signature.bin \
   "${root}/usr/local/etc/freesense-channel.sig"
 cat >>"${root}/etc/rc.conf" <<'EOF'
 cloudinit_enable="YES"
-freesense_growroot_enable="YES"
+growfs_swap_size="0"
 qemu_guest_agent_enable="YES"
 sshd_enable="YES"
 EOF
@@ -139,56 +139,18 @@ kern.geom.label.disk_ident.enable="0"
 kern.geom.label.gptid.enable="0"
 EOF
 fi
-cat >"${root}/usr/local/etc/rc.d/freesense_growroot" <<'EOF'
-#!/bin/sh
-# PROVIDE: freesense_growroot
-# REQUIRE: root
-# BEFORE: NETWORKING
-
-. /etc/rc.subr
-name=freesense_growroot
-rcvar=freesense_growroot_enable
-start_cmd=freesense_growroot_start
-
-freesense_growroot_start()
-{
-	fstype=$(mount -p | awk '$2 == "/" { print $3; exit }')
-	case "${fstype}" in
-	ufs) label=freesense-root ;;
-	zfs) label=freesense-zfs ;;
-	*) echo "Unsupported cloud root filesystem: ${fstype}" >&2; return 1 ;;
-	esac
-	for disk in $(sysctl -n kern.disks); do
-		index=$(gpart show -lp "${disk}" 2>/dev/null |
-			awk -v label="${label}" '$4 == label { print $3; exit }')
-		[ -n "${index}" ] || continue
-		gpart recover "${disk}" >/dev/null 2>&1 || true
-		gpart resize -i "${index}" "${disk}" >/dev/null 2>&1 || true
-		if [ "${fstype}" = ufs ]; then
-			growfs -y / >/dev/null 2>&1 || true
-		else
-			zpool online -e FreeSense "/dev/gpt/${label}"
-			zpool status -x FreeSense | grep -q "pool 'FreeSense' is healthy"
-		fi
-		return 0
-	done
-	echo "FreeSense cloud root partition was not found" >&2
-	return 1
-}
-
-load_rc_config "${name}"
-: "${freesense_growroot_enable:=YES}"
-run_rc_command "$1"
-EOF
-chmod 0555 "${root}/usr/local/etc/rc.d/freesense_growroot"
+# FreeSense invokes the pinned FreeBSD growfs service through this one-shot
+# marker before checking and mounting the final root filesystem.
+touch "${root}/root/force_growfs"
 touch "${root}/firstboot"
 
 # Publication images never carry build identity.
 rm -rf "${root}/var/lib/cloud" "${root}/var/db/cloud-init" \
+  "${root}/var/db/entropy" \
   "${root}/var/db/dhclient.leases"* "${root}/var/db/dhclient/"* \
   "${root}/var/log/"*
 rm -f "${root}/etc/hostid" "${root}/etc/machine-id" \
-  "${root}/var/db/hostid" "${root}/var/db/entropy" \
+  "${root}/var/db/hostid" \
   "${root}/etc/ssh/ssh_host_"* \
   "${root}/var/db/freesense-cloud-init/instance.json"
 : >"${root}/var/log/messages"
