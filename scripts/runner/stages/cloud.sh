@@ -4,16 +4,22 @@ prepare_release_inputs
 verify_release_channel
 
 phase cloud-tools
-cat >/usr/local/etc/pkg/repos/FreeSense-cloud-build.conf <<EOF
-FreeSense-cloud-build: {
+cloud_keys=/root/freesense-src/src/usr/local/share/FreeSense/keys/pkg
+test -s "${cloud_keys}/trusted/freesense"
+mkdir -p /tmp/cloud-repos /tmp/cloud-cache
+cat >/tmp/cloud-repos/FreeSenseAssembly.conf <<EOF
+FreeSenseAssembly: {
   url: "file:///root/system-repo",
+  mirror_type: "none",
   enabled: yes,
-  signature_type: "pubkey",
-  pubkey: "/root/sign/repo.pub"
+  signature_type: "fingerprints",
+  fingerprints: "${cloud_keys}"
 }
 EOF
-pkg update -f -r FreeSense-cloud-build
-pkg install -y -r FreeSense-cloud-build qemu-tools
+pkg -o REPOS_DIR=/tmp/cloud-repos -o PKG_CACHEDIR=/tmp/cloud-cache \
+  update -f -r FreeSenseAssembly
+pkg -o REPOS_DIR=/tmp/cloud-repos -o PKG_CACHEDIR=/tmp/cloud-cache \
+  install -y -r FreeSenseAssembly qemu-tools
 command -v qemu-img >/dev/null
 
 phase cloud-root
@@ -21,22 +27,27 @@ root=/root/cloud-root
 rm -rf "${root}"
 mkdir -p "${root}"
 tar -xpf /root/jail-base.txz -C "${root}"
-mkdir -p "${root}/usr/local/etc/pkg/repos" "${root}/conf" "${root}/boot/efi"
-cat >"${root}/usr/local/etc/pkg/repos/FreeSense.conf" <<EOF
-FreeSense: {
-  url: "file:///root/system-repo",
+mkdir -p "${root}/tmp/assembly-repo" "${root}/tmp/assembly-repos" \
+  "${root}/tmp/assembly-keys" "${root}/tmp/assembly-cache" \
+  "${root}/usr/local/etc/pkg/repos" "${root}/conf" "${root}/boot/efi"
+cp -a /root/system-repo/. "${root}/tmp/assembly-repo/"
+cp -a "${cloud_keys}/." "${root}/tmp/assembly-keys/"
+cat >"${root}/tmp/assembly-repos/FreeSenseAssembly.conf" <<'EOF'
+FreeSenseAssembly: {
+  url: "file:///tmp/assembly-repo",
+  mirror_type: "none",
   enabled: yes,
-  signature_type: "pubkey",
-  pubkey: "/usr/local/etc/pkg/repos/FreeSense.pub"
+  signature_type: "fingerprints",
+  fingerprints: "/tmp/assembly-keys"
 }
 EOF
-install -m 0444 /root/sign/repo.pub \
-  "${root}/usr/local/etc/pkg/repos/FreeSense.pub"
-mkdir -p "${root}/root/system-repo"
-cp -a /root/system-repo/. "${root}/root/system-repo/"
-pkg -r "${root}" update -f
-pkg -r "${root}" install -y FreeSense FreeSense-default-config-serial \
-  FreeSense-cloud-init qemu-guest-agent
+pkg -r "${root}" -o REPOS_DIR=/tmp/assembly-repos \
+  -o PKG_CACHEDIR=/tmp/assembly-cache update -f -r FreeSenseAssembly
+pkg -r "${root}" -o REPOS_DIR=/tmp/assembly-repos \
+  -o PKG_CACHEDIR=/tmp/assembly-cache install -y -r FreeSenseAssembly \
+  FreeSense FreeSense-default-config-serial FreeSense-cloud-init qemu-guest-agent
+rm -rf "${root}/tmp/assembly-repo" "${root}/tmp/assembly-repos" \
+  "${root}/tmp/assembly-keys" "${root}/tmp/assembly-cache"
 config="${root}/cf/conf/config.xml"
 test -s "${config}"
 xml ed -L \
@@ -47,19 +58,23 @@ xml ed -L \
 test "$(xml sel -t -v "/freesense/system/user[name='admin']/password" "${config}")" = '*LOCKED*'
 test -z "$(xml sel -t -v "/freesense/system/user[name='admin']/bcrypt-hash" "${config}")"
 pw -R "${root}" lock root
-rm -rf "${root}/root/system-repo"
 cat >"${root}/usr/local/etc/pkg/repos/FreeSense.conf" <<EOF
+FreeBSD: { enabled: no }
+FreeBSD-kmods: { enabled: no }
+
 FreeSense-system: {
   url: "${PUBLIC_BASE_URL}/artifacts/system/${SYSTEM_ID}/amd64",
+  mirror_type: "none",
   enabled: yes,
-  signature_type: "pubkey",
-  pubkey: "/usr/local/etc/pkg/repos/FreeSense.pub"
+  signature_type: "fingerprints",
+  fingerprints: "/usr/local/share/FreeSense/keys/pkg"
 }
 FreeSense-packages: {
   url: "${PUBLIC_BASE_URL}/artifacts/packages/${PACKAGE_TRAIN}/${PACKAGES_ID}/amd64",
+  mirror_type: "none",
   enabled: yes,
-  signature_type: "pubkey",
-  pubkey: "/usr/local/etc/pkg/repos/FreeSense.pub"
+  signature_type: "fingerprints",
+  fingerprints: "/usr/local/share/FreeSense/keys/pkg"
 }
 EOF
 
