@@ -144,6 +144,19 @@ growfs_swap_size="0"
 qemu_guest_agent_enable="YES"
 sshd_enable="YES"
 EOF
+# Cloud images must expose the loader and kernel on COM1 from the first boot.
+# -Dh keeps serial primary while retaining the firmware-native video console
+# (vidconsole under BIOS, efi under UEFI), matching the boot-tested ISO setup.
+cat >"${root}/boot.config" <<'EOF'
+-S115200 -Dh
+EOF
+cat >>"${root}/boot/loader.conf" <<'EOF'
+autoboot_delay="3"
+kern.cam.boot_delay=10000
+boot_multicons="YES"
+boot_serial="YES"
+comconsole_speed="115200"
+EOF
 if [ "${CLOUD_FILESYSTEM}" = zfs ]; then
   printf '%s\n' 'zfs_enable="YES"' >>"${root}/etc/rc.conf"
   cat >>"${root}/boot/loader.conf" <<'EOF'

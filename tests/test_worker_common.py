@@ -106,6 +106,19 @@ class WorkerVersionValidationTests(unittest.TestCase):
             cloud,
         )
 
+    def test_cloud_first_boot_keeps_kernel_on_the_serial_console(self) -> None:
+        cloud = (ROOT / "scripts/runner/stages/cloud.sh").read_text(encoding="utf-8")
+        for value in (
+            'cat >"${root}/boot.config"',
+            "-S115200 -Dh",
+            'boot_multicons="YES"',
+            'boot_serial="YES"',
+            'comconsole_speed="115200"',
+        ):
+            with self.subTest(value=value):
+                self.assertIn(value, cloud)
+        self.assertNotIn('console="comconsole,vidconsole"', cloud)
+
     def test_cloud_smoke_uses_writable_uefi_vars_and_effective_ssh_policy(self) -> None:
         smoke = (ROOT / "scripts/runner/smoke-cloud.sh").read_text(
             encoding="utf-8"

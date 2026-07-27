@@ -248,8 +248,13 @@ for value in ("freesense.cloud-image/v1", "qemu-img convert",
               "FreeSense-base", "FreeSense-kernel-FreeSense", "FreeSense-repoc",
               "FreeSense-cloud-init", "qemu-guest-agent", "prepare_release_inputs",
               '${root}/boot/kernel/kernel', '${root}/boot/kernel/kernel.gz',
-              "for kernel_module in zfs.ko opensolaris.ko"):
+              "for kernel_module in zfs.ko opensolaris.ko",
+              'cat >"${root}/boot.config"', "-S115200 -Dh",
+              'boot_multicons="YES"', 'boot_serial="YES"',
+              'comconsole_speed="115200"'):
     require(value in cloud_stage, f"cloud image stage is missing {value!r}")
+require('console="comconsole,vidconsole"' not in cloud_stage,
+        "cloud console hard-codes the BIOS-only video console")
 for value in ('signature_type: "fingerprints"',
               'fingerprints: "/tmp/assembly-keys"',
               'fingerprints: "/usr/local/share/FreeSense/keys/pkg"',
