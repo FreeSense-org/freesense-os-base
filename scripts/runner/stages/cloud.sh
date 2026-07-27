@@ -100,8 +100,8 @@ for kernel_module in zfs.ko opensolaris.ko; do
   }
 done
 for boot_hook in FreeSense-rc FreeSense-rc.shutdown; do
-  [ -x "${root}/etc/${boot_hook}" ] || {
-    echo "cloud image root is missing ${boot_hook}" >&2
+  [ -s "${root}/etc/${boot_hook}" ] || {
+    echo "cloud image root is missing or empty: ${boot_hook}" >&2
     exit 1
   }
 done
