@@ -79,7 +79,7 @@ run_in_cloud_chroot "${root}" /usr/bin/env \
   pkg add /tmp/pkg-bootstrap.pkg
   pkg -o REPOS_DIR=/tmp/assembly-repos \
     -o PKG_CACHEDIR=/tmp/assembly-cache install -y -r FreeSenseAssembly \
-    FreeSense FreeSense-base FreeSense-kernel-FreeSense \
+    FreeSense FreeSense-base FreeSense-kernel-FreeSense FreeSense-rc \
     FreeSense-default-config-serial FreeSense-repoc \
     FreeSense-cloud-init qemu-guest-agent
   package_epochs=$(pkg query -a "%t" | sort -u)
