@@ -80,6 +80,19 @@ class WorkerVersionValidationTests(unittest.TestCase):
         self.assertIn("pkg-bootstrap.pkg", cloud)
         self.assertNotIn('pkg -r "${root}"', cloud)
 
+    def test_cloud_assembly_installs_and_validates_platform_packages(self) -> None:
+        cloud = (ROOT / "scripts/runner/stages/cloud.sh").read_text(encoding="utf-8")
+        for package in (
+            "FreeSense-base",
+            "FreeSense-kernel-FreeSense",
+            "FreeSense-repoc",
+        ):
+            with self.subTest(package=package):
+                self.assertIn(package, cloud)
+        self.assertIn('${root}/boot/kernel/kernel"', cloud)
+        self.assertIn('${root}/boot/kernel/kernel.gz"', cloud)
+        self.assertIn("for kernel_module in zfs.ko opensolaris.ko", cloud)
+
     def test_cloud_first_boot_uses_supported_growth_and_sanitization(self) -> None:
         cloud = (ROOT / "scripts/runner/stages/cloud.sh").read_text(encoding="utf-8")
         self.assertIn('growfs_swap_size="0"', cloud)

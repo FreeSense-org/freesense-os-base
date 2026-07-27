@@ -245,7 +245,10 @@ for value in ("freesense.cloud-image/v1", "qemu-img convert",
               "CLOUD_VIRTUAL_SIZE_GIB", "CLOUD_FILESYSTEM",
               "FreeSense/ROOT/default", "gptzfsboot", "force_growfs",
               'growfs_swap_size="0"',
-              "FreeSense-cloud-init", "qemu-guest-agent", "prepare_release_inputs"):
+              "FreeSense-base", "FreeSense-kernel-FreeSense", "FreeSense-repoc",
+              "FreeSense-cloud-init", "qemu-guest-agent", "prepare_release_inputs",
+              '${root}/boot/kernel/kernel', '${root}/boot/kernel/kernel.gz',
+              "for kernel_module in zfs.ko opensolaris.ko"):
     require(value in cloud_stage, f"cloud image stage is missing {value!r}")
 for value in ('signature_type: "fingerprints"',
               'fingerprints: "/tmp/assembly-keys"',
