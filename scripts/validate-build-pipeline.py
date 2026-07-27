@@ -106,6 +106,9 @@ for value in ("Reserve immutable release generation", "system_generation",
               "--proposed \"${GITHUB_RUN_NUMBER}\""):
     require(value in release_workflow,
             f"independent ISO release generation is missing {value!r}")
+require(release_workflow.count(
+            "if: always() && needs.iso-plan.result == 'success'") == 3,
+        "manual bundle artifact jobs do not survive the intentionally skipped release gate")
 require('expected_system = values["built_against_system"]' in read("scripts/channel.py"),
         "rebound optional packages are not verified against their build System")
 for value in ("sync-downloads", "scripts/migrate_downloads.py",
