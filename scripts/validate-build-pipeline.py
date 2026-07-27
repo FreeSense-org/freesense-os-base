@@ -243,7 +243,8 @@ for value in ('"bundle": bundle', '"kind": "cloud"', '"cloud_policy": policy["cl
     require(value in planner_source, f"bundle/cloud identity is missing {value!r}")
 for value in ("freesense.cloud-image/v1", "qemu-img convert",
               "CLOUD_VIRTUAL_SIZE_GIB", "CLOUD_FILESYSTEM",
-              "FreeSense/ROOT/default", "gptzfsboot", "zpool online -e",
+              "FreeSense/ROOT/default", "gptzfsboot", "force_growfs",
+              'growfs_swap_size="0"',
               "FreeSense-cloud-init", "qemu-guest-agent", "prepare_release_inputs"):
     require(value in cloud_stage, f"cloud image stage is missing {value!r}")
 for value in ('signature_type: "fingerprints"',

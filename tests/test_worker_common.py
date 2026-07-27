@@ -80,6 +80,26 @@ class WorkerVersionValidationTests(unittest.TestCase):
         self.assertIn("pkg-bootstrap.pkg", cloud)
         self.assertNotIn('pkg -r "${root}"', cloud)
 
+    def test_cloud_first_boot_uses_supported_growth_and_sanitization(self) -> None:
+        cloud = (ROOT / "scripts/runner/stages/cloud.sh").read_text(encoding="utf-8")
+        self.assertIn('growfs_swap_size="0"', cloud)
+        self.assertIn('touch "${root}/root/force_growfs"', cloud)
+        self.assertNotIn("freesense_growroot", cloud)
+        self.assertIn(
+            'rm -rf "${root}/var/lib/cloud" "${root}/var/db/cloud-init" \\\n'
+            '  "${root}/var/db/entropy"',
+            cloud,
+        )
+
+    def test_cloud_smoke_uses_writable_uefi_vars_and_effective_ssh_policy(self) -> None:
+        smoke = (ROOT / "scripts/runner/smoke-cloud.sh").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("OVMF_VARS_4M.fd", smoke)
+        self.assertIn('format=raw,file=${work}/OVMF_VARS-two.fd', smoke)
+        self.assertIn("sshd -T", smoke)
+        self.assertIn("passwordauthentication no", smoke)
+
     def test_poudriere_failure_emits_the_exact_error_log(self) -> None:
         if self.shell is None:
             self.skipTest("POSIX shell is unavailable")

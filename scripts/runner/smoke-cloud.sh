@@ -81,13 +81,34 @@ cloud-localds --network-config="${work}/network-config" \
   "${work}/cidata.iso" "${work}/user-data" "${work}/meta-data"
 qemu-img resize "${work}/disk.qcow2" "$((virtual_size_gib + 8))G"
 
+prepare_ovmf() {
+  local vars=$1 candidate code= template=
+  for candidate in \
+    /usr/share/OVMF/OVMF_CODE_4M.fd \
+    /usr/share/OVMF/OVMF_CODE.fd \
+    /usr/share/edk2/ovmf/OVMF_CODE.fd; do
+    [[ ! -f "$candidate" ]] || { code=$candidate; break; }
+  done
+  for candidate in \
+    /usr/share/OVMF/OVMF_VARS_4M.fd \
+    /usr/share/OVMF/OVMF_VARS.fd \
+    /usr/share/edk2/ovmf/OVMF_VARS.fd; do
+    [[ ! -f "$candidate" ]] || { template=$candidate; break; }
+  done
+  [[ -n "$code" && -n "$template" ]]
+  cp "$template" "$vars"
+  ovmf_code=$code
+}
+
 boot_and_wait() {
   local disk=$1 format=$2 firmware=$3 log=$4
   local firmware_args=()
   if [[ "$firmware" == uefi ]]; then
-    ovmf=$(find /usr/share /usr/share/OVMF -type f \( -name 'OVMF_CODE*.fd' -o -name 'OVMF_CODE*.4m.fd' \) 2>/dev/null | head -n1)
-    [[ -n "$ovmf" ]]
-    firmware_args=(-drive "if=pflash,format=raw,readonly=on,file=${ovmf}")
+    prepare_ovmf "${work}/OVMF_VARS.fd"
+    firmware_args=(
+      -drive "if=pflash,format=raw,readonly=on,file=${ovmf_code}"
+      -drive "if=pflash,format=raw,file=${work}/OVMF_VARS.fd"
+    )
   fi
   qemu-system-x86_64 -machine accel=kvm -m 4096 -nographic \
     "${firmware_args[@]}" \
@@ -129,6 +150,9 @@ ssh_args=(-q -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=
     zfs list -H -o name,mountpoint |
       awk '\$2 == \"/var\\/db\\/pkg\" { found = (\$1 ~ /^FreeSense\\/ROOT\\/default\\//) } END { exit !found }'
   fi"
+"${ssh_args[@]}" "sshd -T |
+  grep -qx 'passwordauthentication no' &&
+  sshd -T | grep -Eq '^(kbdinteractiveauthentication|challengeresponseauthentication) no$'"
 if ssh -q -o BatchMode=yes -o PreferredAuthentications=password \
   -o PubkeyAuthentication=no -o StrictHostKeyChecking=no \
   -o UserKnownHostsFile=/dev/null -o ConnectTimeout=3 \
@@ -195,10 +219,10 @@ ethernets:
 EOF
 cloud-localds --network-config="${work}/network-config-two" \
   "${work}/cidata-two.iso" "${work}/user-data-two" "${work}/meta-data-two"
-ovmf=$(find /usr/share /usr/share/OVMF -type f \( -name 'OVMF_CODE*.fd' -o -name 'OVMF_CODE*.4m.fd' \) 2>/dev/null | head -n1)
-[[ -n "$ovmf" ]]
+prepare_ovmf "${work}/OVMF_VARS-two.fd"
 qemu-system-x86_64 -machine accel=kvm -m 4096 -nographic \
-  -drive "if=pflash,format=raw,readonly=on,file=${ovmf}" \
+  -drive "if=pflash,format=raw,readonly=on,file=${ovmf_code}" \
+  -drive "if=pflash,format=raw,file=${work}/OVMF_VARS-two.fd" \
   -drive "if=virtio,format=raw,file=${work}/disk.raw,cache=none" \
   -drive "if=virtio,format=raw,readonly=on,file=${work}/cidata-two.iso" \
   -netdev user,id=wan -device virtio-net-pci,netdev=wan,mac=52:54:00:12:34:56 \
