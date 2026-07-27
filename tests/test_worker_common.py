@@ -94,6 +94,7 @@ class WorkerVersionValidationTests(unittest.TestCase):
         self.assertIn('${root}/boot/kernel/kernel.gz"', cloud)
         self.assertIn("for kernel_module in zfs.ko opensolaris.ko", cloud)
         self.assertIn("for boot_hook in FreeSense-rc FreeSense-rc.shutdown", cloud)
+        self.assertIn('[ -s "${root}/etc/${boot_hook}" ]', cloud)
         self.assertIn('ln -sf FreeSense-rc "${root}/etc/pfSense-rc"', cloud)
         self.assertIn(
             'ln -sf FreeSense-rc.shutdown "${root}/etc/pfSense-rc.shutdown"',
