@@ -85,6 +85,8 @@ class WorkerVersionValidationTests(unittest.TestCase):
         self.assertIn('growfs_swap_size="0"', cloud)
         self.assertIn('touch "${root}/root/force_growfs"', cloud)
         self.assertNotIn("freesense_growroot", cloud)
+        self.assertIn("newfs_msdos -F 32 -L FREESENSE ", cloud)
+        self.assertNotIn("FREESENSE_EFI", cloud)
         self.assertIn(
             'rm -rf "${root}/var/lib/cloud" "${root}/var/db/cloud-init" \\\n'
             '  "${root}/var/db/entropy"',
