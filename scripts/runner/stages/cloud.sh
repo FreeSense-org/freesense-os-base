@@ -76,12 +76,31 @@ FreeSenseAssembly: {
 EOF
 run_in_cloud_chroot "${root}" /usr/bin/env \
   PKG_INSTALL_EPOCH="${SOURCE_DATE_EPOCH}" /bin/sh -c '
+  set -eu
   pkg add /tmp/pkg-bootstrap.pkg
   pkg -o REPOS_DIR=/tmp/assembly-repos \
     -o PKG_CACHEDIR=/tmp/assembly-cache install -y -r FreeSenseAssembly \
-    FreeSense FreeSense-base FreeSense-kernel-FreeSense FreeSense-rc \
+    FreeSense FreeSense-base FreeSense-kernel-FreeSense FreeSense-rc FreeSense-system \
     FreeSense-default-config-serial FreeSense-repoc \
     FreeSense-cloud-init qemu-guest-agent
+  # FreeSense-base expands its base payload during installation. Reapply the
+  # signed product overlay last so its absolute /etc files win deterministically.
+  pkg -o REPOS_DIR=/tmp/assembly-repos \
+    -o PKG_CACHEDIR=/tmp/assembly-cache install -f -y -r FreeSenseAssembly \
+    FreeSense-system
+  for boot_hook in FreeSense-rc FreeSense-rc.shutdown; do
+    if ! package_owner=$(pkg which "/etc/${boot_hook}"); then
+      echo "cloud image package database does not own /etc/${boot_hook}" >&2
+      exit 1
+    fi
+    case "${package_owner}" in
+      *FreeSense-system-*) ;;
+      *)
+        echo "unexpected cloud boot hook owner: ${package_owner}" >&2
+        exit 1
+        ;;
+    esac
+  done
   package_epochs=$(pkg query -a "%t" | sort -u)
   [ "${package_epochs}" = "${PKG_INSTALL_EPOCH}" ] || {
     echo "cloud package install epoch mismatch" >&2
