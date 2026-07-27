@@ -249,6 +249,7 @@ jobs:
 
   iso:
     needs: iso-plan
+    if: always() && needs.iso-plan.result == 'success'
     uses: ./.github/workflows/runner-build.yml
     with:
       stage: iso
@@ -280,6 +281,7 @@ jobs:
 
   cloud-ufs:
     needs: iso-plan
+    if: always() && needs.iso-plan.result == 'success'
     uses: ./.github/workflows/runner-build.yml
     with:
       stage: cloud
@@ -313,6 +315,7 @@ jobs:
 
   cloud-zfs:
     needs: iso-plan
+    if: always() && needs.iso-plan.result == 'success'
     uses: ./.github/workflows/runner-build.yml
     with:
       stage: cloud
