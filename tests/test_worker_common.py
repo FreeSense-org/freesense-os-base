@@ -85,6 +85,7 @@ class WorkerVersionValidationTests(unittest.TestCase):
         for package in (
             "FreeSense-base",
             "FreeSense-kernel-FreeSense",
+            "FreeSense-rc",
             "FreeSense-repoc",
         ):
             with self.subTest(package=package):
