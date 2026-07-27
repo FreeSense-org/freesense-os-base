@@ -92,9 +92,16 @@ class WorkerVersionValidationTests(unittest.TestCase):
         self.assertIn('${root}/boot/kernel/kernel"', cloud)
         self.assertIn('${root}/boot/kernel/kernel.gz"', cloud)
         self.assertIn("for kernel_module in zfs.ko opensolaris.ko", cloud)
+        self.assertIn("for boot_hook in FreeSense-rc FreeSense-rc.shutdown", cloud)
+        self.assertIn('ln -sf FreeSense-rc "${root}/etc/pfSense-rc"', cloud)
+        self.assertIn(
+            'ln -sf FreeSense-rc.shutdown "${root}/etc/pfSense-rc.shutdown"',
+            cloud,
+        )
 
     def test_cloud_first_boot_uses_supported_growth_and_sanitization(self) -> None:
         cloud = (ROOT / "scripts/runner/stages/cloud.sh").read_text(encoding="utf-8")
+        self.assertIn('growfs_enable="YES"', cloud)
         self.assertIn('growfs_swap_size="0"', cloud)
         self.assertIn('touch "${root}/root/force_growfs"', cloud)
         self.assertNotIn("freesense_growroot", cloud)
@@ -125,6 +132,10 @@ class WorkerVersionValidationTests(unittest.TestCase):
         )
         self.assertIn("OVMF_VARS_4M.fd", smoke)
         self.assertIn('format=raw,file=${work}/OVMF_VARS-two.fd', smoke)
+        self.assertIn("prepare_qga()", smoke)
+        self.assertIn("-device virtio-serial-pci", smoke)
+        self.assertIn("name=org.qemu.guest_agent.0", smoke)
+        self.assertEqual(smoke.count('"${qga_args[@]}"'), 2)
         self.assertIn("sshd -T", smoke)
         self.assertIn("passwordauthentication no", smoke)
 
