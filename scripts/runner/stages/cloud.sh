@@ -23,15 +23,48 @@ pkg -o REPOS_DIR=/tmp/cloud-repos -o PKG_CACHEDIR=/tmp/cloud-cache \
 command -v qemu-img >/dev/null
 
 phase cloud-root
+run_in_cloud_chroot() (
+  set -eu
+  cloud_chroot_root=$1
+  shift
+  cloud_devfs_mounted=
+  cleanup_cloud_chroot() {
+    status=$?
+    trap - EXIT HUP INT TERM
+    if [ -n "${cloud_devfs_mounted}" ] && \
+      ! umount -f "${cloud_chroot_root}/dev"; then
+      echo "unable to unmount cloud image devfs" >&2
+      [ "${status}" -ne 0 ] || status=1
+    fi
+    exit "${status}"
+  }
+  trap cleanup_cloud_chroot EXIT
+  trap 'exit 129' HUP
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  mount -t devfs devfs "${cloud_chroot_root}/dev"
+  cloud_devfs_mounted=yes
+  chroot "${cloud_chroot_root}" "$@"
+)
+
 root=/root/cloud-root
 rm -rf "${root}"
 mkdir -p "${root}"
 tar -xpf /root/jail-base.txz -C "${root}"
 mkdir -p "${root}/tmp/assembly-repo" "${root}/tmp/assembly-repos" \
   "${root}/tmp/assembly-keys" "${root}/tmp/assembly-cache" \
-  "${root}/usr/local/etc/pkg/repos" "${root}/conf" "${root}/boot/efi"
+  "${root}/usr/local/etc/pkg/repos" "${root}/conf" "${root}/boot/efi" \
+  "${root}/dev"
 cp -a /root/system-repo/. "${root}/tmp/assembly-repo/"
 cp -a "${cloud_keys}/." "${root}/tmp/assembly-keys/"
+pkg_package=$(find /root/system-repo/All -name 'pkg-[0-9]*.pkg' \
+  -type f | sort | tail -1)
+[ -n "${pkg_package}" ] || {
+  echo "cloud assembly package missing: pkg-[0-9]*.pkg" >&2
+  exit 1
+}
+tar -xpf "${pkg_package}" -C "${root}" --exclude '+*'
+cp "${pkg_package}" "${root}/tmp/pkg-bootstrap.pkg"
 cat >"${root}/tmp/assembly-repos/FreeSenseAssembly.conf" <<'EOF'
 FreeSenseAssembly: {
   url: "file:///tmp/assembly-repo",
@@ -41,13 +74,21 @@ FreeSenseAssembly: {
   fingerprints: "/tmp/assembly-keys"
 }
 EOF
-pkg -r "${root}" -o REPOS_DIR=/tmp/assembly-repos \
-  -o PKG_CACHEDIR=/tmp/assembly-cache update -f -r FreeSenseAssembly
-pkg -r "${root}" -o REPOS_DIR=/tmp/assembly-repos \
-  -o PKG_CACHEDIR=/tmp/assembly-cache install -y -r FreeSenseAssembly \
-  FreeSense FreeSense-default-config-serial FreeSense-cloud-init qemu-guest-agent
+run_in_cloud_chroot "${root}" /usr/bin/env \
+  PKG_INSTALL_EPOCH="${SOURCE_DATE_EPOCH}" /bin/sh -c '
+  pkg add /tmp/pkg-bootstrap.pkg
+  pkg -o REPOS_DIR=/tmp/assembly-repos \
+    -o PKG_CACHEDIR=/tmp/assembly-cache install -y -r FreeSenseAssembly \
+    FreeSense FreeSense-default-config-serial FreeSense-cloud-init qemu-guest-agent
+  package_epochs=$(pkg query -a "%t" | sort -u)
+  [ "${package_epochs}" = "${PKG_INSTALL_EPOCH}" ] || {
+    echo "cloud package install epoch mismatch" >&2
+    exit 1
+  }
+'
 rm -rf "${root}/tmp/assembly-repo" "${root}/tmp/assembly-repos" \
-  "${root}/tmp/assembly-keys" "${root}/tmp/assembly-cache"
+  "${root}/tmp/assembly-keys" "${root}/tmp/assembly-cache" \
+  "${root}/tmp/pkg-bootstrap.pkg"
 config="${root}/cf/conf/config.xml"
 test -s "${config}"
 xml ed -L \

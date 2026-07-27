@@ -280,7 +280,7 @@ jobs:
     secrets: inherit
 
   cloud-ufs:
-    needs: iso-plan
+    needs: [iso-plan, iso]
     if: always() && needs.iso-plan.result == 'success'
     uses: ./.github/workflows/runner-build.yml
     with:
@@ -314,7 +314,7 @@ jobs:
     secrets: inherit
 
   cloud-zfs:
-    needs: iso-plan
+    needs: [iso-plan, cloud-ufs]
     if: always() && needs.iso-plan.result == 'success'
     uses: ./.github/workflows/runner-build.yml
     with:

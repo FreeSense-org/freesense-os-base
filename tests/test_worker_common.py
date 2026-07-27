@@ -74,6 +74,11 @@ class WorkerVersionValidationTests(unittest.TestCase):
         self.assertIn("FreeBSD-kmods: { enabled: no }", cloud)
         self.assertIn("REPOS_DIR=/tmp/cloud-repos", cloud)
         self.assertIn("REPOS_DIR=/tmp/assembly-repos", cloud)
+        self.assertIn("run_in_cloud_chroot()", cloud)
+        self.assertIn("mount -t devfs devfs", cloud)
+        self.assertIn('chroot "${cloud_chroot_root}"', cloud)
+        self.assertIn("pkg-bootstrap.pkg", cloud)
+        self.assertNotIn('pkg -r "${root}"', cloud)
 
     def test_poudriere_failure_emits_the_exact_error_log(self) -> None:
         if self.shell is None:
