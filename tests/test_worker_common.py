@@ -62,6 +62,19 @@ class WorkerVersionValidationTests(unittest.TestCase):
                 self.assertIn(value, common)
                 self.assertNotIn(value, packages)
 
+    def test_cloud_assembly_uses_fingerprint_repository_trust(self) -> None:
+        cloud = (ROOT / "scripts/runner/stages/cloud.sh").read_text(encoding="utf-8")
+        self.assertNotIn('signature_type: "pubkey"', cloud)
+        self.assertIn('signature_type: "fingerprints"', cloud)
+        self.assertIn('fingerprints: "/tmp/assembly-keys"', cloud)
+        self.assertIn(
+            'fingerprints: "/usr/local/share/FreeSense/keys/pkg"', cloud
+        )
+        self.assertIn("FreeBSD: { enabled: no }", cloud)
+        self.assertIn("FreeBSD-kmods: { enabled: no }", cloud)
+        self.assertIn("REPOS_DIR=/tmp/cloud-repos", cloud)
+        self.assertIn("REPOS_DIR=/tmp/assembly-repos", cloud)
+
     def test_poudriere_failure_emits_the_exact_error_log(self) -> None:
         if self.shell is None:
             self.skipTest("POSIX shell is unavailable")

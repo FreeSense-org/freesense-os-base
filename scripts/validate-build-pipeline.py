@@ -240,6 +240,17 @@ for value in ("freesense.cloud-image/v1", "qemu-img convert",
               "FreeSense/ROOT/default", "gptzfsboot", "zpool online -e",
               "FreeSense-cloud-init", "qemu-guest-agent", "prepare_release_inputs"):
     require(value in cloud_stage, f"cloud image stage is missing {value!r}")
+for value in ('signature_type: "fingerprints"',
+              'fingerprints: "/tmp/assembly-keys"',
+              'fingerprints: "/usr/local/share/FreeSense/keys/pkg"',
+              "FreeBSD: { enabled: no }",
+              "FreeBSD-kmods: { enabled: no }",
+              "REPOS_DIR=/tmp/cloud-repos",
+              "REPOS_DIR=/tmp/assembly-repos"):
+    require(value in cloud_stage,
+            f"cloud package trust boundary is missing {value!r}")
+require('signature_type: "pubkey"' not in cloud_stage,
+        "cloud assembly uses an incompatible repository trust mode")
 require('schema_version:"freesense.iso/v2"' in iso_stage and
         "packages:$packages" in iso_stage,
         "ISO completion markers omit the exact Packages artifact")
