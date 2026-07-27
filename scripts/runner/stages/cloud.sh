@@ -79,13 +79,26 @@ run_in_cloud_chroot "${root}" /usr/bin/env \
   pkg add /tmp/pkg-bootstrap.pkg
   pkg -o REPOS_DIR=/tmp/assembly-repos \
     -o PKG_CACHEDIR=/tmp/assembly-cache install -y -r FreeSenseAssembly \
-    FreeSense FreeSense-default-config-serial FreeSense-cloud-init qemu-guest-agent
+    FreeSense FreeSense-base FreeSense-kernel-FreeSense \
+    FreeSense-default-config-serial FreeSense-repoc \
+    FreeSense-cloud-init qemu-guest-agent
   package_epochs=$(pkg query -a "%t" | sort -u)
   [ "${package_epochs}" = "${PKG_INSTALL_EPOCH}" ] || {
     echo "cloud package install epoch mismatch" >&2
     exit 1
   }
 '
+if [ ! -s "${root}/boot/kernel/kernel" ] && \
+  [ ! -s "${root}/boot/kernel/kernel.gz" ]; then
+  echo "cloud image root is missing the FreeSense kernel" >&2
+  exit 1
+fi
+for kernel_module in zfs.ko opensolaris.ko; do
+  [ -s "${root}/boot/kernel/${kernel_module}" ] || {
+    echo "cloud image root is missing ${kernel_module}" >&2
+    exit 1
+  }
+done
 rm -rf "${root}/tmp/assembly-repo" "${root}/tmp/assembly-repos" \
   "${root}/tmp/assembly-keys" "${root}/tmp/assembly-cache" \
   "${root}/tmp/pkg-bootstrap.pkg"
