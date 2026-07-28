@@ -144,6 +144,11 @@ class WorkerVersionValidationTests(unittest.TestCase):
         self.assertEqual(smoke.count('"${qga_args[@]}"'), 2)
         self.assertIn("sshd -T", smoke)
         self.assertIn("passwordauthentication no", smoke)
+        self.assertIn("diagnose_ssh_timeout()", smoke)
+        self.assertIn("forwarded TCP/22 is reachable", smoke)
+        self.assertIn("verbose public-key attempt for ${user}", smoke)
+        self.assertIn("for user in admin root", smoke)
+        self.assertIn("IdentitiesOnly=yes", smoke)
 
     def test_poudriere_failure_emits_the_exact_error_log(self) -> None:
         if self.shell is None:

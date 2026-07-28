@@ -110,6 +110,25 @@ prepare_qga() {
   )
 }
 
+diagnose_ssh_timeout() {
+  local log=$1 user
+  echo "cloud smoke SSH readiness timed out" >&2
+  if timeout 3 bash -c '</dev/tcp/127.0.0.1/10022' 2>/dev/null; then
+    echo "cloud smoke diagnostic: forwarded TCP/22 is reachable" >&2
+  else
+    echo "cloud smoke diagnostic: forwarded TCP/22 is unreachable" >&2
+  fi
+  for user in admin root; do
+    echo "cloud smoke diagnostic: verbose public-key attempt for ${user}" >&2
+    timeout 15 ssh -vvv \
+      -o BatchMode=yes -o IdentitiesOnly=yes \
+      -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+      -o ConnectTimeout=5 -i "${work}/id" -p 10022 \
+      "${user}@127.0.0.1" true </dev/null >&2 || true
+  done
+  cat "$log" >&2
+}
+
 boot_and_wait() {
   local disk=$1 format=$2 firmware=$3 log=$4
   local firmware_args=()
@@ -132,19 +151,19 @@ boot_and_wait() {
   qemu_pid=$!
   for _ in {1..120}; do
     if ssh -q -o BatchMode=yes -o StrictHostKeyChecking=no \
-      -o UserKnownHostsFile=/dev/null -o ConnectTimeout=2 \
+      -o UserKnownHostsFile=/dev/null -o IdentitiesOnly=yes -o ConnectTimeout=2 \
       -i "${work}/id" -p 10022 admin@127.0.0.1 true; then
       return 0
     fi
     kill -0 "$qemu_pid" 2>/dev/null || { cat "$log" >&2; return 1; }
     sleep 5
   done
-  cat "$log" >&2
+  diagnose_ssh_timeout "$log"
   return 1
 }
 
 boot_and_wait "${work}/disk.qcow2" qcow2 bios "${work}/bios.log"
-ssh_args=(-q -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i "${work}/id" -p 10022 admin@127.0.0.1)
+ssh_args=(-q -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i "${work}/id" -p 10022 admin@127.0.0.1)
 "${ssh_args[@]}" "test \"\$(sysrc -n qemu_guest_agent_enable)\" = YES &&
   service qemu_guest_agent status &&
   test -s /etc/ssh/ssh_host_ed25519_key &&
