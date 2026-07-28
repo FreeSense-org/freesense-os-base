@@ -155,7 +155,8 @@ class WorkerVersionValidationTests(unittest.TestCase):
             "SSH and PF state before controlled service restart", smoke
         )
         self.assertIn("/usr/bin/sockstat -46 -l", smoke)
-        self.assertIn("/sbin/pfctl -sr", smoke)
+        self.assertIn("/sbin/pfctl -vvsr", smoke)
+        self.assertIn("service qemu-guest-agent status", smoke)
 
     def test_poudriere_failure_emits_the_exact_error_log(self) -> None:
         if self.shell is None:
