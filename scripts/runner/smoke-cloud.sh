@@ -110,6 +110,105 @@ prepare_qga() {
   )
 }
 
+qga_exec() {
+  local label=$1 command=$2
+  echo "cloud smoke guest-agent diagnostic: ${label}" >&2
+  python3 - "${work}/qga.sock" "$command" <<'PY' >&2 || true
+import base64
+import json
+import socket
+import sys
+import time
+
+socket_path, command = sys.argv[1:]
+try:
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+        client.settimeout(10)
+        client.connect(socket_path)
+        stream = client.makefile("rwb", buffering=0)
+        sequence = 0
+
+        def request(execute, arguments=None):
+            # Keep IDs stable so asynchronous or stale responses cannot be
+            # mistaken for the command currently being diagnosed.
+            global sequence
+            sequence += 1
+            identifier = f"freesense-smoke-{sequence}"
+            payload = {"execute": execute, "id": identifier}
+            if arguments is not None:
+                payload["arguments"] = arguments
+            stream.write(json.dumps(payload).encode() + b"\n")
+            while True:
+                line = stream.readline()
+                if not line:
+                    raise RuntimeError("guest agent closed the diagnostic socket")
+                line = line.lstrip(b"\xff").strip()
+                if not line:
+                    continue
+                response = json.loads(line)
+                if response.get("id") != identifier:
+                    continue
+                if "error" in response:
+                    raise RuntimeError(json.dumps(response["error"], sort_keys=True))
+                return response.get("return")
+
+        request("guest-ping")
+        started = request(
+            "guest-exec",
+            {
+                "path": "/bin/sh",
+                "arg": ["-c", command],
+                "capture-output": True,
+            },
+        )
+        pid = started["pid"]
+        for _ in range(100):
+            status = request("guest-exec-status", {"pid": pid})
+            if status.get("exited"):
+                for field in ("out-data", "err-data"):
+                    if status.get(field):
+                        sys.stdout.write(
+                            base64.b64decode(status[field]).decode(
+                                "utf-8", errors="replace"
+                            )
+                        )
+                print(f"guest-exec exitcode={status.get('exitcode')}")
+                break
+            time.sleep(0.2)
+        else:
+            raise RuntimeError("guest-exec diagnostic did not finish")
+except Exception as error:
+    print(f"guest-agent diagnostic unavailable: {error}")
+PY
+}
+
+diagnose_guest_ssh() {
+  qga_exec "SSH and PF state before controlled service restart" '
+    echo "=== SSH PROCESSES AND LISTENERS ==="
+    /bin/ps axww | /usr/bin/grep -E "[s]shd|check_reload_status" || true
+    /usr/bin/sockstat -46 -l 2>&1 || true
+    echo "=== EFFECTIVE SSHD POLICY ==="
+    /usr/sbin/sshd -T 2>&1 |
+      /usr/bin/grep -E "^(port|listenaddress|permitrootlogin|passwordauthentication|kbdinteractiveauthentication|challengeresponseauthentication|pubkeyauthentication|authorizedkeysfile) " || true
+    echo "=== CLOUD SSH CONFIG ==="
+    /usr/bin/grep -E "<ssh>|<sshdkeyonly>|FreeSense cloud temporary SSH|<interface>wan</interface>|<address>10[.]0[.]2[.]2/32</address>|<port>22</port>" /conf/config.xml || true
+    echo "=== PF FILTER AND NAT ==="
+    /sbin/pfctl -sr 2>&1 | /usr/bin/grep -E "22|ssh|10[.]0[.]2[.]2" || true
+    /sbin/pfctl -sn 2>&1 || true
+    echo "=== SSH SERVICE LOGS ==="
+    /usr/bin/grep -Ei "sshd|check_reload_status" /var/log/system.log 2>/dev/null |
+      /usr/bin/tail -n 100 || true
+    echo "=== CONTROLLED /etc/sshd RESTART ==="
+    /etc/sshd
+    status=$?
+    echo "/etc/sshd exitcode=${status}"
+    /bin/sleep 2
+    /bin/ps axww | /usr/bin/grep -E "[s]shd|check_reload_status" || true
+    /usr/bin/sockstat -46 -l 2>&1 | /usr/bin/grep -E "sshd|:22" || true
+    exit "${status}"
+  '
+}
+
 diagnose_ssh_timeout() {
   local log=$1 user
   echo "cloud smoke SSH readiness timed out" >&2
@@ -118,6 +217,7 @@ diagnose_ssh_timeout() {
   else
     echo "cloud smoke diagnostic: forwarded TCP/22 is unreachable" >&2
   fi
+  diagnose_guest_ssh
   for user in admin root; do
     echo "cloud smoke diagnostic: verbose public-key attempt for ${user}" >&2
     timeout 15 ssh -vvv \
