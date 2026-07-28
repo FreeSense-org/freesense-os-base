@@ -193,8 +193,13 @@ diagnose_guest_ssh() {
     echo "=== CLOUD SSH CONFIG ==="
     /usr/bin/grep -E "<ssh>|<sshdkeyonly>|FreeSense cloud temporary SSH|<interface>wan</interface>|<address>10[.]0[.]2[.]2/32</address>|<port>22</port>" /conf/config.xml || true
     echo "=== PF FILTER AND NAT ==="
-    /sbin/pfctl -sr 2>&1 | /usr/bin/grep -E "22|ssh|10[.]0[.]2[.]2" || true
+    /sbin/pfctl -vvsr 2>&1 |
+      /usr/bin/grep -E "FreeSense cloud temporary SSH|port (= )?22|10[.]0[.]2[.]2|Evaluations|Packets|Bytes|States" || true
     /sbin/pfctl -sn 2>&1 || true
+    echo "=== PF STATES, INTERFACES, AND ROUTES ==="
+    /sbin/pfctl -ss 2>&1 | /usr/bin/grep -E "10[.]0[.]2[.]|:22" || true
+    /usr/bin/netstat -rn 2>&1 || true
+    /sbin/ifconfig -a 2>&1 || true
     echo "=== SSH SERVICE LOGS ==="
     /usr/bin/grep -Ei "sshd|check_reload_status" /var/log/system.log 2>/dev/null |
       /usr/bin/tail -n 100 || true
@@ -265,7 +270,7 @@ boot_and_wait() {
 boot_and_wait "${work}/disk.qcow2" qcow2 bios "${work}/bios.log"
 ssh_args=(-q -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i "${work}/id" -p 10022 admin@127.0.0.1)
 "${ssh_args[@]}" "test \"\$(sysrc -n qemu_guest_agent_enable)\" = YES &&
-  service qemu_guest_agent status &&
+  service qemu-guest-agent status &&
   test -s /etc/ssh/ssh_host_ed25519_key &&
   grep -q freesense-cloud-smoke /conf/config.xml &&
   test \"\$(cloud-init status --wait)\" = \"status: done\" &&
