@@ -113,6 +113,8 @@ prepare_qga() {
 qga_exec() {
   local label=$1 command=$2
   echo "cloud smoke guest-agent diagnostic: ${label}" >&2
+  # Longer per-request timeouts: a single giant guest-exec previously hit the
+  # 10s socket timeout and dropped every diagnostic section at once.
   python3 - "${work}/qga.sock" "$command" <<'PY' >&2 || true
 import base64
 import json
@@ -123,8 +125,16 @@ import time
 socket_path, command = sys.argv[1:]
 try:
     with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
-        client.settimeout(10)
-        client.connect(socket_path)
+        client.settimeout(45)
+        deadline = time.time() + 90
+        while True:
+            try:
+                client.connect(socket_path)
+                break
+            except (FileNotFoundError, ConnectionRefusedError, OSError):
+                if time.time() >= deadline:
+                    raise
+                time.sleep(0.5)
         stream = client.makefile("rwb", buffering=0)
         sequence = 0
 
@@ -162,7 +172,7 @@ try:
             },
         )
         pid = started["pid"]
-        for _ in range(100):
+        for _ in range(300):
             status = request("guest-exec-status", {"pid": pid})
             if status.get("exited"):
                 for field in ("out-data", "err-data"):
@@ -183,10 +193,16 @@ PY
 }
 
 diagnose_guest_ssh() {
-  qga_exec "SSH and PF state before controlled service restart" '
+  # Split into short guest-exec batches so a slow/hung section cannot erase
+  # package version, user-data, and PF evidence for the whole failure.
+  qga_exec "package and cloud-init versions" '
     echo "=== PACKAGE AND CLOUD-INIT VERSIONS ==="
     /usr/sbin/pkg query "%n-%v" FreeSense-cloud-init 2>/dev/null || true
     /usr/local/bin/cloud-init --version 2>&1 || true
+    /bin/ps axww | /usr/bin/grep -E "[q]emu-ga|[q]emu_guest_agent" || true
+    exit 0
+  '
+  qga_exec "userdata sources and FreeSense state" '
     echo "=== CLOUD-INIT USERDATA SOURCES ==="
     /usr/local/bin/cloud-init query instance-id 2>&1 || true
     /usr/local/bin/cloud-init query userdata 2>&1 | /usr/bin/head -c 2048 || true
@@ -197,10 +213,9 @@ diagnose_guest_ssh() {
     echo "=== FREESENSE CLOUD STATE ==="
     /bin/cat /var/db/freesense-cloud-init/instance.json 2>&1 || true
     /usr/bin/grep -E "cloudinit|authorizedkeys|sshdkeyonly|FreeSense cloud temporary SSH|management|10[.]0[.]2[.]2" /conf/config.xml 2>&1 || true
-    echo "=== DISKS AND LABELS ==="
-    /sbin/camcontrol devlist 2>&1 || true
-    /sbin/gpart show 2>&1 || true
-    /sbin/geom label status 2>&1 || true
+    exit 0
+  '
+  qga_exec "SSH listeners and effective policy" '
     echo "=== SSH PROCESSES AND LISTENERS ==="
     /bin/ps axww | /usr/bin/grep -E "[s]shd|check_reload_status" || true
     /usr/bin/sockstat -46 -l 2>&1 || true
@@ -209,6 +224,12 @@ diagnose_guest_ssh() {
       /usr/bin/grep -E "^(port|listenaddress|permitrootlogin|passwordauthentication|kbdinteractiveauthentication|challengeresponseauthentication|pubkeyauthentication|authorizedkeysfile) " || true
     echo "=== CLOUD SSH CONFIG ==="
     /usr/bin/grep -E "<ssh>|<sshdkeyonly>|FreeSense cloud temporary SSH|<interface>wan</interface>|<address>10[.]0[.]2[.]2/32</address>|<port>22</port>" /conf/config.xml || true
+    echo "=== AUTHORIZED KEYS ON DISK ==="
+    /bin/ls -la /root/.ssh 2>&1 || true
+    /usr/bin/head -c 512 /root/.ssh/authorized_keys 2>&1 || true
+    exit 0
+  '
+  qga_exec "PF rules interfaces and routes" '
     echo "=== PF FILTER AND NAT ==="
     /sbin/pfctl -vvsr 2>&1 |
       /usr/bin/grep -E "FreeSense cloud temporary SSH|port (= )?22|10[.]0[.]2[.]2|Evaluations|Packets|Bytes|States" || true
@@ -217,6 +238,9 @@ diagnose_guest_ssh() {
     /sbin/pfctl -ss 2>&1 | /usr/bin/grep -E "10[.]0[.]2[.]|:22" || true
     /usr/bin/netstat -rn 2>&1 || true
     /sbin/ifconfig -a 2>&1 || true
+    exit 0
+  '
+  qga_exec "service logs and controlled sshd restart" '
     echo "=== SSH SERVICE LOGS ==="
     /usr/bin/grep -Ei "sshd|check_reload_status" /var/log/system.log 2>/dev/null |
       /usr/bin/tail -n 100 || true
@@ -224,7 +248,10 @@ diagnose_guest_ssh() {
     /usr/bin/tail -n 80 /var/log/cloud-init.log 2>/dev/null || true
     /usr/bin/tail -n 40 /var/log/cloud-init-output.log 2>/dev/null || true
     echo "=== CONTROLLED SSHD RESTART ==="
-    if [ -x /etc/rc.d/sshd ]; then
+    if [ -x /etc/sshd ]; then
+      /etc/sshd
+      status=$?
+    elif [ -x /etc/rc.d/sshd ]; then
       /etc/rc.d/sshd onerestart
       status=$?
     elif [ -x /usr/sbin/service ]; then
