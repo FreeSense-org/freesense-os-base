@@ -157,6 +157,10 @@ class WorkerVersionValidationTests(unittest.TestCase):
         self.assertIn("/usr/bin/sockstat -46 -l", smoke)
         self.assertIn("/sbin/pfctl -vvsr", smoke)
         self.assertIn("service qemu-guest-agent status", smoke)
+        self.assertIn("cloud-init query userdata", smoke)
+        self.assertIn("FreeSense-cloud-init", smoke)
+        self.assertIn("/var/lib/cloud/instance/user-data.txt", smoke)
+        self.assertIn("/var/db/freesense-cloud-init/instance.json", smoke)
 
     def test_poudriere_failure_emits_the_exact_error_log(self) -> None:
         if self.shell is None:

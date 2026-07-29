@@ -184,6 +184,23 @@ PY
 
 diagnose_guest_ssh() {
   qga_exec "SSH and PF state before controlled service restart" '
+    echo "=== PACKAGE AND CLOUD-INIT VERSIONS ==="
+    /usr/sbin/pkg query "%n-%v" FreeSense-cloud-init 2>/dev/null || true
+    /usr/local/bin/cloud-init --version 2>&1 || true
+    echo "=== CLOUD-INIT USERDATA SOURCES ==="
+    /usr/local/bin/cloud-init query instance-id 2>&1 || true
+    /usr/local/bin/cloud-init query userdata 2>&1 | /usr/bin/head -c 2048 || true
+    echo
+    /bin/ls -la /var/lib/cloud/instance 2>&1 || true
+    /usr/bin/head -c 2048 /var/lib/cloud/instance/user-data.txt 2>&1 || true
+    echo
+    echo "=== FREESENSE CLOUD STATE ==="
+    /bin/cat /var/db/freesense-cloud-init/instance.json 2>&1 || true
+    /usr/bin/grep -E "cloudinit|authorizedkeys|sshdkeyonly|FreeSense cloud temporary SSH|management|10[.]0[.]2[.]2" /conf/config.xml 2>&1 || true
+    echo "=== DISKS AND LABELS ==="
+    /sbin/camcontrol devlist 2>&1 || true
+    /sbin/gpart show 2>&1 || true
+    /sbin/geom label status 2>&1 || true
     echo "=== SSH PROCESSES AND LISTENERS ==="
     /bin/ps axww | /usr/bin/grep -E "[s]shd|check_reload_status" || true
     /usr/bin/sockstat -46 -l 2>&1 || true
@@ -203,14 +220,25 @@ diagnose_guest_ssh() {
     echo "=== SSH SERVICE LOGS ==="
     /usr/bin/grep -Ei "sshd|check_reload_status" /var/log/system.log 2>/dev/null |
       /usr/bin/tail -n 100 || true
-    echo "=== CONTROLLED /etc/sshd RESTART ==="
-    /etc/sshd
-    status=$?
-    echo "/etc/sshd exitcode=${status}"
+    echo "=== CLOUD-INIT LOG TAIL ==="
+    /usr/bin/tail -n 80 /var/log/cloud-init.log 2>/dev/null || true
+    /usr/bin/tail -n 40 /var/log/cloud-init-output.log 2>/dev/null || true
+    echo "=== CONTROLLED SSHD RESTART ==="
+    if [ -x /etc/rc.d/sshd ]; then
+      /etc/rc.d/sshd onerestart
+      status=$?
+    elif [ -x /usr/sbin/service ]; then
+      /usr/sbin/service sshd onerestart
+      status=$?
+    else
+      echo "no privileged sshd restart helper available"
+      status=0
+    fi
+    echo "sshd restart exitcode=${status}"
     /bin/sleep 2
     /bin/ps axww | /usr/bin/grep -E "[s]shd|check_reload_status" || true
     /usr/bin/sockstat -46 -l 2>&1 | /usr/bin/grep -E "sshd|:22" || true
-    exit "${status}"
+    exit 0
   '
 }
 
