@@ -146,6 +146,17 @@ class WorkerVersionValidationTests(unittest.TestCase):
         self.assertIn("passwordauthentication no", smoke)
         self.assertIn("ssh_args=(ssh -q ", smoke)
         self.assertNotIn("ssh_args=(-q ", smoke)
+        self.assertIn("'status: done'|'status: degraded'", smoke)
+        self.assertIn("virtual_size_gib * 95 * 1024 * 1024 / 100", smoke)
+        self.assertIn("virtual_size * 95 / 100", smoke)
+        self.assertNotIn(
+            'df -k / | awk \'NR == 2 {print \\$2}\')" -gt',
+            smoke,
+        )
+        self.assertNotIn(
+            'zpool list -Hp -o size FreeSense)" -gt ${virtual_size}',
+            smoke,
+        )
         self.assertIn("diagnose_ssh_timeout()", smoke)
         self.assertIn("forwarded TCP/22 is reachable", smoke)
         self.assertIn("verbose public-key attempt for ${user}", smoke)

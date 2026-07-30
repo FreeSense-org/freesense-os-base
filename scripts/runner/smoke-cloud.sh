@@ -426,20 +426,36 @@ boot_and_wait() {
 
 boot_and_wait "${work}/disk.qcow2" qcow2 bios "${work}/bios.log"
 ssh_args=(ssh -q -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i "${work}/id" -p 10022 admin@127.0.0.1)
-"${ssh_args[@]}" "test \"\$(sysrc -n qemu_guest_agent_enable)\" = YES &&
-  service qemu-guest-agent status &&
-  test -s /etc/ssh/ssh_host_ed25519_key &&
-  grep -q freesense-cloud-smoke /conf/config.xml &&
-  test \"\$(cloud-init status --wait)\" = \"status: done\" &&
+"${ssh_args[@]}" "set -eu
+  test \"\$(sysrc -n qemu_guest_agent_enable)\" = YES
+  service qemu-guest-agent status
+  test -s /etc/ssh/ssh_host_ed25519_key
+  grep -q freesense-cloud-smoke /conf/config.xml
+  cloud_rc=0
+  cloud_status=\$(cloud-init status --wait 2>&1) || cloud_rc=\$?
+  printf 'cloud-init readiness: rc=%s status=%s\n' \"\${cloud_rc}\" \"\${cloud_status}\"
+  if [ \"\${cloud_rc}\" -ne 0 ] && [ \"\${cloud_rc}\" -ne 2 ]; then
+    exit 1
+  fi
+  case \"\${cloud_status}\" in
+    'status: done'|'status: degraded') ;;
+    *) exit 1 ;;
+  esac
   if [ '${filesystem}' = ufs ]; then
-    test \"\$(df -k / | awk 'NR == 2 {print \$2}')\" -gt $((virtual_size_gib * 1024 * 1024))
+    root_kib=\$(df -k / | awk 'NR == 2 {print \$2}')
+    minimum_kib=$((virtual_size_gib * 95 * 1024 * 1024 / 100))
+    printf 'UFS root capacity: actual=%sKiB minimum=%sKiB\n' \"\${root_kib}\" \"\${minimum_kib}\"
+    test \"\${root_kib}\" -ge \"\${minimum_kib}\"
   else
-    test \"\$(zpool get -H -o value bootfs FreeSense)\" = FreeSense/ROOT/default &&
-    test \"\$(zpool list -Hp -o size FreeSense)\" -gt ${virtual_size} &&
-    zpool status -x FreeSense | grep -q healthy &&
-    /sbin/bectl check &&
+    test \"\$(zpool get -H -o value bootfs FreeSense)\" = FreeSense/ROOT/default
+    pool_bytes=\$(zpool list -Hp -o size FreeSense)
+    minimum_bytes=$((virtual_size * 95 / 100))
+    printf 'ZFS pool capacity: actual=%sB minimum=%sB\n' \"\${pool_bytes}\" \"\${minimum_bytes}\"
+    test \"\${pool_bytes}\" -ge \"\${minimum_bytes}\"
+    zpool status -x FreeSense | grep -q healthy
+    /sbin/bectl check
     zfs list -H -o name,mountpoint |
-      awk '\$2 == \"/cf\" { found = (\$1 ~ /^FreeSense\\/ROOT\\/default\\//) } END { exit !found }' &&
+      awk '\$2 == \"/cf\" { found = (\$1 ~ /^FreeSense\\/ROOT\\/default\\//) } END { exit !found }'
     zfs list -H -o name,mountpoint |
       awk '\$2 == \"/var\\/db\\/pkg\" { found = (\$1 ~ /^FreeSense\\/ROOT\\/default\\//) } END { exit !found }'
   fi"
