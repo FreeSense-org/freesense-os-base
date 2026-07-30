@@ -40,8 +40,10 @@ jobs:
     timeout-minutes: 360
     environment: build
     permissions:
+      actions: write
       contents: read
       id-token: write
+
     env:
       R2_CREDENTIAL_BROKER_URL: ${{ vars.R2_CREDENTIAL_BROKER_URL }}
       R2_CREDENTIAL_BROKER_AUDIENCE: ${{ vars.R2_CREDENTIAL_BROKER_AUDIENCE }}
@@ -149,18 +151,32 @@ jobs:
           --package-train "${PACKAGE_TRAIN}"
           --channel-payload "${CHANNEL_PAYLOAD_SHA256}"
       - name: Boot-check completed cloud images
+        id: cloud_smoke
         if: inputs.stage == 'cloud'
-        run: >-
-          bash scripts/runner/smoke-cloud.sh
-          --public-base-url "${PUBLIC_BASE_URL}"
-          --fingerprint "${FINGERPRINT}"
-          --bundle "${BUNDLE_ID}"
-          --system "${SYSTEM_ID}"
-          --packages "${PACKAGES_ID}"
-          --generation "${GENERATION}"
-          --channel "${CHANNEL}"
-          --filesystem "${CLOUD_FILESYSTEM}"
-          --virtual-size-gib "${CLOUD_VIRTUAL_SIZE_GIB}"
+        env:
+          CLOUD_SMOKE_FAILURE_DIR: ${{ runner.temp }}/cloud-smoke-failure
+        run: |
+          mkdir -p "${CLOUD_SMOKE_FAILURE_DIR}"
+          bash scripts/runner/smoke-cloud.sh \
+            --public-base-url "${PUBLIC_BASE_URL}" \
+            --fingerprint "${FINGERPRINT}" \
+            --bundle "${BUNDLE_ID}" \
+            --system "${SYSTEM_ID}" \
+            --packages "${PACKAGES_ID}" \
+            --generation "${GENERATION}" \
+            --channel "${CHANNEL}" \
+            --filesystem "${CLOUD_FILESYSTEM}" \
+            --virtual-size-gib "${CLOUD_VIRTUAL_SIZE_GIB}" \
+            --failure-dir "${CLOUD_SMOKE_FAILURE_DIR}"
+      - name: Upload cloud smoke failure artifacts
+        if: failure() && inputs.stage == 'cloud'
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+        with:
+          name: cloud-smoke-failure-${{ inputs.cloud_filesystem }}-${{ inputs.fingerprint }}
+          path: ${{ runner.temp }}/cloud-smoke-failure/
+          if-no-files-found: warn
+          retention-days: 14
+          compression-level: 0
       - name: Clean sensitive runner files
         if: always()
         run: >-

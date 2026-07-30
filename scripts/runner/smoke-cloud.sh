@@ -2,7 +2,7 @@
 set -euo pipefail
 
 declare public_base_url= fingerprint= bundle= system= packages= generation= channel=
-declare filesystem= virtual_size_gib=
+declare filesystem= virtual_size_gib= failure_dir=
 while (($#)); do
   case "$1" in
     --public-base-url) public_base_url=$2; shift 2 ;;
@@ -14,6 +14,7 @@ while (($#)); do
     --channel) channel=$2; shift 2 ;;
     --filesystem) filesystem=$2; shift 2 ;;
     --virtual-size-gib) virtual_size_gib=$2; shift 2 ;;
+    --failure-dir) failure_dir=$2; shift 2 ;;
     *) echo "unknown cloud smoke argument: $1" >&2; exit 2 ;;
   esac
 done
@@ -23,10 +24,111 @@ virtual_size=$((virtual_size_gib * 1024 * 1024 * 1024))
 for value in "$fingerprint" "$bundle" "$system" "$packages"; do
   [[ "$value" =~ ^[0-9a-f]{64}$ ]] || { echo "invalid cloud smoke identity" >&2; exit 2; }
 done
+if [[ -n "$failure_dir" ]]; then
+  [[ "$failure_dir" == /* ]] || {
+    echo "--failure-dir must be an absolute path" >&2
+    exit 2
+  }
+fi
 
 work=$(mktemp -d)
+package_failure_artifacts() {
+  # Preserve enough of the smoke workspace for offline inspection after CI fails.
+  # Never publish the generated private SSH key.
+  local status=$1 name size
+  [[ -n "$failure_dir" ]] || return 0
+  mkdir -p \
+    "${failure_dir}/logs" \
+    "${failure_dir}/seed" \
+    "${failure_dir}/images"
+  {
+    echo "FreeSense cloud smoke failure bundle"
+    echo "status=${status}"
+    echo "filesystem=${filesystem}"
+    echo "fingerprint=${fingerprint}"
+    echo "bundle=${bundle}"
+    echo "system=${system}"
+    echo "packages=${packages}"
+    echo "generation=${generation}"
+    echo "channel=${channel}"
+    echo "virtual_size_gib=${virtual_size_gib}"
+    echo "public_base_url=${public_base_url}"
+    echo "collected_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    echo
+    echo "Contents:"
+    echo "  logs/             serial console captures"
+    echo "  seed/             cloud-init seed used by smoke (no private keys)"
+    echo "  images/           published xz plus post-boot qcow2 when available"
+    echo "  complete.json     published cloud image marker"
+    echo "  README.txt        this file"
+    echo
+    echo "Boot the post-boot disk (when present) with the same cidata seed under"
+    echo "seed/ to inspect FreeSense-cloud-init state after the failed smoke run."
+  } >"${failure_dir}/README.txt"
+  cp -f "${work}/complete.json" "${failure_dir}/complete.json" 2>/dev/null || true
+  for name in bios.log bios-second.log uefi-two.log; do
+    [[ -f "${work}/${name}" ]] || continue
+    cp -f "${work}/${name}" "${failure_dir}/logs/${name}"
+  done
+  for name in user-data meta-data network-config \
+    user-data-two meta-data-two network-config-two; do
+    [[ -f "${work}/${name}" ]] || continue
+    cp -f "${work}/${name}" "${failure_dir}/seed/${name}"
+  done
+  [[ -f "${work}/id.pub" ]] && cp -f "${work}/id.pub" "${failure_dir}/seed/smoke-id.pub"
+  # Keep the immutable published qcow2.xz (pre-boot). Prefer not to re-upload
+  # multi-gigabyte raw images; post-boot qcow2 is the interesting mutable disk.
+  shopt -s nullglob
+  for name in "${work}"/*.qcow2.xz; do
+    cp -f "$name" "${failure_dir}/images/published-$(basename "$name")" || true
+  done
+  shopt -u nullglob
+  if [[ -f "${work}/disk.qcow2" ]]; then
+    # Re-sparsify/compress the post-boot disk for GitHub artifact download.
+    if command -v qemu-img >/dev/null 2>&1; then
+      qemu-img convert -c -O qcow2 \
+        "${work}/disk.qcow2" "${failure_dir}/images/disk-post-boot.qcow2" || \
+        cp -f "${work}/disk.qcow2" "${failure_dir}/images/disk-post-boot.qcow2" || true
+    else
+      cp -f "${work}/disk.qcow2" "${failure_dir}/images/disk-post-boot.qcow2" || true
+    fi
+    if [[ -f "${failure_dir}/images/disk-post-boot.qcow2" ]] && command -v xz >/dev/null 2>&1; then
+      xz -T0 -1 -f "${failure_dir}/images/disk-post-boot.qcow2" || true
+    fi
+  fi
+  {
+    echo "{"
+    echo "  \"status\": ${status},"
+    echo "  \"filesystem\": \"${filesystem}\","
+    echo "  \"fingerprint\": \"${fingerprint}\","
+    echo "  \"bundle\": \"${bundle}\","
+    echo "  \"system\": \"${system}\","
+    echo "  \"packages\": \"${packages}\","
+    echo "  \"generation\": ${generation},"
+    echo "  \"channel\": \"${channel}\","
+    echo "  \"virtual_size_gib\": ${virtual_size_gib},"
+    echo "  \"public_image_base\": \"${public_base_url}/artifacts/cloud/${fingerprint}\""
+    echo "}"
+  } >"${failure_dir}/manifest.json"
+  if command -v find >/dev/null 2>&1; then
+    echo "cloud smoke failure artifacts:" >&2
+    find "$failure_dir" -type f -printf '  %p (%s bytes)\n' >&2 || \
+      find "$failure_dir" -type f >&2 || true
+  else
+    echo "cloud smoke failure artifacts written to ${failure_dir}" >&2
+  fi
+}
+
 cleanup() {
-  [[ -z "${qemu_pid:-}" ]] || kill "$qemu_pid" 2>/dev/null || true
+  local status=$?
+  if [[ -n "${qemu_pid:-}" ]]; then
+    kill "$qemu_pid" 2>/dev/null || true
+    wait "$qemu_pid" 2>/dev/null || true
+    unset qemu_pid
+  fi
+  if [[ -n "${failure_dir:-}" && "$status" -ne 0 ]]; then
+    package_failure_artifacts "$status" || true
+  fi
   rm -rf "$work"
 }
 trap cleanup EXIT
