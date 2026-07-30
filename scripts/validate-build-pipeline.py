@@ -282,9 +282,13 @@ require('signature_type: "pubkey"' not in cloud_stage,
 require('pkg -r "${root}"' not in cloud_stage,
         "cloud package installation bypasses the image-root chroot")
 for value in ("prepare_qga()", "-device virtio-serial-pci",
-              "name=org.qemu.guest_agent.0", '"${qga_args[@]}"'):
+              "name=org.qemu.guest_agent.0", '"${qga_args[@]}"',
+              "--failure-dir", "package_failure_artifacts()",
+              "disk-post-boot.qcow2"):
     require(value in read("scripts/runner/smoke-cloud.sh"),
             f"cloud smoke guest-agent channel is missing {value!r}")
+require("Upload cloud smoke failure artifacts" in reusable,
+        "cloud smoke failures are not uploaded as GitHub Actions artifacts")
 require('schema_version:"freesense.iso/v2"' in iso_stage and
         "packages:$packages" in iso_stage,
         "ISO completion markers omit the exact Packages artifact")

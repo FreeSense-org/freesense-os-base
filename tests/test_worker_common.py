@@ -162,6 +162,11 @@ class WorkerVersionValidationTests(unittest.TestCase):
         self.assertIn("/var/lib/cloud/instance/user-data.txt", smoke)
         self.assertIn("/var/db/freesense-cloud-init/instance.json", smoke)
         self.assertIn("/root/.ssh/authorized_keys", smoke)
+        self.assertIn("--failure-dir", smoke)
+        self.assertIn("package_failure_artifacts()", smoke)
+        self.assertIn("disk-post-boot.qcow2", smoke)
+        self.assertIn("images/published-", smoke)
+        self.assertNotIn('cp -f "${work}/id" ', smoke)
 
     def test_poudriere_failure_emits_the_exact_error_log(self) -> None:
         if self.shell is None:
