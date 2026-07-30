@@ -425,7 +425,7 @@ boot_and_wait() {
 }
 
 boot_and_wait "${work}/disk.qcow2" qcow2 bios "${work}/bios.log"
-ssh_args=(-q -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i "${work}/id" -p 10022 admin@127.0.0.1)
+ssh_args=(ssh -q -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i "${work}/id" -p 10022 admin@127.0.0.1)
 "${ssh_args[@]}" "test \"\$(sysrc -n qemu_guest_agent_enable)\" = YES &&
   service qemu-guest-agent status &&
   test -s /etc/ssh/ssh_host_ed25519_key &&
