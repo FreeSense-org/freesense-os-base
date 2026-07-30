@@ -144,6 +144,8 @@ class WorkerVersionValidationTests(unittest.TestCase):
         self.assertEqual(smoke.count('"${qga_args[@]}"'), 2)
         self.assertIn("sshd -T", smoke)
         self.assertIn("passwordauthentication no", smoke)
+        self.assertIn("ssh_args=(ssh -q ", smoke)
+        self.assertNotIn("ssh_args=(-q ", smoke)
         self.assertIn("diagnose_ssh_timeout()", smoke)
         self.assertIn("forwarded TCP/22 is reachable", smoke)
         self.assertIn("verbose public-key attempt for ${user}", smoke)
