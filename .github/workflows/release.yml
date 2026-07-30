@@ -17,7 +17,8 @@ on:
     workflows: [System, Optional packages]
     types: [completed]
 
-permissions: {contents: read, actions: read, id-token: write}
+# actions: write is required so called runner-build can upload cloud smoke failure artifacts.
+permissions: {contents: read, actions: write, id-token: write}
 concurrency: {group: release-control, cancel-in-progress: false}
 
 jobs:

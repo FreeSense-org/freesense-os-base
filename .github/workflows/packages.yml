@@ -6,7 +6,7 @@ on:
     workflows: [System]
     types: [completed]
 
-permissions: {contents: read, id-token: write}
+permissions: {actions: write, contents: read, id-token: write}
 concurrency: {group: package-planner, cancel-in-progress: false}
 
 jobs:
