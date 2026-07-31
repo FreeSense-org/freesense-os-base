@@ -26,7 +26,7 @@ maps `devel` and `stable` to exact repository URLs. The appliance verifies that
 signature before changing its pkg configuration.
 
 `stable.yml` manually publishes an exact checked lock such as
-`config/releases/1.0.4.json` in the policy-configured Stable train. Each patch
+`config/releases/1.0.5.json` in the policy-configured Stable train. Each patch
 is immutable once published. The `stable` pointer may move only to a higher
 patch in that train and always moves as one verified System/Packages pair.
 
