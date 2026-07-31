@@ -212,6 +212,27 @@ prepare_qga() {
   )
 }
 
+shutdown_guest() {
+  local port=$1 label=$2 pid=${qemu_pid:?}
+  echo "cloud smoke: requesting graceful shutdown after ${label}" >&2
+  # admin is the uid-0 appliance account.  The SSH session can disappear as
+  # shutdown closes services, so wait on QEMU rather than its SSH exit status.
+  timeout 15 ssh -q -o BatchMode=yes -o IdentitiesOnly=yes \
+    -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+    -o ConnectTimeout=5 -i "${work}/id" -p "$port" admin@127.0.0.1 \
+    '/sbin/shutdown -p now' </dev/null >/dev/null 2>&1 || true
+  for _ in {1..90}; do
+    if ! kill -0 "$pid" 2>/dev/null; then
+      wait "$pid" 2>/dev/null || true
+      unset qemu_pid
+      return 0
+    fi
+    sleep 2
+  done
+  echo "cloud smoke: ${label} did not power off cleanly" >&2
+  return 1
+}
+
 qga_exec() {
   local label=$1 command=$2
   echo "cloud smoke guest-agent diagnostic: ${label}" >&2
@@ -477,9 +498,7 @@ if curl --insecure --fail --silent --connect-timeout 3 https://127.0.0.1:10443/ 
   echo "WebUI was exposed automatically on one-NIC WAN" >&2
   exit 1
 fi
-kill "$qemu_pid"
-wait "$qemu_pid" || true
-unset qemu_pid
+shutdown_guest 10022 "first boot"
 
 # A clean second boot of the same disk proves instance-ID idempotency.
 boot_and_wait "${work}/disk.qcow2" qcow2 bios "${work}/bios-second.log"
@@ -490,9 +509,7 @@ boot_and_wait "${work}/disk.qcow2" qcow2 bios "${work}/bios-second.log"
   else
     true
   fi"
-kill "$qemu_pid"
-wait "$qemu_pid" || true
-unset qemu_pid
+shutdown_guest 10022 "same-disk second boot"
 
 # Exercise two-NIC role assignment on the independently published raw image
 # under UEFI. Management is forwarded only through the LAN NIC.
@@ -558,6 +575,4 @@ done
   cat "${work}/uefi-two.log" >&2
   exit 1
 }
-kill "$qemu_pid"
-wait "$qemu_pid" || true
-unset qemu_pid
+shutdown_guest 10023 "two-NIC UEFI boot"
