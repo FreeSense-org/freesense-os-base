@@ -323,7 +323,7 @@ diagnose_guest_ssh() {
     /usr/bin/sockstat -46 -l 2>&1 || true
     echo "=== EFFECTIVE SSHD POLICY ==="
     /usr/sbin/sshd -T 2>&1 |
-      /usr/bin/grep -E "^(port|listenaddress|permitrootlogin|passwordauthentication|kbdinteractiveauthentication|challengeresponseauthentication|pubkeyauthentication|authorizedkeysfile) " || true
+      /usr/bin/grep -Ei "^(port|listenaddress|permitrootlogin|passwordauthentication|kbdinteractiveauthentication|challengeresponseauthentication|pubkeyauthentication|authorizedkeysfile) " || true
     echo "=== CLOUD SSH CONFIG ==="
     /usr/bin/grep -E "<ssh>|<sshdkeyonly>|FreeSense cloud temporary SSH|<interface>wan</interface>|<address>10[.]0[.]2[.]2/32</address>|<port>22</port>" /conf/config.xml || true
     echo "=== AUTHORIZED KEYS ON DISK ==="
@@ -460,8 +460,8 @@ ssh_args=(ssh -q -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking
       awk '\$2 == \"/var\\/db\\/pkg\" { found = (\$1 ~ /^FreeSense\\/ROOT\\/default\\//) } END { exit !found }'
   fi"
 "${ssh_args[@]}" "sshd -T |
-  grep -qx 'passwordauthentication no' &&
-  sshd -T | grep -Eq '^(kbdinteractiveauthentication|challengeresponseauthentication) no$'"
+  grep -iqx 'passwordauthentication no' &&
+  sshd -T | grep -Eiq '^(kbdinteractiveauthentication|challengeresponseauthentication) no$'"
 if ssh -q -o BatchMode=yes -o PreferredAuthentications=password \
   -o PubkeyAuthentication=no -o StrictHostKeyChecking=no \
   -o UserKnownHostsFile=/dev/null -o ConnectTimeout=3 \
