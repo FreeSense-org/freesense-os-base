@@ -112,6 +112,10 @@ require(release_workflow.count(
 for value in ("needs: [iso-plan, iso]", "needs: [iso-plan, cloud-ufs]"):
     require(value in release_workflow,
             f"release KVM jobs are not serialized by {value!r}")
+for value in ("needs: [plan, iso-plan, iso]",
+              "needs: [plan, iso-plan, cloud-ufs]"):
+    require(value in stable_workflow,
+            f"Stable KVM jobs are not serialized by {value!r}")
 require('expected_system = values["built_against_system"]' in read("scripts/channel.py"),
         "rebound optional packages are not verified against their build System")
 for value in ("sync-downloads", "scripts/migrate_downloads.py",
