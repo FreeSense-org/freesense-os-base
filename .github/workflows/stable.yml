@@ -234,7 +234,9 @@ jobs:
     secrets: inherit
 
   cloud-ufs:
-    needs: [plan, iso-plan]
+    # The shared KVM concurrency group retains only one pending job. Keep the
+    # image jobs ordered so a newer sibling cannot evict an older pending one.
+    needs: [plan, iso-plan, iso]
     uses: ./.github/workflows/runner-build.yml
     with:
       stage: cloud
@@ -267,7 +269,7 @@ jobs:
     secrets: inherit
 
   cloud-zfs:
-    needs: [plan, iso-plan]
+    needs: [plan, iso-plan, cloud-ufs]
     uses: ./.github/workflows/runner-build.yml
     with:
       stage: cloud
