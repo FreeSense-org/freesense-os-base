@@ -281,7 +281,8 @@ require('signature_type: "pubkey"' not in cloud_stage,
         "cloud assembly uses an incompatible repository trust mode")
 require('pkg -r "${root}"' not in cloud_stage,
         "cloud package installation bypasses the image-root chroot")
-for value in ("prepare_qga()", "-device virtio-serial-pci",
+for value in ("prepare_qga()", "shutdown_guest()", "/sbin/shutdown -p now",
+              "-device virtio-serial-pci",
               "name=org.qemu.guest_agent.0", '"${qga_args[@]}"',
               "--failure-dir", "package_failure_artifacts()",
               "disk-post-boot.qcow2"):
