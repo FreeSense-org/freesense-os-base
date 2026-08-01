@@ -48,8 +48,10 @@ last. Failed jobs therefore neither invent a new package version nor upload the
 same successful output again.
 
 `retention.yml` inventories R2 daily at 04:30 UTC and applies a reference-aware
-retention plan only after the exact candidate set appears in two observations
-at least 20 hours apart. Every Stable 1.0.x artifact remains permanent.
+retention plan. It confirms a bounded, oldest-first batch independently for
+each bucket only after the exact batch appears in two observations at least 20
+hours apart; remaining eligible objects are reported and deferred to later
+batches. Every Stable 1.0.x artifact remains permanent.
 Development keeps the latest four completed System and release-image bundles.
 Optional Packages retention follows the active signed channel and the exact
 Packages fingerprints recorded by retained ISO/cloud markers. Legacy ISOs without that binding

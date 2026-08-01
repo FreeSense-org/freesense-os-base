@@ -53,6 +53,8 @@ DOCUMENT_KEYS = {
     "v1/state/retention.json",
 }
 MAX_DOCUMENT_SIZE = 1024 * 1024
+MAX_DELETE_OBJECTS = 5000
+MAX_DELETE_BYTES = 50 * 1024**3
 
 
 def fail(message: str) -> None:
@@ -411,6 +413,54 @@ def candidate(
     }
 
 
+def candidate_totals(candidates: list[dict[str, Any]]) -> dict[str, int]:
+    return {
+        "candidate_prefixes": len(candidates),
+        "candidate_objects": sum(item["object_count"] for item in candidates),
+        "candidate_bytes": sum(item["bytes"] for item in candidates),
+    }
+
+
+def select_deletion_batch(
+    candidates: list[dict[str, Any]],
+    max_objects: int = MAX_DELETE_OBJECTS,
+    max_bytes: int = MAX_DELETE_BYTES,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    selected: list[dict[str, Any]] = []
+    deferred: list[dict[str, Any]] = []
+    usage: dict[str, dict[str, int]] = defaultdict(
+        lambda: {"objects": 0, "bytes": 0}
+    )
+    blocked_buckets: set[str] = set()
+    ordered = sorted(
+        candidates,
+        key=lambda item: (
+            parse_time(item["last_modified"]),
+            item["bucket"],
+            item["prefix"],
+        ),
+    )
+    for item in ordered:
+        bucket = item["bucket"]
+        objects = item["object_count"]
+        size = item["bytes"]
+        if objects > max_objects or size > max_bytes:
+            fail("retention candidate group exceeds the per-run safety cap")
+        bucket_usage = usage[bucket]
+        exceeds_batch = (
+            bucket_usage["objects"] + objects > max_objects
+            or bucket_usage["bytes"] + size > max_bytes
+        )
+        if bucket in blocked_buckets or exceeds_batch:
+            blocked_buckets.add(bucket)
+            deferred.append(item)
+            continue
+        selected.append(item)
+        bucket_usage["objects"] += objects
+        bucket_usage["bytes"] += size
+    return selected, deferred
+
+
 def plan_retention(
     build: dict[str, Any],
     downloads: dict[str, Any],
@@ -733,10 +783,11 @@ def plan_retention(
                     )
                 )
 
-    candidates = sorted(
+    eligible_candidates = sorted(
         build_candidates + download_candidates + smoke_candidates,
         key=lambda item: (item["bucket"], item["prefix"]),
     )
+    candidates, deferred_candidates = select_deletion_batch(eligible_candidates)
     return {
         "schema_version": REPORT_SCHEMA,
         "mode": "two-run-confirmation",
@@ -761,11 +812,9 @@ def plan_retention(
             "smoke_objects": sorted(protected_smoke),
         },
         "candidates": candidates,
-        "totals": {
-            "candidate_prefixes": len(candidates),
-            "candidate_objects": sum(item["object_count"] for item in candidates),
-            "candidate_bytes": sum(item["bytes"] for item in candidates),
-        },
+        "totals": candidate_totals(candidates),
+        "eligible_totals": candidate_totals(eligible_candidates),
+        "deferred_totals": candidate_totals(deferred_candidates),
         "warnings": sorted(set(warnings)),
     }
 
@@ -872,7 +921,7 @@ def deletion_keys(
             if not allowed:
                 fail(f"object is outside the {bucket_kind} deletion boundary: {key}")
             keys.add(key)
-    if len(keys) > 5000 or total_bytes > 50 * 1024**3:
+    if len(keys) > MAX_DELETE_OBJECTS or total_bytes > MAX_DELETE_BYTES:
         fail("retention deletion exceeds the per-run safety cap")
     return sorted(keys)
 
@@ -928,15 +977,22 @@ def pinned_inputs(config: Path) -> set[str]:
 
 def markdown_summary(report: dict[str, Any]) -> str:
     totals = report["totals"]
-    gib = totals["candidate_bytes"] / (1024**3)
+    eligible = report["eligible_totals"]
+    deferred = report["deferred_totals"]
     lines = [
         "## R2 retention report",
         "",
         "**Guarded cleanup:** candidates require two matching daily observations.",
         "",
-        f"- Candidate prefixes/objects: {totals['candidate_prefixes']} / "
+        f"- Actionable prefixes/objects: {totals['candidate_prefixes']} / "
         f"{totals['candidate_objects']}",
-        f"- Candidate storage: {gib:.2f} GiB",
+        f"- Actionable storage: {totals['candidate_bytes'] / (1024**3):.2f} GiB",
+        f"- Eligible prefixes/objects: {eligible['candidate_prefixes']} / "
+        f"{eligible['candidate_objects']}",
+        f"- Eligible storage: {eligible['candidate_bytes'] / (1024**3):.2f} GiB",
+        f"- Deferred prefixes/objects: {deferred['candidate_prefixes']} / "
+        f"{deferred['candidate_objects']}",
+        f"- Deferred storage: {deferred['candidate_bytes'] / (1024**3):.2f} GiB",
         f"- Protected artifact prefixes: "
         f"{len(report['protected']['artifact_prefixes'])}",
         f"- Protected input objects: {len(report['protected']['input_objects'])}",

@@ -306,6 +306,163 @@ class RetentionPlanTests(unittest.TestCase):
             any("legacy Development ISO" in warning for warning in report["warnings"])
         )
 
+    def test_oldest_bounded_batch_is_stable_when_new_candidates_arrive(self):
+        gib = 1024**3
+
+        def planned(records):
+            build = inventory("build", "builds")
+            build["objects"].extend(records)
+            return retention.plan_retention(
+                build,
+                inventory("downloads", "downloads"),
+                {"channels": {}},
+                set(),
+                NOW,
+                keep_devel=4,
+                grace=timedelta(0),
+            )
+
+        oldest = object_record(
+            f"v1/inputs/sha256/{fingerprint(1)}",
+            modified="2026-07-01T00:00:00Z",
+            size=30 * gib,
+        )
+        second = object_record(
+            f"v1/inputs/sha256/{fingerprint(2)}",
+            modified="2026-07-02T00:00:00Z",
+            size=30 * gib,
+        )
+        first_report = planned([oldest, second])
+
+        self.assertEqual(
+            [item["prefix"] for item in first_report["candidates"]],
+            [oldest["key"]],
+        )
+        self.assertEqual(
+            first_report["totals"],
+            {
+                "candidate_prefixes": 1,
+                "candidate_objects": 1,
+                "candidate_bytes": 30 * gib,
+            },
+        )
+        self.assertEqual(
+            first_report["eligible_totals"],
+            {
+                "candidate_prefixes": 2,
+                "candidate_objects": 2,
+                "candidate_bytes": 60 * gib,
+            },
+        )
+        self.assertEqual(
+            first_report["deferred_totals"],
+            {
+                "candidate_prefixes": 1,
+                "candidate_objects": 1,
+                "candidate_bytes": 30 * gib,
+            },
+        )
+
+        newer = object_record(
+            f"v1/inputs/sha256/{fingerprint(3)}",
+            modified="2026-07-03T00:00:00Z",
+            size=1 * gib,
+        )
+        grown_report = planned([oldest, second, newer])
+        self.assertEqual(
+            retention.candidate_digest(grown_report),
+            retention.candidate_digest(first_report),
+        )
+
+    def test_batch_safety_limits_are_independent_per_bucket(self):
+        gib = 1024**3
+        candidates = []
+        for bucket, key_prefix in (
+            ("builds", "v1/artifacts/system/"),
+            ("downloads", "v1/releases/devel/1.1.0-g"),
+        ):
+            for number in (1, 2):
+                item = object_record(
+                    f"{key_prefix}{number}",
+                    modified=f"2026-07-0{number}T00:00:00Z",
+                    size=1 * gib,
+                )
+                candidates.append(
+                    retention.candidate(bucket, item["key"], "expired", [item])
+                )
+
+        selected, deferred = retention.select_deletion_batch(
+            candidates, max_objects=1, max_bytes=50 * gib
+        )
+
+        self.assertEqual(
+            [(item["bucket"], item["prefix"]) for item in selected],
+            [
+                ("builds", "v1/artifacts/system/1"),
+                ("downloads", "v1/releases/devel/1.1.0-g1"),
+            ],
+        )
+        self.assertEqual(
+            [(item["bucket"], item["prefix"]) for item in deferred],
+            [
+                ("builds", "v1/artifacts/system/2"),
+                ("downloads", "v1/releases/devel/1.1.0-g2"),
+            ],
+        )
+
+    def test_candidate_group_larger_than_safety_cap_is_rejected(self):
+        build = inventory("build", "builds")
+        build["objects"].append(
+            object_record(
+                f"v1/inputs/sha256/{fingerprint(1)}",
+                size=50 * 1024**3 + 1,
+            )
+        )
+        with self.assertRaisesRegex(
+            SystemExit,
+            "retention candidate group exceeds the per-run safety cap",
+        ):
+            retention.plan_retention(
+                build,
+                inventory("downloads", "downloads"),
+                {"channels": {}},
+                set(),
+                NOW,
+                keep_devel=4,
+                grace=timedelta(0),
+            )
+
+    def test_summary_reports_actionable_and_deferred_backlog(self):
+        gib = 1024**3
+        report = {
+            "totals": {
+                "candidate_prefixes": 2,
+                "candidate_objects": 100,
+                "candidate_bytes": 40 * gib,
+            },
+            "eligible_totals": {
+                "candidate_prefixes": 5,
+                "candidate_objects": 300,
+                "candidate_bytes": 100 * gib,
+            },
+            "deferred_totals": {
+                "candidate_prefixes": 3,
+                "candidate_objects": 200,
+                "candidate_bytes": 60 * gib,
+            },
+            "protected": {"artifact_prefixes": [], "input_objects": []},
+            "warnings": [],
+        }
+
+        summary = retention.markdown_summary(report)
+
+        self.assertIn("Actionable prefixes/objects: 2 / 100", summary)
+        self.assertIn("Actionable storage: 40.00 GiB", summary)
+        self.assertIn("Eligible prefixes/objects: 5 / 300", summary)
+        self.assertIn("Eligible storage: 100.00 GiB", summary)
+        self.assertIn("Deferred prefixes/objects: 3 / 200", summary)
+        self.assertIn("Deferred storage: 60.00 GiB", summary)
+
     def test_confirmation_requires_matching_observations_twenty_hours_apart(self):
         report = {
             "schema_version": retention.REPORT_SCHEMA,
