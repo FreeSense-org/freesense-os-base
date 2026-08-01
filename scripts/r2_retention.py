@@ -53,6 +53,8 @@ DOCUMENT_KEYS = {
     "v1/state/retention.json",
 }
 MAX_DOCUMENT_SIZE = 1024 * 1024
+MAX_DELETE_OBJECTS = 5000
+MAX_DELETE_BYTES = 50 * 1024**3
 
 
 def fail(message: str) -> None:
@@ -411,6 +413,121 @@ def candidate(
     }
 
 
+def candidate_totals(candidates: list[dict[str, Any]]) -> dict[str, int]:
+    return {
+        "candidate_prefixes": len(candidates),
+        "candidate_objects": sum(item["object_count"] for item in candidates),
+        "candidate_bytes": sum(item["bytes"] for item in candidates),
+    }
+
+
+def candidate_group_digest(candidate: dict[str, Any]) -> str:
+    bucket = candidate.get("bucket")
+    prefix = candidate.get("prefix")
+    keys = candidate.get("keys")
+    if (
+        not isinstance(bucket, str)
+        or not bucket
+        or not isinstance(prefix, str)
+        or not prefix.startswith("v1/")
+        or not isinstance(keys, list)
+        or not keys
+        or any(
+            not isinstance(key, str) or not key.startswith("v1/")
+            for key in keys
+        )
+    ):
+        fail("retention report has an invalid candidate group")
+    identity = {"bucket": bucket, "prefix": prefix, "keys": sorted(keys)}
+    return hashlib.sha256(canonical_json(identity).encode()).hexdigest()
+
+
+def state_candidate_groups(previous: Any) -> list[str] | None:
+    if (
+        not isinstance(previous, dict)
+        or previous.get("schema_version") != STATE_SCHEMA
+    ):
+        return None
+    groups = previous.get("candidate_groups_sha256")
+    if groups is None:
+        return None
+    if (
+        not isinstance(groups, list)
+        or len(groups) != len(set(groups))
+        or any(
+            not isinstance(value, str) or not SHA256.fullmatch(value)
+            for value in groups
+        )
+    ):
+        fail("previous retention state has invalid candidate groups")
+    return groups
+
+
+def select_deletion_batch(
+    candidates: list[dict[str, Any]],
+    max_objects: int = MAX_DELETE_OBJECTS,
+    max_bytes: int = MAX_DELETE_BYTES,
+    previous_groups: list[str] | None = None,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    ordered = sorted(
+        candidates,
+        key=lambda item: (
+            parse_time(item["last_modified"]),
+            item["bucket"],
+            item["prefix"],
+        ),
+    )
+    for item in ordered:
+        if item["object_count"] > max_objects or item["bytes"] > max_bytes:
+            fail("retention candidate group exceeds the per-run safety cap")
+    indexed = {candidate_group_digest(item): item for item in ordered}
+    if len(indexed) != len(ordered):
+        fail("retention candidates contain duplicate groups")
+    if previous_groups and all(value in indexed for value in previous_groups):
+        selected = [indexed[value] for value in previous_groups]
+        selected_groups = set(previous_groups)
+        deferred = [
+            item
+            for item in ordered
+            if candidate_group_digest(item) not in selected_groups
+        ]
+        for bucket in {item["bucket"] for item in selected}:
+            bucket_candidates = [
+                item for item in selected if item["bucket"] == bucket
+            ]
+            totals = candidate_totals(bucket_candidates)
+            if (
+                totals["candidate_objects"] > max_objects
+                or totals["candidate_bytes"] > max_bytes
+            ):
+                fail("previous retention batch exceeds the per-run safety cap")
+        return selected, deferred
+
+    selected: list[dict[str, Any]] = []
+    deferred: list[dict[str, Any]] = []
+    usage: dict[str, dict[str, int]] = defaultdict(
+        lambda: {"objects": 0, "bytes": 0}
+    )
+    blocked_buckets: set[str] = set()
+    for item in ordered:
+        bucket = item["bucket"]
+        objects = item["object_count"]
+        size = item["bytes"]
+        bucket_usage = usage[bucket]
+        exceeds_batch = (
+            bucket_usage["objects"] + objects > max_objects
+            or bucket_usage["bytes"] + size > max_bytes
+        )
+        if bucket in blocked_buckets or exceeds_batch:
+            blocked_buckets.add(bucket)
+            deferred.append(item)
+            continue
+        selected.append(item)
+        bucket_usage["objects"] += objects
+        bucket_usage["bytes"] += size
+    return selected, deferred
+
+
 def plan_retention(
     build: dict[str, Any],
     downloads: dict[str, Any],
@@ -733,9 +850,15 @@ def plan_retention(
                     )
                 )
 
-    candidates = sorted(
+    eligible_candidates = sorted(
         build_candidates + download_candidates + smoke_candidates,
         key=lambda item: (item["bucket"], item["prefix"]),
+    )
+    previous_groups = state_candidate_groups(
+        build["documents"].get("v1/state/retention.json")
+    )
+    candidates, deferred_candidates = select_deletion_batch(
+        eligible_candidates, previous_groups=previous_groups
     )
     return {
         "schema_version": REPORT_SCHEMA,
@@ -749,6 +872,8 @@ def plan_retention(
             ),
             "orphan_candidate_age_hours": int(grace.total_seconds() // 3600),
             "smoke_markers_per_bucket": smoke_keep,
+            "max_delete_objects_per_bucket": MAX_DELETE_OBJECTS,
+            "max_delete_bytes_per_bucket": MAX_DELETE_BYTES,
             "unknown_objects": "protect",
             "generation_records": "keep forever",
         },
@@ -761,10 +886,18 @@ def plan_retention(
             "smoke_objects": sorted(protected_smoke),
         },
         "candidates": candidates,
-        "totals": {
-            "candidate_prefixes": len(candidates),
-            "candidate_objects": sum(item["object_count"] for item in candidates),
-            "candidate_bytes": sum(item["bytes"] for item in candidates),
+        "totals": candidate_totals(candidates),
+        "eligible_totals": candidate_totals(eligible_candidates),
+        "deferred_totals": candidate_totals(deferred_candidates),
+        "actionable_by_bucket": {
+            "build": candidate_totals([
+                item for item in candidates if item["bucket"] == build["bucket"]
+            ]),
+            "downloads": candidate_totals([
+                item
+                for item in candidates
+                if item["bucket"] == downloads["bucket"]
+            ]),
         },
         "warnings": sorted(set(warnings)),
     }
@@ -831,6 +964,9 @@ def confirmation(
     state = {
         "schema_version": STATE_SCHEMA,
         "candidate_sha256": digest,
+        "candidate_groups_sha256": [
+            candidate_group_digest(item) for item in report["candidates"]
+        ],
         "candidate_objects": count,
         "candidate_bytes": report["totals"]["candidate_bytes"],
         "observations": observations,
@@ -872,7 +1008,7 @@ def deletion_keys(
             if not allowed:
                 fail(f"object is outside the {bucket_kind} deletion boundary: {key}")
             keys.add(key)
-    if len(keys) > 5000 or total_bytes > 50 * 1024**3:
+    if len(keys) > MAX_DELETE_OBJECTS or total_bytes > MAX_DELETE_BYTES:
         fail("retention deletion exceeds the per-run safety cap")
     return sorted(keys)
 
@@ -928,15 +1064,34 @@ def pinned_inputs(config: Path) -> set[str]:
 
 def markdown_summary(report: dict[str, Any]) -> str:
     totals = report["totals"]
-    gib = totals["candidate_bytes"] / (1024**3)
+    eligible = report["eligible_totals"]
+    deferred = report["deferred_totals"]
+    build = report["actionable_by_bucket"]["build"]
+    downloads = report["actionable_by_bucket"]["downloads"]
+    policy = report["policy"]
     lines = [
         "## R2 retention report",
         "",
         "**Guarded cleanup:** candidates require two matching daily observations.",
         "",
-        f"- Candidate prefixes/objects: {totals['candidate_prefixes']} / "
+        f"- Actionable prefixes/objects: {totals['candidate_prefixes']} / "
         f"{totals['candidate_objects']}",
-        f"- Candidate storage: {gib:.2f} GiB",
+        f"- Actionable storage: {totals['candidate_bytes'] / (1024**3):.2f} GiB",
+        f"- Eligible prefixes/objects: {eligible['candidate_prefixes']} / "
+        f"{eligible['candidate_objects']}",
+        f"- Eligible storage: {eligible['candidate_bytes'] / (1024**3):.2f} GiB",
+        f"- Deferred prefixes/objects: {deferred['candidate_prefixes']} / "
+        f"{deferred['candidate_objects']}",
+        f"- Deferred storage: {deferred['candidate_bytes'] / (1024**3):.2f} GiB",
+        f"- Per-bucket safety cap: "
+        f"{policy['max_delete_objects_per_bucket']:,} objects / "
+        f"{policy['max_delete_bytes_per_bucket'] / (1024**3):.2f} GiB",
+        f"- Build bucket actionable: {build['candidate_prefixes']} / "
+        f"{build['candidate_objects']} / "
+        f"{build['candidate_bytes'] / (1024**3):.2f} GiB",
+        f"- Downloads bucket actionable: {downloads['candidate_prefixes']} / "
+        f"{downloads['candidate_objects']} / "
+        f"{downloads['candidate_bytes'] / (1024**3):.2f} GiB",
         f"- Protected artifact prefixes: "
         f"{len(report['protected']['artifact_prefixes'])}",
         f"- Protected input objects: {len(report['protected']['input_objects'])}",

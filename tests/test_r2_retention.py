@@ -306,15 +306,316 @@ class RetentionPlanTests(unittest.TestCase):
             any("legacy Development ISO" in warning for warning in report["warnings"])
         )
 
+    def test_oldest_bounded_batch_reports_deferred_candidates(self):
+        gib = 1024**3
+
+        def planned(records):
+            build = inventory("build", "builds")
+            build["objects"].extend(records)
+            return retention.plan_retention(
+                build,
+                inventory("downloads", "downloads"),
+                {"channels": {}},
+                set(),
+                NOW,
+                keep_devel=4,
+                grace=timedelta(0),
+            )
+
+        oldest = object_record(
+            f"v1/inputs/sha256/{fingerprint(1)}",
+            modified="2026-07-01T00:00:00Z",
+            size=30 * gib,
+        )
+        second = object_record(
+            f"v1/inputs/sha256/{fingerprint(2)}",
+            modified="2026-07-02T00:00:00Z",
+            size=30 * gib,
+        )
+        first_report = planned([oldest, second])
+
+        self.assertEqual(
+            [item["prefix"] for item in first_report["candidates"]],
+            [oldest["key"]],
+        )
+        self.assertEqual(
+            first_report["totals"],
+            {
+                "candidate_prefixes": 1,
+                "candidate_objects": 1,
+                "candidate_bytes": 30 * gib,
+            },
+        )
+        self.assertEqual(
+            first_report["eligible_totals"],
+            {
+                "candidate_prefixes": 2,
+                "candidate_objects": 2,
+                "candidate_bytes": 60 * gib,
+            },
+        )
+        self.assertEqual(
+            first_report["deferred_totals"],
+            {
+                "candidate_prefixes": 1,
+                "candidate_objects": 1,
+                "candidate_bytes": 30 * gib,
+            },
+        )
+        self.assertEqual(
+            first_report["actionable_by_bucket"],
+            {
+                "build": {
+                    "candidate_prefixes": 1,
+                    "candidate_objects": 1,
+                    "candidate_bytes": 30 * gib,
+                },
+                "downloads": {
+                    "candidate_prefixes": 0,
+                    "candidate_objects": 0,
+                    "candidate_bytes": 0,
+                },
+            },
+        )
+
+    def test_observed_batch_is_pinned_when_new_candidates_arrive(self):
+        gib = 1024**3
+        oldest = object_record(
+            f"v1/inputs/sha256/{fingerprint(1)}",
+            modified="2026-07-01T00:00:00Z",
+            size=1 * gib,
+        )
+        newer = object_record(
+            f"v1/inputs/sha256/{fingerprint(2)}",
+            modified="2026-07-02T00:00:00Z",
+            size=1 * gib,
+        )
+
+        def planned(records, previous=None):
+            build = inventory("build", "builds")
+            build["objects"].extend(records)
+            if previous is not None:
+                build["documents"]["v1/state/retention.json"] = previous
+            return retention.plan_retention(
+                build,
+                inventory("downloads", "downloads"),
+                {"channels": {}},
+                set(),
+                NOW,
+                keep_devel=4,
+                grace=timedelta(0),
+            )
+
+        first_report = planned([oldest])
+        first = retention.confirmation(first_report, None, NOW)
+        self.assertEqual(len(first["state"]["candidate_groups_sha256"]), 1)
+        grown_report = planned([oldest, newer], first["state"])
+
+        self.assertEqual(
+            [item["prefix"] for item in grown_report["candidates"]],
+            [oldest["key"]],
+        )
+        self.assertEqual(
+            grown_report["deferred_totals"],
+            {
+                "candidate_prefixes": 1,
+                "candidate_objects": 1,
+                "candidate_bytes": 1 * gib,
+            },
+        )
+        self.assertEqual(
+            retention.candidate_digest(grown_report),
+            retention.candidate_digest(first_report),
+        )
+        second = retention.confirmation(
+            grown_report, first["state"], NOW + timedelta(hours=24)
+        )
+        self.assertTrue(second["ready"])
+
+        replacement_report = planned([newer], first["state"])
+        reset = retention.confirmation(
+            replacement_report, first["state"], NOW + timedelta(hours=24)
+        )
+        self.assertFalse(reset["ready"])
+        self.assertEqual(reset["state"]["observations"], 1)
+
+        legacy_state = dict(first["state"])
+        del legacy_state["candidate_groups_sha256"]
+        legacy_report = planned([oldest, newer], legacy_state)
+        legacy_decision = retention.confirmation(
+            legacy_report, legacy_state, NOW + timedelta(hours=24)
+        )
+        self.assertFalse(legacy_decision["ready"])
+        self.assertEqual(legacy_decision["state"]["observations"], 1)
+
+    def test_batch_safety_limits_are_independent_per_bucket(self):
+        gib = 1024**3
+        candidates = []
+        for bucket, key_prefix in (
+            ("builds", "v1/artifacts/system/"),
+            ("downloads", "v1/releases/devel/1.1.0-g"),
+        ):
+            for number in (1, 2):
+                item = object_record(
+                    f"{key_prefix}{number}",
+                    modified=f"2026-07-0{number}T00:00:00Z",
+                    size=1 * gib,
+                )
+                candidates.append(
+                    retention.candidate(bucket, item["key"], "expired", [item])
+                )
+
+        selected, deferred = retention.select_deletion_batch(
+            candidates, max_objects=1, max_bytes=50 * gib
+        )
+
+        self.assertEqual(
+            [(item["bucket"], item["prefix"]) for item in selected],
+            [
+                ("builds", "v1/artifacts/system/1"),
+                ("downloads", "v1/releases/devel/1.1.0-g1"),
+            ],
+        )
+        self.assertEqual(
+            [(item["bucket"], item["prefix"]) for item in deferred],
+            [
+                ("builds", "v1/artifacts/system/2"),
+                ("downloads", "v1/releases/devel/1.1.0-g2"),
+            ],
+        )
+
+        new_download = object_record(
+            "v1/releases/devel/1.1.0-g3",
+            modified="2026-07-03T00:00:00Z",
+            size=1 * gib,
+        )
+        pinned, newly_deferred = retention.select_deletion_batch(
+            candidates + [retention.candidate(
+                "downloads", new_download["key"], "expired", [new_download]
+            )],
+            max_objects=1,
+            max_bytes=50 * gib,
+            previous_groups=[
+                retention.candidate_group_digest(item) for item in selected
+            ],
+        )
+        self.assertEqual(pinned, selected)
+        self.assertEqual(len(newly_deferred), 3)
+
+    def test_candidate_group_larger_than_safety_cap_is_rejected(self):
+        build = inventory("build", "builds")
+        build["objects"].append(
+            object_record(
+                f"v1/inputs/sha256/{fingerprint(1)}",
+                size=50 * 1024**3 + 1,
+            )
+        )
+        with self.assertRaisesRegex(
+            SystemExit,
+            "retention candidate group exceeds the per-run safety cap",
+        ):
+            retention.plan_retention(
+                build,
+                inventory("downloads", "downloads"),
+                {"channels": {}},
+                set(),
+                NOW,
+                keep_devel=4,
+                grace=timedelta(0),
+            )
+
+    def test_candidate_group_object_limit_is_inclusive(self):
+        objects = [
+            object_record(f"v1/artifacts/system/{fingerprint(1)}/file-{number}")
+            for number in range(2)
+        ]
+        exact = retention.candidate(
+            "builds", f"v1/artifacts/system/{fingerprint(1)}/", "expired", objects
+        )
+        selected, deferred = retention.select_deletion_batch(
+            [exact], max_objects=2, max_bytes=1024
+        )
+        self.assertEqual(selected, [exact])
+        self.assertEqual(deferred, [])
+
+        oversized = retention.candidate(
+            "builds",
+            f"v1/artifacts/system/{fingerprint(1)}/",
+            "expired",
+            objects + [object_record(
+                f"v1/artifacts/system/{fingerprint(1)}/file-2"
+            )],
+        )
+        with self.assertRaisesRegex(
+            SystemExit,
+            "retention candidate group exceeds the per-run safety cap",
+        ):
+            retention.select_deletion_batch(
+                [oversized], max_objects=2, max_bytes=1024
+            )
+
+    def test_summary_reports_actionable_and_deferred_backlog(self):
+        gib = 1024**3
+        report = {
+            "totals": {
+                "candidate_prefixes": 2,
+                "candidate_objects": 100,
+                "candidate_bytes": 40 * gib,
+            },
+            "eligible_totals": {
+                "candidate_prefixes": 5,
+                "candidate_objects": 300,
+                "candidate_bytes": 100 * gib,
+            },
+            "deferred_totals": {
+                "candidate_prefixes": 3,
+                "candidate_objects": 200,
+                "candidate_bytes": 60 * gib,
+            },
+            "actionable_by_bucket": {
+                "build": {
+                    "candidate_prefixes": 1,
+                    "candidate_objects": 70,
+                    "candidate_bytes": 30 * gib,
+                },
+                "downloads": {
+                    "candidate_prefixes": 1,
+                    "candidate_objects": 30,
+                    "candidate_bytes": 10 * gib,
+                },
+            },
+            "policy": {
+                "max_delete_objects_per_bucket": 5000,
+                "max_delete_bytes_per_bucket": 50 * gib,
+            },
+            "protected": {"artifact_prefixes": [], "input_objects": []},
+            "warnings": [],
+        }
+
+        summary = retention.markdown_summary(report)
+
+        self.assertIn("Actionable prefixes/objects: 2 / 100", summary)
+        self.assertIn("Actionable storage: 40.00 GiB", summary)
+        self.assertIn("Eligible prefixes/objects: 5 / 300", summary)
+        self.assertIn("Eligible storage: 100.00 GiB", summary)
+        self.assertIn("Deferred prefixes/objects: 3 / 200", summary)
+        self.assertIn("Deferred storage: 60.00 GiB", summary)
+        self.assertIn("Per-bucket safety cap: 5,000 objects / 50.00 GiB", summary)
+        self.assertIn("Build bucket actionable: 1 / 70 / 30.00 GiB", summary)
+        self.assertIn("Downloads bucket actionable: 1 / 30 / 10.00 GiB", summary)
+
     def test_confirmation_requires_matching_observations_twenty_hours_apart(self):
+        first_key = "v1/artifacts/system/" + fingerprint(1) + "/file"
         report = {
             "schema_version": retention.REPORT_SCHEMA,
             "mode": "two-run-confirmation",
             "candidates": [
-                {
-                    "bucket": "builds",
-                    "keys": ["v1/artifacts/system/" + fingerprint(1) + "/file"],
-                }
+                retention.candidate(
+                    "builds",
+                    "v1/artifacts/system/" + fingerprint(1) + "/",
+                    "expired",
+                    [object_record(first_key)],
+                )
             ],
             "totals": {"candidate_objects": 1, "candidate_bytes": 100},
         }
@@ -331,13 +632,16 @@ class RetentionPlanTests(unittest.TestCase):
         self.assertTrue(second["ready"])
         self.assertEqual(second["state"]["observations"], 2)
 
+        second_key = "v1/artifacts/system/" + fingerprint(2) + "/file"
         changed = {
             **report,
             "candidates": [
-                {
-                    "bucket": "builds",
-                    "keys": ["v1/artifacts/system/" + fingerprint(2) + "/file"],
-                }
+                retention.candidate(
+                    "builds",
+                    "v1/artifacts/system/" + fingerprint(2) + "/",
+                    "expired",
+                    [object_record(second_key)],
+                )
             ],
         }
         reset = retention.confirmation(
