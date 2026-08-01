@@ -4,7 +4,7 @@
 
 **Goal:** Make guarded R2 cleanup converge under continuous daily builds while preserving exact two-observation confirmation and the existing per-bucket safety limits.
 
-**Architecture:** Keep the existing reference-aware eligibility calculation, then select a deterministic oldest-first actionable batch independently for each bucket. Persist and confirm only that bounded batch while exposing complete eligible and deferred backlog totals in the report and workflow summary.
+**Architecture:** Keep the existing reference-aware eligibility calculation, then select a deterministic oldest-first actionable batch independently for each bucket. Persist candidate-group identities so later runs reconstruct and confirm that exact batch before admitting newer candidates, while exposing complete eligible and deferred backlog totals in the report and workflow summary.
 
 **Tech Stack:** Python 3 standard library, `unittest`, GitHub Actions YAML, Markdown.
 
@@ -29,18 +29,24 @@
 
 - [ ] **Step 1: Add a failing stability and totals test**
 
-Create two old 30-GiB unreferenced input candidates, run `plan_retention`, and assert that only the oldest fits the 50-GiB build-bucket batch. Add a newer third candidate and assert that `candidate_digest` does not change. Assert literal selected, eligible, and deferred object/byte totals.
+Create two old 30-GiB unreferenced input candidates, run `plan_retention`, and assert that only the oldest fits the 50-GiB build-bucket batch. Assert literal selected, eligible, and deferred object/byte totals.
 
-- [ ] **Step 2: Add a failing oversized-group test**
+- [ ] **Step 2: Add a failing steady-state confirmation test**
+
+Observe an under-cap batch, persist its confirmation state, add a newer
+candidate, and assert that planning retains only the observed group and that a
+second observation becomes ready after 24 hours.
+
+- [ ] **Step 3: Add a failing oversized-group test**
 
 Create one expired candidate group larger than 50 GiB and assert that planning exits with `retention candidate group exceeds the per-run safety cap`.
 
-- [ ] **Step 3: Run the focused tests and verify RED**
+- [ ] **Step 4: Run the focused tests and verify RED**
 
 Run:
 
 ```powershell
-python -m unittest tests.test_r2_retention.RetentionPlanTests.test_oldest_bounded_batch_is_stable_when_new_candidates_arrive tests.test_r2_retention.RetentionPlanTests.test_candidate_group_larger_than_safety_cap_is_rejected -v
+python -m unittest tests.test_r2_retention.RetentionPlanTests.test_oldest_bounded_batch_reports_deferred_candidates tests.test_r2_retention.RetentionPlanTests.test_observed_batch_is_pinned_when_new_candidates_arrive tests.test_r2_retention.RetentionPlanTests.test_candidate_group_larger_than_safety_cap_is_rejected -v
 ```
 
 Expected: failures because the full candidate set is still returned and oversized groups are not rejected during planning.
@@ -55,6 +61,7 @@ Expected: failures because the full candidate set is still returned and oversize
 **Interfaces:**
 - Produces: `select_deletion_batch(candidates, max_objects, max_bytes) -> tuple[list[dict], list[dict]]`.
 - Produces: `candidate_totals(candidates) -> dict[str, int]`.
+- Produces: Candidate-group digests stored in `freesense.r2-retention-state/v1`.
 - Preserves: `report["candidates"]` as the exact actionable deletion set.
 - Adds: `report["eligible_totals"]` and `report["deferred_totals"]`.
 
@@ -70,12 +77,18 @@ Sort candidates by parsed `last_modified`, bucket, and prefix. Track object and 
 
 Keep `totals` scoped to actionable `candidates`, and calculate `eligible_totals` and `deferred_totals` from the complete eligible and deferred sets.
 
-- [ ] **Step 4: Run the focused tests and verify GREEN**
+- [ ] **Step 4: Pin the observed batch**
+
+Store candidate-group digests in retention state. When all stored groups remain
+eligible, reconstruct that exact batch and defer every other candidate. Select
+a fresh oldest-first batch if an observed group is no longer eligible.
+
+- [ ] **Step 5: Run the focused tests and verify GREEN**
 
 Run:
 
 ```powershell
-python -m unittest tests.test_r2_retention.RetentionPlanTests.test_oldest_bounded_batch_is_stable_when_new_candidates_arrive tests.test_r2_retention.RetentionPlanTests.test_candidate_group_larger_than_safety_cap_is_rejected -v
+python -m unittest tests.test_r2_retention.RetentionPlanTests.test_oldest_bounded_batch_reports_deferred_candidates tests.test_r2_retention.RetentionPlanTests.test_observed_batch_is_pinned_when_new_candidates_arrive tests.test_r2_retention.RetentionPlanTests.test_candidate_group_larger_than_safety_cap_is_rejected -v
 ```
 
 Expected: both tests pass.

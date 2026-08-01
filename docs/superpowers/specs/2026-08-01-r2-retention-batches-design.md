@@ -37,8 +37,13 @@ that exceeds either limit will fail planning with a clear error because it
 cannot be deleted safely under the configured boundary.
 
 The existing `candidates` field will contain only the selected actionable
-batch. Its digest therefore remains stable when newer candidates appear after
-it. The report will retain totals for the selected batch and add eligible and
+batch. The first observation records a digest for every selected candidate
+group in retention state. On the next run, planning reconstructs that same
+batch from the still-eligible groups before considering newer candidates. If
+every observed group remains eligible, later candidates are deferred even when
+the observed batch is below the size cap. If any observed group disappears or
+changes, planning selects a fresh oldest-first batch and confirmation resets.
+The report will retain totals for the selected batch and add eligible and
 deferred totals so operators can see the complete backlog.
 
 The confirmation state and delete commands remain exact-set based. On the
@@ -62,12 +67,13 @@ cycle.
 ## Tests
 
 Tests will reproduce the production failure by creating an oldest backlog
-larger than one safe batch, selecting it, then adding a newer candidate and
-asserting that the selected digest remains unchanged. Separate tests will
-verify per-bucket limits, oldest-first selection, deferred totals, and the
-oversized-single-group failure. Existing retention tests will continue to
-verify Stable protection, reference closure, confirmation timing, and deletion
-boundaries.
+larger than one safe batch and verifying its deferred totals. A separate
+steady-state regression will observe an under-cap batch, add a newer candidate,
+and assert that persisted candidate-group identities keep the selected digest
+unchanged and allow confirmation. Additional tests will verify per-bucket
+limits, oldest-first selection, and the oversized-single-group failure.
+Existing retention tests will continue to verify Stable protection, reference
+closure, confirmation timing, and deletion boundaries.
 
 ## Operational Outcome
 

@@ -421,17 +421,45 @@ def candidate_totals(candidates: list[dict[str, Any]]) -> dict[str, int]:
     }
 
 
+def candidate_group_digest(candidate: dict[str, Any]) -> str:
+    bucket = candidate.get("bucket")
+    prefix = candidate.get("prefix")
+    keys = candidate.get("keys")
+    if (
+        not isinstance(bucket, str)
+        or not bucket
+        or not isinstance(prefix, str)
+        or not prefix.startswith("v1/")
+        or not isinstance(keys, list)
+        or not keys
+        or any(not isinstance(key, str) or not key.startswith("v1/") for key in keys)
+    ):
+        fail("retention report has an invalid candidate group")
+    identity = {"bucket": bucket, "prefix": prefix, "keys": sorted(keys)}
+    return hashlib.sha256(canonical_json(identity).encode()).hexdigest()
+
+
+def state_candidate_groups(previous: Any) -> list[str] | None:
+    if not isinstance(previous, dict) or previous.get("schema_version") != STATE_SCHEMA:
+        return None
+    groups = previous.get("candidate_groups_sha256")
+    if groups is None:
+        return None
+    if (
+        not isinstance(groups, list)
+        or len(groups) != len(set(groups))
+        or any(not isinstance(value, str) or not SHA256.fullmatch(value) for value in groups)
+    ):
+        fail("previous retention state has invalid candidate groups")
+    return groups
+
+
 def select_deletion_batch(
     candidates: list[dict[str, Any]],
     max_objects: int = MAX_DELETE_OBJECTS,
     max_bytes: int = MAX_DELETE_BYTES,
+    previous_groups: list[str] | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    selected: list[dict[str, Any]] = []
-    deferred: list[dict[str, Any]] = []
-    usage: dict[str, dict[str, int]] = defaultdict(
-        lambda: {"objects": 0, "bytes": 0}
-    )
-    blocked_buckets: set[str] = set()
     ordered = sorted(
         candidates,
         key=lambda item: (
@@ -440,6 +468,33 @@ def select_deletion_batch(
             item["prefix"],
         ),
     )
+    indexed = {candidate_group_digest(item): item for item in ordered}
+    if len(indexed) != len(ordered):
+        fail("retention candidates contain duplicate groups")
+    if previous_groups and all(value in indexed for value in previous_groups):
+        selected = [indexed[value] for value in previous_groups]
+        selected_groups = set(previous_groups)
+        deferred = [
+            item
+            for item in ordered
+            if candidate_group_digest(item) not in selected_groups
+        ]
+        for bucket in {item["bucket"] for item in selected}:
+            bucket_candidates = [item for item in selected if item["bucket"] == bucket]
+            totals = candidate_totals(bucket_candidates)
+            if (
+                totals["candidate_objects"] > max_objects
+                or totals["candidate_bytes"] > max_bytes
+            ):
+                fail("previous retention batch exceeds the per-run safety cap")
+        return selected, deferred
+
+    selected: list[dict[str, Any]] = []
+    deferred: list[dict[str, Any]] = []
+    usage: dict[str, dict[str, int]] = defaultdict(
+        lambda: {"objects": 0, "bytes": 0}
+    )
+    blocked_buckets: set[str] = set()
     for item in ordered:
         bucket = item["bucket"]
         objects = item["object_count"]
@@ -787,7 +842,12 @@ def plan_retention(
         build_candidates + download_candidates + smoke_candidates,
         key=lambda item: (item["bucket"], item["prefix"]),
     )
-    candidates, deferred_candidates = select_deletion_batch(eligible_candidates)
+    previous_groups = state_candidate_groups(
+        build["documents"].get("v1/state/retention.json")
+    )
+    candidates, deferred_candidates = select_deletion_batch(
+        eligible_candidates, previous_groups=previous_groups
+    )
     return {
         "schema_version": REPORT_SCHEMA,
         "mode": "two-run-confirmation",
@@ -880,6 +940,9 @@ def confirmation(
     state = {
         "schema_version": STATE_SCHEMA,
         "candidate_sha256": digest,
+        "candidate_groups_sha256": [
+            candidate_group_digest(item) for item in report["candidates"]
+        ],
         "candidate_objects": count,
         "candidate_bytes": report["totals"]["candidate_bytes"],
         "observations": observations,
