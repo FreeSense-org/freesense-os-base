@@ -107,6 +107,8 @@ Expected: both tests pass.
 - [ ] **Step 1: Extend the Markdown summary**
 
 Report actionable candidate prefixes/objects/storage and deferred prefixes/objects/storage using the new literal fields.
+Show the 5,000-object/50-GiB cap and actionable totals independently for the
+build and downloads buckets.
 
 - [ ] **Step 2: Document bounded oldest-first batches**
 

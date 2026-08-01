@@ -52,7 +52,9 @@ retention plan. It confirms a bounded, oldest-first batch independently for
 each bucket only after the exact batch appears in two observations at least 20
 hours apart. The first observation pins the selected candidate groups so newer
 eligible objects cannot reset confirmation; remaining objects are reported and
-deferred to later batches. Every Stable 1.0.x artifact remains permanent.
+deferred to later batches. Each bucket's batch is capped at 5,000 objects and
+50 GiB, and planning stops safely if one indivisible candidate group exceeds a
+cap. Every Stable 1.0.x artifact remains permanent.
 Development keeps the latest four completed System and release-image bundles.
 Optional Packages retention follows the active signed channel and the exact
 Packages fingerprints recorded by retained ISO/cloud markers. Legacy ISOs without that binding

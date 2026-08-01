@@ -362,7 +362,21 @@ class RetentionPlanTests(unittest.TestCase):
                 "candidate_bytes": 30 * gib,
             },
         )
-
+        self.assertEqual(
+            first_report["actionable_by_bucket"],
+            {
+                "build": {
+                    "candidate_prefixes": 1,
+                    "candidate_objects": 1,
+                    "candidate_bytes": 30 * gib,
+                },
+                "downloads": {
+                    "candidate_prefixes": 0,
+                    "candidate_objects": 0,
+                    "candidate_bytes": 0,
+                },
+            },
+        )
 
     def test_observed_batch_is_pinned_when_new_candidates_arrive(self):
         gib = 1024**3
@@ -425,6 +439,15 @@ class RetentionPlanTests(unittest.TestCase):
         self.assertFalse(reset["ready"])
         self.assertEqual(reset["state"]["observations"], 1)
 
+        legacy_state = dict(first["state"])
+        del legacy_state["candidate_groups_sha256"]
+        legacy_report = planned([oldest, newer], legacy_state)
+        legacy_decision = retention.confirmation(
+            legacy_report, legacy_state, NOW + timedelta(hours=24)
+        )
+        self.assertFalse(legacy_decision["ready"])
+        self.assertEqual(legacy_decision["state"]["observations"], 1)
+
     def test_batch_safety_limits_are_independent_per_bucket(self):
         gib = 1024**3
         candidates = []
@@ -461,6 +484,24 @@ class RetentionPlanTests(unittest.TestCase):
             ],
         )
 
+        new_download = object_record(
+            "v1/releases/devel/1.1.0-g3",
+            modified="2026-07-03T00:00:00Z",
+            size=1 * gib,
+        )
+        pinned, newly_deferred = retention.select_deletion_batch(
+            candidates + [retention.candidate(
+                "downloads", new_download["key"], "expired", [new_download]
+            )],
+            max_objects=1,
+            max_bytes=50 * gib,
+            previous_groups=[
+                retention.candidate_group_digest(item) for item in selected
+            ],
+        )
+        self.assertEqual(pinned, selected)
+        self.assertEqual(len(newly_deferred), 3)
+
     def test_candidate_group_larger_than_safety_cap_is_rejected(self):
         build = inventory("build", "builds")
         build["objects"].append(
@@ -483,6 +524,36 @@ class RetentionPlanTests(unittest.TestCase):
                 grace=timedelta(0),
             )
 
+    def test_candidate_group_object_limit_is_inclusive(self):
+        objects = [
+            object_record(f"v1/artifacts/system/{fingerprint(1)}/file-{number}")
+            for number in range(2)
+        ]
+        exact = retention.candidate(
+            "builds", f"v1/artifacts/system/{fingerprint(1)}/", "expired", objects
+        )
+        selected, deferred = retention.select_deletion_batch(
+            [exact], max_objects=2, max_bytes=1024
+        )
+        self.assertEqual(selected, [exact])
+        self.assertEqual(deferred, [])
+
+        oversized = retention.candidate(
+            "builds",
+            f"v1/artifacts/system/{fingerprint(1)}/",
+            "expired",
+            objects + [object_record(
+                f"v1/artifacts/system/{fingerprint(1)}/file-2"
+            )],
+        )
+        with self.assertRaisesRegex(
+            SystemExit,
+            "retention candidate group exceeds the per-run safety cap",
+        ):
+            retention.select_deletion_batch(
+                [oversized], max_objects=2, max_bytes=1024
+            )
+
     def test_summary_reports_actionable_and_deferred_backlog(self):
         gib = 1024**3
         report = {
@@ -501,6 +572,22 @@ class RetentionPlanTests(unittest.TestCase):
                 "candidate_objects": 200,
                 "candidate_bytes": 60 * gib,
             },
+            "actionable_by_bucket": {
+                "build": {
+                    "candidate_prefixes": 1,
+                    "candidate_objects": 70,
+                    "candidate_bytes": 30 * gib,
+                },
+                "downloads": {
+                    "candidate_prefixes": 1,
+                    "candidate_objects": 30,
+                    "candidate_bytes": 10 * gib,
+                },
+            },
+            "policy": {
+                "max_delete_objects_per_bucket": 5000,
+                "max_delete_bytes_per_bucket": 50 * gib,
+            },
             "protected": {"artifact_prefixes": [], "input_objects": []},
             "warnings": [],
         }
@@ -513,18 +600,23 @@ class RetentionPlanTests(unittest.TestCase):
         self.assertIn("Eligible storage: 100.00 GiB", summary)
         self.assertIn("Deferred prefixes/objects: 3 / 200", summary)
         self.assertIn("Deferred storage: 60.00 GiB", summary)
+        self.assertIn("Per-bucket safety cap: 5,000 objects / 50.00 GiB", summary)
+        self.assertIn("Build bucket actionable: 1 / 70 / 30.00 GiB", summary)
+        self.assertIn("Downloads bucket actionable: 1 / 30 / 10.00 GiB", summary)
 
     def test_confirmation_requires_matching_observations_twenty_hours_apart(self):
         first_key = "v1/artifacts/system/" + fingerprint(1) + "/file"
         report = {
             "schema_version": retention.REPORT_SCHEMA,
             "mode": "two-run-confirmation",
-            "candidates": [retention.candidate(
-                "builds",
-                "v1/artifacts/system/" + fingerprint(1) + "/",
-                "expired",
-                [object_record(first_key)],
-            )],
+            "candidates": [
+                retention.candidate(
+                    "builds",
+                    "v1/artifacts/system/" + fingerprint(1) + "/",
+                    "expired",
+                    [object_record(first_key)],
+                )
+            ],
             "totals": {"candidate_objects": 1, "candidate_bytes": 100},
         }
         first = retention.confirmation(report, None, NOW)
@@ -543,12 +635,14 @@ class RetentionPlanTests(unittest.TestCase):
         second_key = "v1/artifacts/system/" + fingerprint(2) + "/file"
         changed = {
             **report,
-            "candidates": [retention.candidate(
-                "builds",
-                "v1/artifacts/system/" + fingerprint(2) + "/",
-                "expired",
-                [object_record(second_key)],
-            )],
+            "candidates": [
+                retention.candidate(
+                    "builds",
+                    "v1/artifacts/system/" + fingerprint(2) + "/",
+                    "expired",
+                    [object_record(second_key)],
+                )
+            ],
         }
         reset = retention.confirmation(
             changed, first["state"], NOW + timedelta(hours=24)

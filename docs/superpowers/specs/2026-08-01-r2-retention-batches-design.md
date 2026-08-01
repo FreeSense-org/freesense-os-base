@@ -43,8 +43,12 @@ batch from the still-eligible groups before considering newer candidates. If
 every observed group remains eligible, later candidates are deferred even when
 the observed batch is below the size cap. If any observed group disappears or
 changes, planning selects a fresh oldest-first batch and confirmation resets.
+Existing v1 state without candidate-group identities is treated as an
+un-pinned observation and safely replaced by the next decision.
 The report will retain totals for the selected batch and add eligible and
-deferred totals so operators can see the complete backlog.
+deferred totals so operators can see the complete backlog. Its workflow
+summary will also show the numerical safety cap and actionable totals for each
+bucket so a safe combined total above 50 GiB is not misleading.
 
 The confirmation state and delete commands remain exact-set based. On the
 first observation of a selected batch they record observation one. A matching
