@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 from contextlib import redirect_stdout
+from datetime import datetime, timezone
 import hashlib
 import importlib.util
 import io
@@ -32,6 +33,13 @@ with mock.patch.dict(sys.modules, {"plan": plan}):
     stable_plan = load_script("freesense_stable_plan", "scripts/stable_plan.py")
 FINGERPRINT = "a" * 64
 PACKAGES_FINGERPRINT = "b" * 64
+
+
+class FrozenDateTime(datetime):
+    @classmethod
+    def now(cls, tz=None):
+        current = cls(2026, 7, 29, 6, tzinfo=timezone.utc)
+        return current if tz is None else current.astimezone(tz)
 
 
 class Response(io.BytesIO):
@@ -217,6 +225,15 @@ def stable_values(*, package_build_config: str, system_ports_sha: str = "2" * 40
 
 
 class PlannerChannelTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.datetime_patcher = mock.patch.object(plan, "datetime", FrozenDateTime)
+        cls.datetime_patcher.start()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.datetime_patcher.stop()
+
     def test_release_policy_accepts_future_train_and_rejects_mismatch(self):
         policy = {
             "release": {
