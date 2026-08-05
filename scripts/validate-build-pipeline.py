@@ -178,6 +178,7 @@ require('sha256sum "$base_image"' in runner and 'sha256sum "$download"' in runne
 
 installer = read("scripts/runner/install-worker-tools.sh")
 common = read("scripts/runner/worker-common.sh")
+probe = read("scripts/runner/probe.sh")
 worker = installer + "\n" + common
 require(not re.search(
     r"(?m)^[ \t]*(?:env[ \t]+[^#\n]*[ \t]+)?pkg[ \t]+(?:update|install|bootstrap)(?:[ \t]|$)",
@@ -219,8 +220,11 @@ require("run_poudriere_build env NOLINUX=yes" in system_stage and
         "run_poudriere_build env NOLINUX=yes" in packages_stage,
         "System and Optional Packages builds do not preserve failed port logs")
 for value in ("verify_repository()", "packagesite.yaml.sig",
-              "repository packages do not match the signed catalog"):
+              "repository packages do not match the signed catalog",
+              'pkg checksum -q -c "${checksum}" "${package}"'):
     require(value in common, f"signed repository verification is missing {value!r}")
+for value in ("pkg checksum -q", "2$gf8mcrnmm6p6hg6wa9xkfb98zo8g6nx"):
+    require(value in probe, f"worker-image checksum capability probe is missing {value!r}")
 require("--immutable --checksum --multi-thread-streams 0" in common,
         "artifact uploads can overwrite or duplicate immutable results")
 require("optional-closure-check" in packages_stage and "'%dn|%dv'" in packages_stage,

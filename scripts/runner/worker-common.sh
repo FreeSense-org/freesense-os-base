@@ -487,7 +487,13 @@ verify_repository() (
         (.repopath | test("^All/[^/]+[.]pkg$")) and
         ((.repopath | test("[\\t\\r\\n]")) | not) and
         (.sum | type) == "string" and
-        (.sum | test("^[0-9a-f]{64}$")))
+        (.sum as $sum |
+         (($sum | test("^[0-9a-f]{64}$")) or
+          (((($sum | startswith("0$")) or ($sum | startswith("5$"))) and
+            ($sum[2:] | test("^[ybndrfg8ejkmcpqxot1uwisza345h769]{52}$")))) or
+          (($sum | startswith("1$")) and ($sum[2:] | test("^[0-9a-f]{64}$"))) or
+          (($sum | startswith("2$")) and
+           ($sum[2:] | test("^[ybndrfg8ejkmcpqxot1uwisza345h769]{103}$"))))))
     then [.repopath, .sum] | @tsv
     else error("invalid signed package catalog record")
     end
@@ -497,17 +503,32 @@ verify_repository() (
     return 1
   }
 
-  : >"${work}/actual"
+  cut -f 1 "${work}/expected" >"${work}/expected-paths"
+  : >"${work}/actual-paths"
   for package in "${repository}"/All/*.pkg; do
-    [ -f "${package}" ] || continue
-    printf 'All/%s\t%s\n' "${package##*/}" "$(sha256 -q "${package}")" \
-      >>"${work}/actual"
+    if [ ! -e "${package}" ] && [ ! -L "${package}" ]; then
+      continue
+    fi
+    [ -f "${package}" ] && [ ! -L "${package}" ] || {
+      echo "repository package member is not a regular file: ${package##*/}" >&2
+      return 1
+    }
+    printf 'All/%s\n' "${package##*/}" >>"${work}/actual-paths"
   done
-  LC_ALL=C sort -o "${work}/actual" "${work}/actual"
-  cmp -s "${work}/expected" "${work}/actual" || {
+  LC_ALL=C sort -o "${work}/actual-paths" "${work}/actual-paths"
+  cmp -s "${work}/expected-paths" "${work}/actual-paths" || {
     echo "repository packages do not match the signed catalog" >&2
     return 1
   }
+
+  tab=$(printf '\t')
+  while IFS="${tab}" read -r repopath checksum; do
+    package=${repository}/${repopath}
+    pkg checksum -q -c "${checksum}" "${package}" || {
+      echo "repository package checksum does not match the signed catalog: ${repopath}" >&2
+      return 1
+    }
+  done <"${work}/expected"
 )
 
 fetch_repository() {
