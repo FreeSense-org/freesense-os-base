@@ -101,6 +101,30 @@ class WorkerToolResolutionTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "duplicate JSON key"):
             worker_tools.read_catalog([duplicate_key])
 
+    def test_duplicate_name_outside_worker_tool_closure_is_ignored(self):
+        old_redis = package(
+            "redis86", version="8.6.5", origin="databases/redis86",
+        )
+        new_redis = package(
+            "redis86", version="8.8.1", origin="databases/redis88",
+        )
+        manifest = worker_tools.resolve_worker_tools(catalog(old_redis, new_redis))
+        self.assertNotIn("redis86", {entry["name"] for entry in manifest["packages"]})
+
+    def test_duplicate_name_in_worker_tool_dependency_closure_is_rejected(self):
+        first = package("libworker", version="1.0")
+        second = package(
+            "libworker", version="2.0", repopath="All/libworker-2.0.pkg",
+        )
+        records = [json.loads(line) for line in catalog(first, second)]
+        for record in records:
+            if record["name"] == "gtar":
+                record["deps"] = {
+                    "libworker": {"version": "1.0", "origin": "devel/libworker"}
+                }
+        with self.assertRaisesRegex(ValueError, "duplicate package name 'libworker'.*closure"):
+            worker_tools.resolve_worker_tools(json.dumps(record) for record in records)
+
     def test_missing_dependency_is_rejected(self):
         records = [json.loads(line) for line in catalog()]
         records[0]["deps"] = {

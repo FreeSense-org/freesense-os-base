@@ -187,36 +187,54 @@ def _parse_package(record: object, line_number: int) -> Package:
     )
 
 
-def read_catalog(lines: Iterable[str]) -> dict[str, Package]:
+def _parse_catalog(
+    lines: Iterable[str],
+) -> tuple[dict[str, Package], list[Package], set[str]]:
     packages: dict[str, Package] = {}
+    all_packages: list[Package] = []
+    duplicate_names: set[str] = set()
     remote_paths: dict[str, str] = {}
-    records = 0
     for line_number, line in enumerate(lines, 1):
         if not line.strip():
             continue
         record = _load_json(line, f"catalog line {line_number}")
         package = _parse_package(record, line_number)
-        records += 1
+        all_packages.append(package)
         if package.name in packages:
-            raise ValueError(f"duplicate package name {package.name!r}")
+            duplicate_names.add(package.name)
         previous = remote_paths.get(package.remote_path)
         if previous is not None:
+            if previous == package.name:
+                raise ValueError(f"duplicate package name {package.name!r}")
             raise ValueError(
                 f"duplicate repository path {package.remote_path!r} for {previous!r} and {package.name!r}"
             )
-        packages[package.name] = package
+        packages.setdefault(package.name, package)
         remote_paths[package.remote_path] = package.name
-    if records == 0:
+    if not all_packages:
         raise ValueError("package catalog is empty")
+    return packages, all_packages, duplicate_names
+
+
+def read_catalog(lines: Iterable[str]) -> dict[str, Package]:
+    packages, _, duplicate_names = _parse_catalog(lines)
+    if duplicate_names:
+        name = min(duplicate_names)
+        raise ValueError(f"duplicate package name {name!r}")
     return packages
 
 
-def _dependency_order(packages: dict[str, Package]) -> list[Package]:
+def _dependency_order(
+    packages: dict[str, Package], duplicate_names: set[str] | None = None,
+) -> list[Package]:
     order: list[Package] = []
     state: dict[str, int] = {}
     stack: list[str] = []
+    ambiguous = duplicate_names or set()
 
     def visit(name: str, required_by: str | None = None) -> None:
+        if name in ambiguous:
+            raise ValueError(f"duplicate package name {name!r} in worker-tool closure")
         package = packages.get(name)
         if package is None:
             if required_by is None:
@@ -256,10 +274,11 @@ def _dependency_order(packages: dict[str, Package]) -> list[Package]:
     return order
 
 
-def _select_ports_commit(packages: dict[str, Package]) -> str:
-    newest = max(package.built_at for package in packages.values())
+def _select_ports_commit(packages: Iterable[Package]) -> str:
+    package_list = list(packages)
+    newest = max(package.built_at for package in package_list)
     commits = {
-        package.ports_commit for package in packages.values()
+        package.ports_commit for package in package_list
         if package.built_at == newest
     }
     if len(commits) != 1:
@@ -268,9 +287,9 @@ def _select_ports_commit(packages: dict[str, Package]) -> str:
 
 
 def resolve_worker_tools(lines: Iterable[str]) -> dict[str, object]:
-    packages = read_catalog(lines)
-    ports_sha = _select_ports_commit(packages)
-    order = _dependency_order(packages)
+    packages, all_packages, duplicate_names = _parse_catalog(lines)
+    ports_sha = _select_ports_commit(all_packages)
+    order = _dependency_order(packages, duplicate_names)
     local_files: set[str] = set()
     resolved: list[dict[str, object]] = []
     for package in order:
