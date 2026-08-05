@@ -218,8 +218,9 @@ class WorkerVersionValidationTests(unittest.TestCase):
         self.assertIn("failure diagnostics end status=7", result.stderr)
 
     def test_repository_verifier_uses_portable_pkg_checksum(self) -> None:
-        if self.shell is None or shutil.which("jq") is None:
-            self.skipTest("POSIX shell or jq is unavailable")
+        shell = shutil.which("bash") or self.shell
+        if shell is None or shutil.which("jq") is None:
+            self.skipTest("pipefail-capable shell or jq is unavailable")
         checksum = "2$" + "y" * 103
 
         def shell_path(path: Path) -> str:
@@ -269,7 +270,7 @@ pkg() {
 }
 """
             command = [
-                self.shell,
+                shell,
                 "-eu",
                 "-c",
                 mocks + fragment + '\nverify_repository "$REPOSITORY"',
