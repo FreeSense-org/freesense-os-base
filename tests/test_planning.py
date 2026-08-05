@@ -35,11 +35,14 @@ FINGERPRINT = "a" * 64
 PACKAGES_FINGERPRINT = "b" * 64
 
 
-class FrozenDateTime(datetime):
+class PinWindowDateTime(datetime):
     @classmethod
     def now(cls, tz=None):
-        current = cls(2026, 7, 29, 6, tzinfo=timezone.utc)
-        return current if tz is None else current.astimezone(tz)
+        lock = json.loads((plan.ROOT / "config/freebsd-16.json").read_text())
+        valid_from = datetime.fromisoformat(lock["valid_from"].replace("Z", "+00:00"))
+        valid_until = datetime.fromisoformat(lock["valid_until"].replace("Z", "+00:00"))
+        current = valid_from + (valid_until - valid_from) / 2
+        return current.replace(tzinfo=None) if tz is None else current.astimezone(tz)
 
 
 class Response(io.BytesIO):
@@ -227,12 +230,26 @@ def stable_values(*, package_build_config: str, system_ports_sha: str = "2" * 40
 class PlannerChannelTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.datetime_patcher = mock.patch.object(plan, "datetime", FrozenDateTime)
+        cls.datetime_patcher = mock.patch.object(plan, "datetime", PinWindowDateTime)
         cls.datetime_patcher.start()
 
     @classmethod
     def tearDownClass(cls):
         cls.datetime_patcher.stop()
+
+    def test_planning_clock_tracks_the_active_pin_fixture(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "config").mkdir()
+            (root / "config/freebsd-16.json").write_text(json.dumps({
+                "valid_from": "2030-03-01T02:00:00Z",
+                "valid_until": "2030-03-15T02:00:00Z",
+            }))
+            with mock.patch.object(plan, "ROOT", root):
+                self.assertEqual(
+                    plan.datetime.now(timezone.utc),
+                    datetime(2030, 3, 8, 2, tzinfo=timezone.utc),
+                )
 
     def test_release_policy_accepts_future_train_and_rejects_mismatch(self):
         policy = {
