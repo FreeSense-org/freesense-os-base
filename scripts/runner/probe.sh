@@ -15,5 +15,13 @@ for tool in fetch openssl pkg sha256 tar; do
 	}
 done
 pkg query '%n-%v' pkg >/dev/null
+checksum_probe=$(mktemp)
+trap 'rm -f "${checksum_probe}"' EXIT HUP INT TERM
+printf 'bar\n' >"${checksum_probe}"
+pkg checksum -q \
+  -c '2$gf8mcrnmm6p6hg6wa9xkfb98zo8g6nxu8z4q7s93boz8hzf5ogrsr4qgpsb7utd6speio3op18ocyrsa9ms8jj15byttiq7ofbih8gn' \
+  "${checksum_probe}"
+rm -f "${checksum_probe}"
+trap - EXIT HUP INT TERM
 
 echo "FreeBSD build runner probe: $(freebsd-version) / ${cpus} vCPUs / ${memory} bytes RAM"

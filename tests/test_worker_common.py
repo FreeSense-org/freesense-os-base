@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import io
+import json
 import os
 from pathlib import Path
 import shutil
 import subprocess
+import tarfile
 import tempfile
 import unittest
 
@@ -213,3 +216,85 @@ class WorkerVersionValidationTests(unittest.TestCase):
         self.assertEqual(result.returncode, 7)
         self.assertIn("exact rust extraction failure", result.stderr)
         self.assertIn("failure diagnostics end status=7", result.stderr)
+
+    def test_repository_verifier_uses_portable_pkg_checksum(self) -> None:
+        shell = shutil.which("bash") or self.shell
+        if shell is None or shutil.which("jq") is None:
+            self.skipTest("pipefail-capable shell or jq is unavailable")
+        checksum = "2$" + "y" * 103
+
+        def shell_path(path: Path) -> str:
+            value = path.as_posix()
+            if os.name == "nt" and len(value) >= 3 and value[1:3] == ":/":
+                return f"/{value[0].lower()}/{value[3:]}"
+            return value
+
+        source = (ROOT / "scripts/runner/worker-common.sh").read_text(encoding="utf-8")
+        start = source.index("verify_repository()")
+        end = source.index("\nfetch_repository()", start)
+        fragment = source[start:end]
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            repository = root / "repository"
+            package_directory = repository / "All"
+            package_directory.mkdir(parents=True)
+            package = package_directory / "fixture-1.pkg"
+            package.write_text("verified payload\n", encoding="utf-8")
+            catalog = json.dumps({
+                "name": "fixture",
+                "version": "1",
+                "origin": "devel/fixture",
+                "repopath": "All/fixture-1.pkg",
+                "sum": checksum,
+            }).encode() + b"\n"
+            with tarfile.open(repository / "packagesite.pkg", "w") as archive:
+                for name, content in (
+                    ("packagesite.yaml", catalog),
+                    ("packagesite.yaml.sig", b"test signature"),
+                ):
+                    info = tarfile.TarInfo(name)
+                    info.size = len(content)
+                    archive.addfile(info, io.BytesIO(content))
+            trusted_key = root / "repo.pub"
+            trusted_key.write_text("test key", encoding="utf-8")
+            fragment = fragment.replace(
+                "/root/sign/repo.pub", shell_path(trusted_key)
+            )
+            mocks = """
+sha256() { printf '%064d\\n' 0; }
+openssl() { return 0; }
+pkg() {
+  test "$1" = checksum && test "$2" = -q && test "$3" = -c
+  test "$4" = "$PKG_TEST_CHECKSUM"
+  test "$(cat "$5")" = 'verified payload'
+}
+"""
+            command = [
+                shell,
+                "-eu",
+                "-c",
+                mocks + fragment + '\nverify_repository "$REPOSITORY"',
+            ]
+            environment = {
+                **os.environ,
+                "PKG_TEST_CHECKSUM": checksum,
+                "REPOSITORY": shell_path(repository),
+            }
+            result = subprocess.run(
+                command,
+                text=True,
+                capture_output=True,
+                env=environment,
+                check=False,
+            )
+            package.write_text("tampered payload\n", encoding="utf-8")
+            tampered = subprocess.run(
+                command,
+                text=True,
+                capture_output=True,
+                env=environment,
+                check=False,
+            )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotEqual(tampered.returncode, 0)
+        self.assertIn("checksum does not match", tampered.stderr)
