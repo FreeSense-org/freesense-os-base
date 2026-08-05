@@ -1,34 +1,34 @@
 {
   "schema_version": "freesense.freebsd-pin/v2",
   "ready": true,
-  "valid_from": "2026-07-22T06:00:00Z",
-  "valid_until": "2026-08-05T06:00:00Z",
+  "valid_from": "2026-08-05T06:00:00Z",
+  "valid_until": "2026-08-19T06:00:00Z",
   "freebsd_source": {
-    "commit": "7fc2c9f688efb12beddd58a01628157e32b632b0",
-    "revision_prefix": "7fc2c9f688ef",
-    "build_date": "20260720",
+    "commit": "e004ff15f87e6aa8f2aa13cd5600ae13457b95f1",
+    "revision_prefix": "e004ff15f87e",
+    "build_date": "20260804",
     "osversion": 1600019
   },
   "freebsd_ports": {
-    "commit": "e04fb01027e2b36c6c05e2593359a9beee80bf35"
+    "commit": "ca7ba106939a488129189fd13657b9e5f9d535d1"
   },
   "jail_seed": {
     "url": "https://download.freebsd.org/snapshots/amd64/16.0-CURRENT/base.txz",
-    "upstream_sha256": "37144a5ca7535e1d535133185d0f23ccf7ee8dfb7a476f71e421ad7865bc7b00",
-    "object": "inputs/sha256/37144a5ca7535e1d535133185d0f23ccf7ee8dfb7a476f71e421ad7865bc7b00",
-    "sha256": "37144a5ca7535e1d535133185d0f23ccf7ee8dfb7a476f71e421ad7865bc7b00",
-    "size": 174216896
+    "upstream_sha256": "83ecbde1b91e5917d0c368a6abbe5ea6bb89e9cd42ef00454763cfda467cfa34",
+    "object": "inputs/sha256/83ecbde1b91e5917d0c368a6abbe5ea6bb89e9cd42ef00454763cfda467cfa34",
+    "sha256": "83ecbde1b91e5917d0c368a6abbe5ea6bb89e9cd42ef00454763cfda467cfa34",
+    "size": 174377760
   },
   "worker_image": {
     "url": "https://download.freebsd.org/snapshots/VM-IMAGES/16.0-CURRENT/amd64/Latest/FreeBSD-16.0-CURRENT-amd64-BASIC-CLOUDINIT-ufs.qcow2.xz",
-    "upstream_compressed_sha256": "6461d0f589e4c27923ad92dada13b84158bacca47114bd2b6d3897651f12191c",
-    "object": "inputs/sha256/09eb8662dd1c3f1154b5f23d068205efded5193825a5daa7e2c2b096f71c9a07",
-    "sha256": "09eb8662dd1c3f1154b5f23d068205efded5193825a5daa7e2c2b096f71c9a07",
-    "size": 1031274496
+    "upstream_compressed_sha256": "936c9f15fc3c2b21fcbcc64c4ad3550913a535f5f79998d20272691ae20b0e1d",
+    "object": "inputs/sha256/8ffcac28fa2fce237ad7b0b506bb0401e1c590134aa63cc7cb1f135ec0ef5eb6",
+    "sha256": "8ffcac28fa2fce237ad7b0b506bb0401e1c590134aa63cc7cb1f135ec0ef5eb6",
+    "size": 1044316160
   },
   "worker_tools": {
-    "object": "inputs/sha256/13cadd1ca972c7793afe55acef110235d6de9e6aaf2cd00f13a2f42eb40416ab",
-    "sha256": "13cadd1ca972c7793afe55acef110235d6de9e6aaf2cd00f13a2f42eb40416ab",
+    "object": "inputs/sha256/ce815c64287858216fe9957065cae932bdec6a1d253e322f6eb320733a454ffe",
+    "sha256": "ce815c64287858216fe9957065cae932bdec6a1d253e322f6eb320733a454ffe",
     "size": 37847040
   }
 }
