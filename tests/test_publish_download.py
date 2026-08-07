@@ -215,6 +215,12 @@ class PublishDownloadTests(unittest.TestCase):
             "FreeSense-1.0.0-amd64.iso",
         )
         self.assertNotIn("channels", value)
+        self.assertEqual(
+            value["release_notes"]["schema_version"],
+            "freesense.release-notes/v2",
+        )
+        self.assertIsNone(value["release_notes"]["baseline_release_id"])
+        self.assertFalse(value["release_notes"]["platform"]["packages"]["available"])
 
     def test_idempotent_publication_preserves_timestamp(self):
         existing = release()
@@ -251,6 +257,75 @@ class PublishDownloadTests(unittest.TestCase):
             "title": "Fix ZFS configuration recovery",
             "scope": "System",
         }])
+        self.assertEqual(value["release_notes"]["freesense"], value["changes"])
+        self.assertFalse(value["release_notes"]["platform"]["freebsd"]["changed"])
+
+    def test_build_control_changes_are_not_appliance_release_notes(self):
+        existing = release("devel", generation=7, fingerprint="e" * 64)
+        existing["provenance"]["os_definition"] = "1" * 40
+        notes = publish.build_release_notes(
+            existing,
+            {
+                "source": SHA, "system_ports": SHA, "packages": "2" * 40,
+                "ports": SHA, "os_definition": SHA, "freebsd": SHA,
+                "fingerprint": BUNDLE_FINGERPRINT,
+            },
+            SYSTEM,
+            BASE_URL,
+        )
+        self.assertEqual(notes["freesense"], [])
+
+    def test_system_package_catalogs_produce_version_deltas(self):
+        existing = release("devel", generation=7, fingerprint="e" * 64)
+        existing["system"] = "9" * 64
+        before = {
+            "openssl": {"version": "3.5.1", "origin": "security/openssl"},
+            "old-tool": {"version": "1.0", "origin": "sysutils/old-tool"},
+        }
+        after = {
+            "openssl": {"version": "3.5.2", "origin": "security/openssl"},
+            "new-tool": {"version": "2.0", "origin": "sysutils/new-tool"},
+        }
+        with mock.patch.object(
+            publish, "system_package_inventory", side_effect=(before, after)
+        ) as inventory:
+            changes = publish.package_changes(existing, SYSTEM, BASE_URL)
+        self.assertEqual(inventory.call_count, 2)
+        self.assertEqual(changes["counts"], {"updated": 1, "added": 1, "removed": 1})
+        self.assertEqual(changes["updated"][0]["name"], "openssl")
+        self.assertEqual(changes["added"][0]["name"], "new-tool")
+        self.assertEqual(changes["removed"][0]["name"], "old-tool")
+        self.assertFalse(changes["truncated"])
+
+    def test_signed_system_catalog_is_parsed_as_package_inventory(self):
+        catalog = "\n".join((
+            json.dumps({"name": "openssl", "version": "3.5.2", "origin": "security/openssl"}),
+            json.dumps({"name": "pkg", "version": "2.3.1", "origin": "ports-mgmt/pkg"}),
+        ))
+        completed = mock.Mock(returncode=0, stdout=catalog, stderr="")
+        with mock.patch.object(publish, "fetch_bytes", return_value=b"catalog") as fetch, \
+                mock.patch.object(publish.subprocess, "run", return_value=completed):
+            inventory = publish.system_package_inventory(BASE_URL, SYSTEM)
+        fetch.assert_called_once_with(
+            f"{BASE_URL}/artifacts/system/{SYSTEM}/amd64/packagesite.pkg"
+        )
+        self.assertEqual(inventory["openssl"]["version"], "3.5.2")
+        self.assertEqual(inventory["pkg"]["origin"], "ports-mgmt/pkg")
+
+    def test_build_classified_product_commits_are_filtered(self):
+        existing = release("devel", generation=7, fingerprint="e" * 64)
+        existing["provenance"]["source"] = "1" * 40
+        with mock.patch.object(
+            publish,
+            "github_compare",
+            return_value=[{"type": "build", "title": "build: tune CI cache"}],
+        ):
+            changes = publish.build_changes(existing, {
+                **existing["provenance"],
+                "source": SHA,
+                "fingerprint": BUNDLE_FINGERPRINT,
+            })
+        self.assertEqual(changes, [])
 
     def test_immutable_stable_version_cannot_be_rewritten(self):
         existing = release(fingerprint="e" * 64)

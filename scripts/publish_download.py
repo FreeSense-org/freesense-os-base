@@ -9,6 +9,8 @@ import json
 import os
 from pathlib import Path
 import re
+import subprocess
+import tempfile
 import urllib.error
 import urllib.request
 
@@ -19,15 +21,17 @@ VERSION = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+$")
 ISO_FILE = re.compile(r"^FreeSense-[A-Za-z0-9.-]+-amd64\.iso$")
 DOWNLOAD_SCHEMA = "freesense.download/v2"
 LEGACY_DOWNLOAD_SCHEMA = "freesense.download/v1"
+RELEASE_NOTES_SCHEMA = "freesense.release-notes/v2"
 DOWNLOAD_BASE_URL = "https://downloads.freesense.org/v1"
+MAX_PACKAGE_CHANGES = 200
+MAX_CATALOG_BYTES = 64 * 1024 * 1024
+PACKAGE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9+_,.@~-]{0,127}$")
 CHANGE_TYPES = {
     "security", "fix", "feature", "ui", "package", "documentation", "build", "other",
 }
 CHANGE_REPOSITORIES = (
     ("source", "FreeSense-org/freesense", "System"),
     ("system_ports", "FreeSense-org/freesense-system-ports", "System packages"),
-    ("packages", "FreeSense-org/freesense-packages", "Optional packages"),
-    ("os_definition", "FreeSense-org/freesense-os-base", "Build and installer"),
 )
 
 
@@ -46,6 +50,21 @@ def fetch_json(url: str, missing=None):
         if error.code == 404:
             return missing
         raise
+
+
+def fetch_bytes(url: str, maximum: int = MAX_CATALOG_BYTES) -> bytes:
+    request = urllib.request.Request(url, headers={"User-Agent": "FreeSense-build/1"})
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:
+            declared = response.headers.get("Content-Length")
+            if declared is not None and int(declared) > maximum:
+                raise SystemExit("System package catalog exceeds the size limit")
+            body = response.read(maximum + 1)
+    except (OSError, urllib.error.URLError, ValueError) as error:
+        raise SystemExit(f"unable to fetch System package catalog: {error}") from error
+    if len(body) > maximum:
+        raise SystemExit("System package catalog exceeds the size limit")
+    return body
 
 
 def classify_change(title: str) -> str:
@@ -125,26 +144,120 @@ def build_changes(existing: dict | None, provenance: dict[str, str]) -> list[dic
         if not SHA.fullmatch(before) or not SHA.fullmatch(after) or before == after:
             continue
         for change in github_compare(repository, before, after):
+            if change["type"] == "build":
+                continue
             identity = (change["title"], scope)
             if identity in seen:
                 continue
             seen.add(identity)
             changes.append({**change, "scope": scope})
-    if (SHA.fullmatch(previous.get("freebsd", ""))
-            and previous["freebsd"] != provenance["freebsd"]):
-        changes.append({
-            "type": "build",
-            "title": "Advance the pinned FreeBSD source snapshot",
-            "scope": "FreeBSD platform",
-        })
-    if (SHA.fullmatch(previous.get("ports", ""))
-            and previous["ports"] != provenance["ports"]):
-        changes.append({
-            "type": "package",
-            "title": "Advance the pinned FreeBSD ports snapshot",
-            "scope": "FreeBSD packages",
-        })
     return changes[:50]
+
+
+def system_package_inventory(base_url: str, fingerprint: str) -> dict[str, dict[str, str]]:
+    if not SHA256.fullmatch(fingerprint):
+        raise SystemExit("invalid System fingerprint for package inventory")
+    url = f"{base_url}/artifacts/system/{fingerprint}/amd64/packagesite.pkg"
+    archive = fetch_bytes(url)
+    with tempfile.TemporaryDirectory(prefix="freesense-packagesite-") as directory:
+        path = Path(directory, "packagesite.pkg")
+        path.write_bytes(archive)
+        result = subprocess.run(
+            ["tar", "--zstd", "-xOf", str(path), "packagesite.yaml"],
+            check=False, capture_output=True, text=True, encoding="utf-8",
+        )
+    if result.returncode != 0:
+        raise SystemExit("unable to extract the signed System package catalog")
+    inventory: dict[str, dict[str, str]] = {}
+    try:
+        for line in result.stdout.splitlines():
+            if not line:
+                continue
+            record = json.loads(line)
+            name = record.get("name", "")
+            version = record.get("version", "")
+            origin = record.get("origin", "")
+            if (not PACKAGE_NAME.fullmatch(name) or not isinstance(version, str)
+                    or not version or len(version) > 120 or not isinstance(origin, str)
+                    or len(origin) > 180 or name in inventory):
+                raise ValueError("invalid package record")
+            inventory[name] = {"version": version, "origin": origin}
+    except (TypeError, ValueError, json.JSONDecodeError) as error:
+        raise SystemExit("System package catalog contains invalid metadata") from error
+    if not inventory:
+        raise SystemExit("System package catalog is empty")
+    return inventory
+
+
+def package_changes(existing: dict | None, system: str, base_url: str) -> dict:
+    empty = {
+        "available": existing is not None,
+        "updated": [], "added": [], "removed": [],
+        "counts": {"updated": 0, "added": 0, "removed": 0},
+        "truncated": False,
+    }
+    if existing is None:
+        return empty
+    previous_system = existing.get("system", "")
+    if not SHA256.fullmatch(previous_system):
+        raise SystemExit("existing release has an invalid System identity")
+    if previous_system == system:
+        return empty
+    before = system_package_inventory(base_url, previous_system)
+    after = system_package_inventory(base_url, system)
+    updated = [
+        {"name": name, "from": before[name]["version"],
+         "to": after[name]["version"], "origin": after[name]["origin"]}
+        for name in sorted(before.keys() & after.keys())
+        if before[name]["version"] != after[name]["version"]
+    ]
+    added = [
+        {"name": name, "version": after[name]["version"], "origin": after[name]["origin"]}
+        for name in sorted(after.keys() - before.keys())
+    ]
+    removed = [
+        {"name": name, "version": before[name]["version"], "origin": before[name]["origin"]}
+        for name in sorted(before.keys() - after.keys())
+    ]
+    counts = {"updated": len(updated), "added": len(added), "removed": len(removed)}
+    remaining = MAX_PACKAGE_CHANGES
+    visible = {}
+    for kind, values in (("updated", updated), ("added", added), ("removed", removed)):
+        visible[kind] = values[:remaining]
+        remaining -= len(visible[kind])
+    return {
+        "available": True,
+        **visible,
+        "counts": counts,
+        "truncated": sum(counts.values()) > MAX_PACKAGE_CHANGES,
+    }
+
+
+def build_release_notes(existing: dict | None, provenance: dict[str, str],
+                        system: str, base_url: str) -> dict:
+    if (existing is not None
+            and existing.get("bundle_fingerprint") == provenance.get("fingerprint")
+            and valid_release_notes(existing.get("release_notes"))):
+        return existing["release_notes"]
+    previous = existing.get("provenance", {}) if isinstance(existing, dict) else {}
+    from_freebsd = previous.get("freebsd") if SHA.fullmatch(previous.get("freebsd", "")) else None
+    from_ports = previous.get("ports") if SHA.fullmatch(previous.get("ports", "")) else None
+    return {
+        "schema_version": RELEASE_NOTES_SCHEMA,
+        "baseline_release_id": existing.get("release_id") if isinstance(existing, dict) else None,
+        "freesense": build_changes(existing, provenance),
+        "platform": {
+            "freebsd": {
+                "changed": from_freebsd is not None and from_freebsd != provenance["freebsd"],
+                "ports_changed": from_ports is not None and from_ports != provenance["ports"],
+                "from_commit": from_freebsd,
+                "to_commit": provenance["freebsd"],
+                "from_ports_commit": from_ports,
+                "to_ports_commit": provenance["ports"],
+            },
+            "packages": package_changes(existing, system, base_url),
+        },
+    }
 
 
 def valid_changes(changes) -> bool:
@@ -156,6 +269,55 @@ def valid_changes(changes) -> bool:
                     and isinstance(change.get("scope"), str)
                     and 0 < len(change["scope"]) <= 80
                     for change in changes))
+
+
+def valid_release_notes(notes) -> bool:
+    if not isinstance(notes, dict) or notes.get("schema_version") != RELEASE_NOTES_SCHEMA:
+        return False
+    baseline = notes.get("baseline_release_id")
+    if not (baseline is None or isinstance(baseline, str) and 0 < len(baseline) <= 80):
+        return False
+    platform = notes.get("platform")
+    if not valid_changes(notes.get("freesense")) or not isinstance(platform, dict):
+        return False
+    freebsd = platform.get("freebsd")
+    packages = platform.get("packages")
+    if (not isinstance(freebsd, dict)
+            or not isinstance(freebsd.get("changed"), bool)
+            or not isinstance(freebsd.get("ports_changed"), bool)
+            or any(not SHA.fullmatch(freebsd.get(name, ""))
+                   for name in ("to_commit", "to_ports_commit"))
+            or any(value is not None and not SHA.fullmatch(value)
+                   for value in (freebsd.get("from_commit"), freebsd.get("from_ports_commit")))):
+        return False
+    if (freebsd["changed"] != (freebsd.get("from_commit") is not None
+                               and freebsd["from_commit"] != freebsd["to_commit"])
+            or freebsd["ports_changed"] != (freebsd.get("from_ports_commit") is not None
+                                             and freebsd["from_ports_commit"] != freebsd["to_ports_commit"])):
+        return False
+    if (not isinstance(packages, dict) or not isinstance(packages.get("available"), bool)
+            or not isinstance(packages.get("truncated"), bool)
+            or not isinstance(packages.get("counts"), dict)):
+        return False
+    total_visible = 0
+    for kind in ("updated", "added", "removed"):
+        values = packages.get(kind)
+        count = packages["counts"].get(kind)
+        if (not isinstance(values, list) or type(count) is not int
+                or count < len(values) or count > 100000):
+            return False
+        total_visible += len(values)
+        for item in values:
+            if (not isinstance(item, dict) or not PACKAGE_NAME.fullmatch(item.get("name", ""))
+                    or not isinstance(item.get("origin"), str) or len(item["origin"]) > 180):
+                return False
+            versions = ("from", "to") if kind == "updated" else ("version",)
+            if any(not isinstance(item.get(name), str) or not item[name]
+                   or len(item[name]) > 120 for name in versions):
+                return False
+    total_count = sum(packages["counts"].values())
+    return (total_visible <= MAX_PACKAGE_CHANGES
+            and packages["truncated"] == (total_count > total_visible))
 
 
 def release_identity(release, channel: str) -> str:
@@ -193,7 +355,9 @@ def validate_download(release, channel: str, base_url: str,
             or not isinstance(release.get("generation"), int) or release["generation"] <= 0
             or not isinstance(artifacts, list) or len(artifacts) not in {3, 5}
             or not isinstance(release.get("published_at"), str)
-            or ("changes" in release and not valid_changes(release["changes"]))):
+            or ("changes" in release and not valid_changes(release["changes"]))
+            or ("release_notes" in release
+                and not valid_release_notes(release["release_notes"]))):
         raise SystemExit(f"existing {channel} download document is invalid")
     expected = {
         ("installer", None, "iso"),
@@ -376,6 +540,7 @@ def main() -> int:
         "freebsd": args.freebsd,
         "fingerprint": args.bundle_fingerprint,
     }
+    release_notes = build_release_notes(existing, provenance, args.system, args.base_url)
     release = {
         "schema_version": DOWNLOAD_SCHEMA,
         "version": args.version,
@@ -389,7 +554,9 @@ def main() -> int:
         "artifacts": [],
         "published_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
         "provenance": {key: value for key, value in provenance.items() if key != "fingerprint"},
-        "changes": build_changes(existing, provenance),
+        # Keep the filtered flat list for older appliances and the website.
+        "changes": release_notes["freesense"],
+        "release_notes": release_notes,
     }
     release["artifacts"].append({
         "kind": "installer", "format": "iso", "filesystem": None,
