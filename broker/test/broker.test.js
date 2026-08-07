@@ -341,7 +341,7 @@ describe("least-privilege role policies", () => {
       900,
       ["v1/artifacts/", "v1/inputs/sha256/", "v1/smoke/broker/"],
       [],
-      ["DeleteObject"],
+      ["DeleteObjects"],
     ],
     [
       "retention-download-deleter",
@@ -349,7 +349,7 @@ describe("least-privilege role policies", () => {
       900,
       ["v1/releases/devel/", "v1/smoke/broker/"],
       [],
-      ["DeleteObject"],
+      ["DeleteObjects"],
     ],
     [
       "retention-state-writer",
@@ -394,7 +394,7 @@ describe("least-privilege role policies", () => {
       assert.ok(!session.actions.some((action) => /Multipart/u.test(action)));
       assert.ok(
         !(
-          session.actions.includes("DeleteObject") &&
+          session.actions.some((action) => /^DeleteObjects?$/u.test(action)) &&
           session.actions.includes("PutObject")
         ),
       );
