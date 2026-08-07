@@ -137,7 +137,7 @@ const ROLE_DEFINITIONS = Object.freeze({
   "retention-build-deleter": {
     environments: ["retention"],
     workflow: "retention",
-    actions: ["DeleteObject"],
+    actions: ["DeleteObjects"],
     ttlSeconds: 15 * 60,
     paths() {
       return [
@@ -151,7 +151,7 @@ const ROLE_DEFINITIONS = Object.freeze({
     environments: ["retention"],
     workflow: "retention",
     bucket: "downloads",
-    actions: ["DeleteObject"],
+    actions: ["DeleteObjects"],
     ttlSeconds: 15 * 60,
     paths() {
       return [
