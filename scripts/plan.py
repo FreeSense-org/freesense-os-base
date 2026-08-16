@@ -112,6 +112,21 @@ def fingerprint(value: dict[str, object]) -> str:
     return hashlib.sha256(canonical).hexdigest()
 
 
+def validate_bootstrap_snapshot(lock: dict, pinned_osversion: int) -> None:
+    bootstrap = lock.get("bootstrap_snapshot")
+    if bootstrap is None:
+        return
+    bootstrap_osversion = bootstrap.get("osversion") if isinstance(bootstrap, dict) else None
+    bootstrap_commit = bootstrap.get("commit", "") if isinstance(bootstrap, dict) else ""
+    if (
+        not isinstance(bootstrap_osversion, int)
+        or not SHA.fullmatch(bootstrap_commit)
+        or pinned_osversion < bootstrap_osversion
+        or pinned_osversion - bootstrap_osversion > 1
+    ):
+        raise SystemExit("FreeBSD bootstrap snapshot is not compatible with pinned source")
+
+
 def current_component(manifest_url: str, component: str) -> str:
     try:
         request = urllib.request.Request(
@@ -244,6 +259,7 @@ def main() -> int:
         < (int(abi_match.group(1)) + 1) * 100000
     ):
         raise SystemExit("FreeBSD lock has no exact OSVERSION matching its ABI")
+    validate_bootstrap_snapshot(lock, pinned_osversion)
     try:
         valid_from = datetime.fromisoformat(lock["valid_from"].replace("Z", "+00:00"))
         valid_until = datetime.fromisoformat(lock["valid_until"].replace("Z", "+00:00"))

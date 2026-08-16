@@ -270,6 +270,19 @@ class PlannerChannelTests(unittest.TestCase):
         with self.assertRaisesRegex(SystemExit, "lifecycle must be experimental"):
             plan.release_policy(policy, "devel", "1.2.0")
 
+    def test_bootstrap_snapshot_allows_only_one_osversion_revision(self):
+        compatible = {
+            "bootstrap_snapshot": {"commit": "a" * 40, "osversion": 1600019}
+        }
+        plan.validate_bootstrap_snapshot(compatible, 1600020)
+        with self.assertRaisesRegex(SystemExit, "not compatible"):
+            plan.validate_bootstrap_snapshot(compatible, 1600021)
+        with self.assertRaisesRegex(SystemExit, "not compatible"):
+            plan.validate_bootstrap_snapshot(
+                {"bootstrap_snapshot": {"commit": "bad", "osversion": 1600020}},
+                1600020,
+            )
+
     def test_cloud_and_iso_share_one_bundle_identity(self):
         with tempfile.TemporaryDirectory() as directory:
             closure = Path(directory, "system.json")
