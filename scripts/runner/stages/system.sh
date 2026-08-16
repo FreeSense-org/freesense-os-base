@@ -23,9 +23,16 @@ for package in "${core}"/*.pkg; do
   merge_package "${package}" /root/work/system/All "${inventory}" reject
 done
 [ -n "${kernel_package}" ] || { echo "built kernel package is missing" >&2; exit 1; }
-kernel_member=$(tar -tf "${kernel_package}" | grep -E '(^|/)boot/kernel/kernel$' | head -1)
+kernel_member=$(tar -tf "${kernel_package}" | grep -E '(^|/)boot/kernel/kernel(\.gz)?$' | head -1)
 [ -n "${kernel_member}" ] || { echo "built kernel payload is missing" >&2; exit 1; }
-tar -xOf "${kernel_package}" "${kernel_member}" >/tmp/freesense-built-kernel
+case "${kernel_member}" in
+  *.gz)
+    tar -xOf "${kernel_package}" "${kernel_member}" >/tmp/freesense-built-kernel.gz
+    gzip -dc /tmp/freesense-built-kernel.gz >/tmp/freesense-built-kernel
+    rm -f /tmp/freesense-built-kernel.gz
+    ;;
+  *) tar -xOf "${kernel_package}" "${kernel_member}" >/tmp/freesense-built-kernel ;;
+esac
 if [ "${PACKAGE_ARCH}" = aarch64 ]; then
   file /tmp/freesense-built-kernel | grep -Eq 'ELF 64-bit.*ARM aarch64' || {
     echo "built kernel is not ARM64" >&2; exit 1;
