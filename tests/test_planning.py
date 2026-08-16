@@ -283,6 +283,32 @@ class PlannerChannelTests(unittest.TestCase):
                 1600020,
             )
 
+    def test_target_catalog_may_match_source_or_one_revision_bootstrap(self):
+        source_catalog = {
+            "jail_seed": {"osversion": 1600019},
+            "package_catalog": {"osversion": 1600020},
+        }
+        bootstrap_catalog = {
+            "jail_seed": {"osversion": 1600019},
+            "package_catalog": {"osversion": 1600019},
+        }
+        plan.validate_target_bootstrap(source_catalog, 1600019, 1600020)
+        plan.validate_target_bootstrap(bootstrap_catalog, 1600019, 1600020)
+        with self.assertRaisesRegex(SystemExit, "bounded bootstrap window"):
+            plan.validate_target_bootstrap(
+                {"jail_seed": {"osversion": 1600019},
+                 "package_catalog": {"osversion": 1600018}},
+                1600019,
+                1600020,
+            )
+        with self.assertRaisesRegex(SystemExit, "bounded bootstrap window"):
+            plan.validate_target_bootstrap(
+                {"jail_seed": {"osversion": 1600020},
+                 "package_catalog": {"osversion": 1600020}},
+                1600019,
+                1600020,
+            )
+
     def test_cloud_and_iso_share_one_bundle_identity(self):
         with tempfile.TemporaryDirectory() as directory:
             closure = Path(directory, "system.json")

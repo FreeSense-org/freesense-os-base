@@ -381,6 +381,9 @@ for value in ("scripts/resolve_worker_tools.py", "packagesite.yaml.sig",
     require(value in pin_contract, f"Pin FreeBSD trust contract is missing {value!r}")
 require("bootstrap_snapshot" in pin_contract and "bootstrap_osversion" in pin_contract,
         "Pin FreeBSD does not record its bounded bootstrap snapshot")
+require("arm_catalog_osversion" in pin_contract and
+        "aarch64 catalog OSVERSION is outside the bounded bootstrap window" in pin_contract,
+        "Pin FreeBSD does not validate the target catalog bootstrap window")
 
 broker = read("broker/src/index.js")
 for role in ("coordinator", "artifact-writer", "pin-writer", "channel-writer",
