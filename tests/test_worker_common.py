@@ -112,6 +112,10 @@ class WorkerVersionValidationTests(unittest.TestCase):
         system = (ROOT / "scripts/runner/stages/system.sh").read_text(
             encoding="utf-8"
         )
+        debug_case = system.index("FreeSense-kernel-debug-*")
+        normal_case = system.index("FreeSense-kernel-*)", debug_case)
+        self.assertLess(debug_case, normal_case)
+        self.assertIn("multiple built kernel packages found", system)
         self.assertIn("boot/kernel/kernel(\\.gz)?$", system)
         self.assertIn('case "${kernel_member}" in', system)
         self.assertIn("gzip -dc /tmp/freesense-built-kernel.gz", system)
