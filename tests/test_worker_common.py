@@ -77,6 +77,12 @@ class WorkerVersionValidationTests(unittest.TestCase):
         self.assertLess(cross_flag, jail_command)
         self.assertIn("${poudriere_cross_args} -v 16.0-CURRENT", create_jail)
         self.assertEqual(create_jail.count("poudriere_cross_args=-X"), 1)
+        self.assertIn(
+            'qemu-aarch64-static -L "${jail_root}" "${probe}"', create_jail
+        )
+        self.assertNotIn(
+            '    "${probe}" freesense-aarch64-probe', create_jail
+        )
 
     def test_cloud_assembly_uses_fingerprint_repository_trust(self) -> None:
         cloud = (ROOT / "scripts/runner/stages/cloud.sh").read_text(encoding="utf-8")
