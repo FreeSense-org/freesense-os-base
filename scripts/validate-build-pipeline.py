@@ -379,6 +379,8 @@ pin_contract = pin_workflow + read("scripts/pin-worker-tools.sh")
 for value in ("scripts/resolve_worker_tools.py", "packagesite.yaml.sig",
               "packagesite.yaml.pub", "install_worker_tools"):
     require(value in pin_contract, f"Pin FreeBSD trust contract is missing {value!r}")
+require("bootstrap_snapshot" in pin_contract and "bootstrap_osversion" in pin_contract,
+        "Pin FreeBSD does not record its bounded bootstrap snapshot")
 
 broker = read("broker/src/index.js")
 for role in ("coordinator", "artifact-writer", "pin-writer", "channel-writer",

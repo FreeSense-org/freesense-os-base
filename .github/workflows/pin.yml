@@ -101,7 +101,7 @@ jobs:
           arm_ready=false
           arm_revision=$(curl "${retry[@]}" "${ARM_DIST}/REVISION" 2>/dev/null | tr -d '\r\n' || true)
           arm_builddate=$(curl "${retry[@]}" "${ARM_DIST}/BUILDDATE" 2>/dev/null | tr -d '\r\n' || true)
-          if [[ "${arm_revision}" == "${revision}" ]] && \
+          if [[ "${arm_revision}" == "${revision}" && "${arm_builddate}" == "${builddate}" ]] && \
             curl "${retry[@]}" -o "${RUNNER_TEMP}/MANIFEST.arm64" "${ARM_DIST}/MANIFEST"; then
             arm_ready=true
           else
@@ -109,13 +109,25 @@ jobs:
           fi
           [[ "${revision}" =~ ^[0-9a-f]{12}$ ]]
           [[ "${builddate}" =~ ^[0-9]{8}$ ]]
-          freebsd_sha=$(gh api "repos/freebsd/freebsd-src/commits/${revision}" --jq .sha)
+          bootstrap_sha=$(gh api "repos/freebsd/freebsd-src/commits/${revision}" --jq .sha)
+          [[ "${bootstrap_sha}" =~ ^[0-9a-f]{40}$ ]]
+          curl "${retry[@]}" -o "${RUNNER_TEMP}/param.bootstrap.h" \
+            "https://raw.githubusercontent.com/freebsd/freebsd-src/${bootstrap_sha}/sys/sys/param.h"
+          bootstrap_osversion=$(awk '/^#[[:space:]]*define[[:space:]]+__FreeBSD_version[[:space:]]+/ {print $3}' \
+            "${RUNNER_TEMP}/param.bootstrap.h")
+          [[ "${bootstrap_osversion}" =~ ^16[0-9]{5}$ ]]
+
+          # CURRENT package catalogs may advance one OSVERSION before the next
+          # weekly VM/base snapshot. Pin the exact newer source while retaining
+          # the official weekly artifacts as an explicitly recorded bootstrap.
+          freebsd_sha=$(gh api "repos/freebsd/freebsd-src/commits/main" --jq .sha)
           [[ "${freebsd_sha}" =~ ^[0-9a-f]{40}$ ]]
-          curl "${retry[@]}" -o "${RUNNER_TEMP}/param.h" \
+          curl "${retry[@]}" -o "${RUNNER_TEMP}/param.source.h" \
             "https://raw.githubusercontent.com/freebsd/freebsd-src/${freebsd_sha}/sys/sys/param.h"
           osversion=$(awk '/^#[[:space:]]*define[[:space:]]+__FreeBSD_version[[:space:]]+/ {print $3}' \
-            "${RUNNER_TEMP}/param.h")
+            "${RUNNER_TEMP}/param.source.h")
           [[ "${osversion}" =~ ^16[0-9]{5}$ ]]
+          (( osversion >= bootstrap_osversion && osversion - bootstrap_osversion <= 1 ))
           packagesite_url=https://pkg.freebsd.org/FreeBSD:16:amd64/latest/packagesite.pkg
           curl "${retry[@]}" -o "${RUNNER_TEMP}/packagesite.pkg" "${packagesite_url}"
           arm_packagesite_url=https://pkg.freebsd.org/FreeBSD:16:aarch64/latest/packagesite.pkg
@@ -123,6 +135,18 @@ jobs:
             -o "${RUNNER_TEMP}/packagesite.aarch64.pkg" "${arm_packagesite_url}"; then
             echo "aarch64 package catalog is unavailable; sealing amd64 only" >&2
             arm_ready=false
+          fi
+          if [[ "${arm_ready}" == true ]]; then
+            mkdir -p "${RUNNER_TEMP}/catalog-aarch64"
+            tar --zstd -xf "${RUNNER_TEMP}/packagesite.aarch64.pkg" \
+              -C "${RUNNER_TEMP}/catalog-aarch64" packagesite.yaml
+            arm_catalog_osversions=$(jq -r \
+              'select(.abi == "FreeBSD:16:aarch64") | .annotations.FreeBSD_version // empty' \
+              "${RUNNER_TEMP}/catalog-aarch64/packagesite.yaml" | sort -u)
+            if [[ "${arm_catalog_osversions}" != "${osversion}" ]]; then
+              echo "aarch64 catalog OSVERSION does not match pinned source" >&2
+              arm_ready=false
+            fi
           fi
           bash scripts/pin-worker-tools.sh \
             --catalog "${RUNNER_TEMP}/packagesite.pkg" \
@@ -248,7 +272,9 @@ jobs:
           pin_valid_until=$(date -u --date="${pin_valid_from} + 14 days" +%Y-%m-%dT%H:%M:%SZ)
           jq -n \
             --arg freebsd_sha "${freebsd_sha}" --arg revision "${revision}" \
+            --arg bootstrap_sha "${bootstrap_sha}" \
             --argjson osversion "${osversion}" \
+            --argjson bootstrap_osversion "${bootstrap_osversion}" \
             --arg ports_sha "${ports_sha}" \
             --arg builddate "${builddate}" --arg base_url "${DIST}/base.txz" \
             --arg base_upstream_sha256 "${base_sha}" \
@@ -279,7 +305,7 @@ jobs:
             --argjson tools_size "$(jq -r .size "${RUNNER_TEMP}/worker-tools-blob.json")" \
             --arg valid_from "${pin_valid_from}" \
             --arg valid_until "${pin_valid_until}" \
-            '{schema_version:"freesense.freebsd-pin/v3",valid_from:$valid_from,valid_until:$valid_until,freebsd_source:{commit:$freebsd_sha,revision_prefix:$revision,build_date:$builddate,osversion:$osversion},freebsd_ports:{commit:$ports_sha},targets:{amd64:{ready:true,jail_seed:{url:$base_url,upstream_sha256:$base_upstream_sha256,object:$base_object,sha256:$base_sha256,size:$base_size},package_catalog:{url:$amd_catalog_url,object:$amd_catalog_object,sha256:$amd_catalog_sha256,size:$amd_catalog_size}},arm64:({ready:$arm_ready,jail_seed:{url:$arm_base_url},package_catalog:{url:$arm_catalog_url}} + if $arm_ready then {jail_seed:{url:$arm_base_url,upstream_sha256:$arm_base_upstream_sha256,object:$arm_base_object,sha256:$arm_base_sha256,size:$arm_base_size},package_catalog:{url:$arm_catalog_url,object:$arm_catalog_object,sha256:$arm_catalog_sha256,size:$arm_catalog_size}} else {} end)},worker_image:{url:$image_url,upstream_compressed_sha256:$image_upstream_sha256,object:$image_object,sha256:$image_sha256,size:$image_size},worker_tools:{object:$tools_object,sha256:$tools_sha256,size:$tools_size}}' \
+            '{schema_version:"freesense.freebsd-pin/v3",valid_from:$valid_from,valid_until:$valid_until,freebsd_source:{commit:$freebsd_sha,osversion:$osversion},bootstrap_snapshot:{commit:$bootstrap_sha,revision_prefix:$revision,build_date:$builddate,osversion:$bootstrap_osversion},freebsd_ports:{commit:$ports_sha},targets:{amd64:{ready:true,jail_seed:{url:$base_url,upstream_sha256:$base_upstream_sha256,object:$base_object,sha256:$base_sha256,size:$base_size},package_catalog:{url:$amd_catalog_url,object:$amd_catalog_object,sha256:$amd_catalog_sha256,size:$amd_catalog_size}},arm64:({ready:$arm_ready,jail_seed:{url:$arm_base_url},package_catalog:{url:$arm_catalog_url}} + if $arm_ready then {jail_seed:{url:$arm_base_url,upstream_sha256:$arm_base_upstream_sha256,object:$arm_base_object,sha256:$arm_base_sha256,size:$arm_base_size},package_catalog:{url:$arm_catalog_url,object:$arm_catalog_object,sha256:$arm_catalog_sha256,size:$arm_catalog_size}} else {} end)},worker_image:{url:$image_url,upstream_compressed_sha256:$image_upstream_sha256,object:$image_object,sha256:$image_sha256,size:$image_size},worker_tools:{object:$tools_object,sha256:$tools_sha256,size:$tools_size}}' \
             > config/freebsd-16.json
           jq -e '.targets.amd64.ready and (.targets.arm64.ready|type)=="boolean" and (.freebsd_source.commit|length)==40' config/freebsd-16.json
           echo "image_sha256=$(jq -r .worker_image.sha256 config/freebsd-16.json)" >>"${GITHUB_OUTPUT}"
@@ -352,12 +378,14 @@ jobs:
         shell: bash
         run: |
           rm -f "${RUNNER_TEMP}/MANIFEST" "${RUNNER_TEMP}/VM-CHECKSUM.SHA256" \
-            "${RUNNER_TEMP}/param.h" \
+            "${RUNNER_TEMP}/param.bootstrap.h" "${RUNNER_TEMP}/param.source.h" \
             "${RUNNER_TEMP}/base.txz" "${RUNNER_TEMP}/base-blob.json" \
             "${RUNNER_TEMP}/image-blob.json" "${RUNNER_TEMP}/packagesite.pkg" \
+            "${RUNNER_TEMP}/packagesite.aarch64.pkg" \
             "${RUNNER_TEMP}/worker-tools.tar" "${RUNNER_TEMP}/worker-tools.json" \
             "${RUNNER_TEMP}/worker-tools-blob.json" \
             "${RUNNER_TEMP}/pin-smoke.sh" \
             "${RUNNER_TEMP}/freebsd-16-worker.qcow2" \
             "${RUNNER_TEMP}"/FreeBSD-16.0-CURRENT-amd64-BASIC-CLOUDINIT-*.qcow2 \
             "${RUNNER_TEMP}"/FreeBSD-16.0-CURRENT-amd64-BASIC-CLOUDINIT-*.qcow2.xz
+          rm -rf "${RUNNER_TEMP}/catalog-aarch64"
