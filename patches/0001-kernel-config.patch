@@ -287,9 +287,7 @@ index 00000000000..4080df2dee2
 +device		wlan_ccmp               # 802.11 CCMP support
 +device		wlan_tkip               # 802.11 TKIP support
 +device		wlan_amrr               # AMRR transmit rate control algorithm
-+device		an                      # Aironet 4500/4800 802.11 wireless NICs.
 +device		ath                     # Atheros NICs
-+device		ath_pci                 # Atheros pci/cardbus glue
 +device		ath_hal                 # pci/cardbus chip support
 +options 	AH_AR5416_INTERRUPT_MITIGATION  # AR5416 interrupt mitigation
 +device		ath_rate_sample         # SampleRate tx rate control for ath
@@ -420,8 +418,6 @@ index 00000000000..4080df2dee2
 +device		pfsync
 +
 +device		rndtest		# FIPS 140-2 entropy tester
-+device		hifn		# Hifn 7951, 7781, etc.
-+device		ubsec		# Broadcom 5501, 5601, 58xx
 +device		safe		# safe -- SafeNet crypto accelerator
 +
 +options 	MROUTING
