@@ -193,6 +193,12 @@ class WorkerToolResolutionTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "inconsistent package OSVERSION"):
             worker_tools.resolve_worker_tools(json.dumps(record) for record in records)
 
+    def test_noarch_package_may_omit_osversion(self):
+        records = [json.loads(line) for line in catalog()]
+        del records[0]["annotations"]["FreeBSD_version"]
+        manifest = worker_tools.resolve_worker_tools(json.dumps(record) for record in records)
+        self.assertEqual(manifest["osversion"], int(OSVERSION))
+
     def test_unsafe_paths_and_unsupported_checksums_are_rejected(self):
         dotted_version = package("usrinfo", version=".10_1", origin="sysutils/usrinfo")
         self.assertEqual(
