@@ -31,6 +31,7 @@ SAFE_VERSION = re.compile(r"[A-Za-z0-9+,.@_~-]+")
 SAFE_PATH_SEGMENT = re.compile(r"[A-Za-z0-9][A-Za-z0-9+$,.@_~-]*")
 HEX64 = re.compile(r"[0-9a-f]{64}")
 SHA1 = re.compile(r"[0-9a-f]{40}")
+OSVERSION = re.compile(r"16[0-9]{5}")
 ZBASE32_ALPHABET = "ybndrfg8ejkmcpqxot1uwisza345h769"
 CHECKSUM_LENGTHS = {0: 52, 1: 64, 2: 103, 5: 52}
 
@@ -45,6 +46,7 @@ class Package(NamedTuple):
     dependencies: tuple[tuple[str, str, str], ...]
     built_at: datetime
     ports_commit: str
+    osversion: int
 
 
 class DuplicateKeyError(ValueError):
@@ -180,11 +182,14 @@ def _parse_package(record: object, line_number: int) -> Package:
         ports_commit = annotations.get("ports_top_git_hash")
         if not isinstance(ports_commit, str) or not SHA1.fullmatch(ports_commit):
             raise ValueError(f"invalid package ports commit in {prefix}")
+        osversion_text = annotations.get("FreeBSD_version")
+        if not isinstance(osversion_text, str) or not OSVERSION.fullmatch(osversion_text):
+            raise ValueError(f"invalid package OSVERSION in {prefix}")
     except KeyError as error:
         raise ValueError(f"missing field {error.args[0]!r} in {prefix}") from error
     return Package(
         name, version, origin, remote_path, checksum, size, tuple(dependencies),
-        built_at, ports_commit,
+        built_at, ports_commit, int(osversion_text),
     )
 
 
@@ -291,6 +296,10 @@ def resolve_worker_tools(lines: Iterable[str]) -> dict[str, object]:
     packages, all_packages, duplicate_names = _parse_catalog(lines)
     ports_sha = _select_ports_commit(all_packages)
     order = _dependency_order(packages, duplicate_names)
+    osversions = {package.osversion for package in order}
+    if len(osversions) != 1:
+        raise ValueError("worker-tool closure has inconsistent package OSVERSION values")
+    osversion = next(iter(osversions))
     local_files: set[str] = set()
     resolved: list[dict[str, object]] = []
     for package in order:
@@ -317,6 +326,7 @@ def resolve_worker_tools(lines: Iterable[str]) -> dict[str, object]:
     return {
         "schema_version": SCHEMA_VERSION,
         "ports_sha": ports_sha,
+        "osversion": osversion,
         "roots": list(ROOT_NAMES),
         "commands": list(COMMANDS),
         "package_count": len(resolved),
@@ -411,6 +421,10 @@ def verify_manifest_downloads(manifest: object, directory: Path) -> None:
         raise ValueError("worker-tool manifest has unexpected command checks")
     if not isinstance(manifest.get("ports_sha"), str) or not SHA1.fullmatch(manifest["ports_sha"]):
         raise ValueError("worker-tool manifest has an invalid ports commit")
+    if (isinstance(manifest.get("osversion"), bool)
+            or not isinstance(manifest.get("osversion"), int)
+            or not OSVERSION.fullmatch(str(manifest["osversion"]))):
+        raise ValueError("worker-tool manifest has an invalid OSVERSION")
     packages = manifest.get("packages")
     install_order = manifest.get("install_order")
     if not isinstance(packages, list) or not isinstance(install_order, list):

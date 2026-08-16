@@ -26,6 +26,7 @@ ROOT_ORIGINS = {
 }
 SHA256 = "1$" + "0" * 64
 PORTS_SHA = "7" * 40
+OSVERSION = "1600019"
 
 
 def package(
@@ -49,6 +50,7 @@ def package(
         "pkgsize": size,
         "deps": dependencies or {},
         "annotations": {
+            "FreeBSD_version": OSVERSION,
             "build_timestamp": timestamp,
             "ports_top_git_hash": ports_commit,
         },
@@ -78,6 +80,7 @@ class WorkerToolResolutionTests(unittest.TestCase):
         self.assertEqual(first["roots"], list(worker_tools.ROOT_NAMES))
         self.assertEqual(first["commands"], list(worker_tools.COMMANDS))
         self.assertEqual(first["ports_sha"], PORTS_SHA)
+        self.assertEqual(first["osversion"], int(OSVERSION))
         names = [entry["name"] for entry in first["packages"]]
         self.assertLess(names.index("libworker"), names.index("gtar"))
         libworker = next(entry for entry in first["packages"] if entry["name"] == "libworker")
@@ -184,6 +187,12 @@ class WorkerToolResolutionTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "build timestamp"):
             worker_tools.read_catalog([json.dumps(record)])
 
+    def test_worker_tool_closure_requires_one_osversion(self):
+        records = [json.loads(line) for line in catalog()]
+        records[0]["annotations"]["FreeBSD_version"] = "1600020"
+        with self.assertRaisesRegex(ValueError, "inconsistent package OSVERSION"):
+            worker_tools.resolve_worker_tools(json.dumps(record) for record in records)
+
     def test_unsafe_paths_and_unsupported_checksums_are_rejected(self):
         dotted_version = package("usrinfo", version=".10_1", origin="sysutils/usrinfo")
         self.assertEqual(
@@ -263,6 +272,7 @@ class WorkerToolChecksumTests(unittest.TestCase):
         manifest = {
             "schema_version": worker_tools.SCHEMA_VERSION,
             "ports_sha": PORTS_SHA,
+            "osversion": int(OSVERSION),
             "roots": list(worker_tools.ROOT_NAMES),
             "commands": ["unexpected"],
             "package_count": 0,
