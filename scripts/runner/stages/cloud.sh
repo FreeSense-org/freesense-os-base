@@ -144,14 +144,14 @@ FreeBSD: { enabled: no }
 FreeBSD-kmods: { enabled: no }
 
 FreeSense-system: {
-  url: "${PUBLIC_BASE_URL}/artifacts/system/${SYSTEM_ID}/amd64",
+  url: "${PUBLIC_BASE_URL}/artifacts/system/${SYSTEM_ID}/${PACKAGE_ARCH}",
   mirror_type: "none",
   enabled: yes,
   signature_type: "fingerprints",
   fingerprints: "/usr/local/share/FreeSense/keys/pkg"
 }
 FreeSense-packages: {
-  url: "${PUBLIC_BASE_URL}/artifacts/packages/${PACKAGE_TRAIN}/${PACKAGES_ID}/amd64",
+  url: "${PUBLIC_BASE_URL}/artifacts/packages/${PACKAGE_TRAIN}/${PACKAGES_ID}/${PACKAGE_ARCH}",
   mirror_type: "none",
   enabled: yes,
   signature_type: "fingerprints",
@@ -228,10 +228,14 @@ gpart create -s gpt "${md}"
 mkdir -p /mnt/cloud-root /mnt/cloud-efi
 
 if [ "${CLOUD_FILESYSTEM}" = ufs ]; then
-  gpart add -a 4k -s 512k -t freebsd-boot -l freesense-boot "${md}"
+  if [ "${ARCHITECTURE}" = amd64 ]; then
+    gpart add -a 4k -s 512k -t freebsd-boot -l freesense-boot "${md}"
+  fi
   gpart add -a 1m -s 200m -t efi -l freesense-efi "${md}"
   gpart add -a 1m -t freebsd-ufs -l freesense-root "${md}"
-  gpart bootcode -b "${root}/boot/pmbr" -p "${root}/boot/gptboot" -i 1 "${md}"
+  if [ "${ARCHITECTURE}" = amd64 ]; then
+    gpart bootcode -b "${root}/boot/pmbr" -p "${root}/boot/gptboot" -i 1 "${md}"
+  fi
   newfs -U -L freesense-root "/dev/gpt/freesense-root"
   mount "/dev/gpt/freesense-root" /mnt/cloud-root
   cat >"${root}/etc/fstab" <<'EOF'
@@ -241,9 +245,13 @@ EOF
 else
   kldload zfs 2>/dev/null || kldstat -q -m zfs
   gpart add -a 4k -s 260m -t efi -l freesense-efi "${md}"
-  gpart add -a 4k -s 512k -t freebsd-boot -l freesense-boot "${md}"
+  if [ "${ARCHITECTURE}" = amd64 ]; then
+    gpart add -a 4k -s 512k -t freebsd-boot -l freesense-boot "${md}"
+  fi
   gpart add -a 1m -t freebsd-zfs -l freesense-zfs "${md}"
-  gpart bootcode -b "${root}/boot/pmbr" -p "${root}/boot/gptzfsboot" -i 2 "${md}"
+  if [ "${ARCHITECTURE}" = amd64 ]; then
+    gpart bootcode -b "${root}/boot/pmbr" -p "${root}/boot/gptzfsboot" -i 2 "${md}"
+  fi
   zpool create -o altroot=/mnt/cloud-root -o ashift=12 -o autoexpand=on \
     -O compression=on -O atime=off -m none -f FreeSense \
     /dev/gpt/freesense-zfs
@@ -274,7 +282,9 @@ newfs_msdos -F 32 -c 1 -L FREESENSE "/dev/gpt/freesense-efi"
 mount -t msdosfs "/dev/gpt/freesense-efi" /mnt/cloud-efi
 (cd "${root}" && tar -cf - .) | (cd /mnt/cloud-root && tar -xpf -)
 mkdir -p /mnt/cloud-efi/EFI/BOOT
-install -m 0444 "${root}/boot/loader.efi" /mnt/cloud-efi/EFI/BOOT/BOOTX64.EFI
+efi_boot=BOOTX64.EFI
+[ "${ARCHITECTURE}" = arm64 ] && efi_boot=BOOTAA64.EFI
+install -m 0444 "${root}/boot/loader.efi" "/mnt/cloud-efi/EFI/BOOT/${efi_boot}"
 if [ "${CLOUD_FILESYSTEM}" = zfs ]; then
   zpool set bootfs=FreeSense/ROOT/default FreeSense
   mkdir -p /mnt/cloud-root/boot/zfs
@@ -288,11 +298,11 @@ trap - EXIT INT TERM
 phase cloud-convert
 qemu-img convert -f raw -O qcow2 -o compat=1.1,lazy_refcounts=on \
   "${raw}" "${qcow}"
-raw_name="FreeSense-${release_version}-amd64-${CLOUD_FILESYSTEM}.raw.xz"
-qcow_name="FreeSense-${release_version}-amd64-${CLOUD_FILESYSTEM}.qcow2.xz"
+raw_name="FreeSense-${release_version}-${ARCHITECTURE}-${CLOUD_FILESYSTEM}.raw.xz"
+qcow_name="FreeSense-${release_version}-${ARCHITECTURE}-${CLOUD_FILESYSTEM}.qcow2.xz"
 if [ "${CHANNEL}" != stable ]; then
-  raw_name="FreeSense-${release_version}-g${GENERATION}-amd64-${CLOUD_FILESYSTEM}.raw.xz"
-  qcow_name="FreeSense-${release_version}-g${GENERATION}-amd64-${CLOUD_FILESYSTEM}.qcow2.xz"
+  raw_name="FreeSense-${release_version}-g${GENERATION}-${ARCHITECTURE}-${CLOUD_FILESYSTEM}.raw.xz"
+  qcow_name="FreeSense-${release_version}-g${GENERATION}-${ARCHITECTURE}-${CLOUD_FILESYSTEM}.qcow2.xz"
 fi
 xz -T0 -9 -c "${raw}" >/root/"${raw_name}"
 xz -T0 -9 -c "${qcow}" >/root/"${qcow_name}"
@@ -315,14 +325,19 @@ jq -n \
   --arg freebsd "${FREEBSD_SHA}" --arg ports "${PORTS_SHA}" \
   --arg worker_tools "${WORKER_TOOLS_SHA256}" \
   --arg filesystem "${CLOUD_FILESYSTEM}" \
+  --arg architecture "${ARCHITECTURE}" --arg package_arch "${PACKAGE_ARCH}" \
+  --arg image_profile "${IMAGE_PROFILE}" --arg firmware "${FIRMWARE}" \
+  --argjson capabilities "${IMAGE_CAPABILITIES}" \
   --arg raw_file "${raw_name}" --arg raw_sha "${raw_sha}" \
   --arg qcow_file "${qcow_name}" --arg qcow_sha "${qcow_sha}" \
   --argjson generation "${GENERATION}" --argjson virtual_size "${virtual_size}" \
   --argjson raw_size "${raw_size}" --argjson qcow_size "${qcow_size}" \
   '{schema_version:"freesense.cloud-image/v1",fingerprint:$fingerprint,
     bundle_fingerprint:$bundle,generation:$generation,channel:$channel,
-    release_version:$release,architecture:"amd64",filesystem:$filesystem,
-    disk:({scheme:"gpt",firmware:["bios","uefi"],virtual_size:$virtual_size,
+    release_version:$release,architecture:$architecture,package_arch:$package_arch,
+    platform:$image_profile,firmware:($firmware|split(",")),capabilities:$capabilities,
+    filesystem:$filesystem,
+    disk:({scheme:"gpt",firmware:($firmware|split(",")),virtual_size:$virtual_size,
       root_growth:true} +
       (if $filesystem == "zfs" then
         {pool:{name:"FreeSense",topology:"stripe",

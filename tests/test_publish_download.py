@@ -116,6 +116,10 @@ def release(channel="stable", generation=2, fingerprint=BUNDLE_FINGERPRINT, lega
             "support_tier": "supported" if channel == "stable" else "development",
             "channel": channel, "generation": generation,
             "bundle_fingerprint": fingerprint, "system": SYSTEM,
+            "architecture": "amd64", "package_arch": "amd64",
+            "platform": "generic-amd64", "firmware": ["bios", "uefi"],
+            "capabilities": {"bios": True, "uefi": True, "iso": True,
+                             "installer_img": False, "cloud_init": True},
             "artifacts": artifacts, "published_at": "2026-07-22T22:09:10Z",
             "provenance": {
                 "source": SHA, "system_ports": SHA, "packages": SHA,
@@ -200,7 +204,10 @@ class PublishDownloadTests(unittest.TestCase):
                 self.assertEqual(publish.main(), 0)
             value = json.loads(output.read_text())
 
-        self.assertEqual(value["schema_version"], "freesense.download/v2")
+        self.assertEqual(value["schema_version"], "freesense.download/v3")
+        self.assertEqual(value["architecture"], "amd64")
+        self.assertEqual(value["package_arch"], "amd64")
+        self.assertEqual(value["platform"], "generic-amd64")
         self.assertEqual(value["channel"], "stable")
         self.assertEqual(value["version"], "1.0.0")
         self.assertEqual(len(value["artifacts"]), 5)

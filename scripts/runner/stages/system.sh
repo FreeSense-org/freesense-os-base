@@ -13,13 +13,29 @@ test -n "${core}"
 mkdir -p /root/work/system/All
 inventory=/tmp/system-package-inventory
 : >"${inventory}"
+kernel_package=
 for package in "${core}"/*.pkg; do
   name=$(pkg query -F "${package}" '%n')
   case "${name}" in
     FreeSense-default-config|FreeSense-default-config-serial) continue ;;
   esac
+  case "${name}" in FreeSense-kernel-*) kernel_package=${package} ;; esac
   merge_package "${package}" /root/work/system/All "${inventory}" reject
 done
+[ -n "${kernel_package}" ] || { echo "built kernel package is missing" >&2; exit 1; }
+kernel_member=$(tar -tf "${kernel_package}" | grep -E '(^|/)boot/kernel/kernel$' | head -1)
+[ -n "${kernel_member}" ] || { echo "built kernel payload is missing" >&2; exit 1; }
+tar -xOf "${kernel_package}" "${kernel_member}" >/tmp/freesense-built-kernel
+if [ "${PACKAGE_ARCH}" = aarch64 ]; then
+  file /tmp/freesense-built-kernel | grep -Eq 'ELF 64-bit.*ARM aarch64' || {
+    echo "built kernel is not ARM64" >&2; exit 1;
+  }
+else
+  file /tmp/freesense-built-kernel | grep -Eq 'ELF 64-bit.*x86-64' || {
+    echo "built kernel is not amd64" >&2; exit 1;
+  }
+fi
+rm -f /tmp/freesense-built-kernel
 
 configure_poudriere
 create_jail

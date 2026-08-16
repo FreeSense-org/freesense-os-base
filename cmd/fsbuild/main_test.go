@@ -67,6 +67,7 @@ func TestValidateResultMarkerAcceptsCompleteClosures(t *testing.T) {
 				test.platformID,
 				freeBSDPinID,
 				"",
+				"amd64", "amd64", "generic-amd64",
 				0,
 				1,
 				marshalMarker(t, test.marker),
@@ -185,6 +186,7 @@ func TestValidateResultMarkerRejectsBrokenClosures(t *testing.T) {
 				test.platformID,
 				freeBSDPinID,
 				"",
+				"amd64", "amd64", "generic-amd64",
 				0,
 				expectedGeneration,
 				marshalMarker(t, test.marker),
@@ -220,13 +222,13 @@ func TestValidateCloudResultMarkerChecksFilesystemAndSize(t *testing.T) {
 	}
 	if _, err := validateResultMarker(
 		"cloud", resultID, systemID, resultID, platformID, freeBSDPinID,
-		"zfs", 32, 1, data,
+		"zfs", "amd64", "amd64", "generic-amd64", 32, 1, data,
 	); err != nil {
 		t.Fatalf("valid ZFS marker rejected: %v", err)
 	}
 	if _, err := validateResultMarker(
 		"cloud", resultID, systemID, resultID, platformID, freeBSDPinID,
-		"ufs", 16, 1, data,
+		"ufs", "amd64", "amd64", "generic-amd64", 16, 1, data,
 	); err == nil {
 		t.Fatal("ZFS marker accepted as UFS")
 	}

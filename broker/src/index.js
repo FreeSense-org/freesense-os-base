@@ -85,8 +85,14 @@ const ROLE_DEFINITIONS = Object.freeze({
     paths() {
       return [
         `${R2_PREFIX}/repos.manifest.json`,
+        `${R2_PREFIX}/repos.amd64.manifest.json`,
+        `${R2_PREFIX}/repos.aarch64.manifest.json`,
         `${R2_PREFIX}/releases/stable.json`,
         `${R2_PREFIX}/releases/devel.json`,
+        `${R2_PREFIX}/releases/stable.amd64.json`,
+        `${R2_PREFIX}/releases/devel.amd64.json`,
+        `${R2_PREFIX}/releases/stable.arm64.json`,
+        `${R2_PREFIX}/releases/devel.arm64.json`,
       ];
     },
   },
@@ -115,8 +121,14 @@ const ROLE_DEFINITIONS = Object.freeze({
     objectPaths() {
       return [
         `${R2_PREFIX}/repos.manifest.json`,
+        `${R2_PREFIX}/repos.amd64.manifest.json`,
+        `${R2_PREFIX}/repos.aarch64.manifest.json`,
         `${R2_PREFIX}/releases/stable.json`,
         `${R2_PREFIX}/releases/devel.json`,
+        `${R2_PREFIX}/releases/stable.amd64.json`,
+        `${R2_PREFIX}/releases/devel.amd64.json`,
+        `${R2_PREFIX}/releases/stable.arm64.json`,
+        `${R2_PREFIX}/releases/devel.arm64.json`,
         `${R2_PREFIX}/state/retention.json`,
       ];
     },

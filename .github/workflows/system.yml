@@ -2,6 +2,12 @@ name: System
 
 on:
   workflow_dispatch:
+    inputs:
+      target:
+        type: choice
+        options: [amd64, arm64]
+        default: amd64
+        required: true
   schedule:
     - cron: "0 6 * * *"
 
@@ -40,12 +46,25 @@ jobs:
       freebsd_pin_id: ${{ steps.plan.outputs.freebsd_pin_id }}
       product_version: ${{ steps.plan.outputs.product_version }}
       release_version: ${{ steps.plan.outputs.release_version }}
+      target: ${{ steps.plan.outputs.target }}
+      architecture: ${{ steps.plan.outputs.architecture }}
+      package_arch: ${{ steps.plan.outputs.package_arch }}
+      freebsd_target: ${{ steps.plan.outputs.freebsd_target }}
+      freebsd_target_arch: ${{ steps.plan.outputs.freebsd_target_arch }}
+      poudriere_arch: ${{ steps.plan.outputs.poudriere_arch }}
+      kernel: ${{ steps.plan.outputs.kernel }}
+      executor: ${{ steps.plan.outputs.executor }}
+      image_profile: ${{ steps.plan.outputs.image_profile }}
+      firmware: ${{ steps.plan.outputs.firmware }}
+      image_capabilities: ${{ steps.plan.outputs.image_capabilities }}
+      installer_format: ${{ steps.plan.outputs.installer_format }}
+      publish_enabled: ${{ steps.plan.outputs.publish_enabled }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with: {go-version-file: go.mod, cache: false}
       - id: plan
-        run: python3 scripts/plan.py system --os-base-sha "${GITHUB_SHA}" --github-output "${GITHUB_OUTPUT}"
+        run: python3 scripts/plan.py system --target "${{ inputs.target || 'amd64' }}" --os-base-sha "${GITHUB_SHA}" --github-output "${GITHUB_OUTPUT}"
       - if: steps.plan.outputs.needed == 'true'
         run: go build -trimpath -o "${RUNNER_TEMP}/fsbuild" ./cmd/fsbuild
       - if: steps.plan.outputs.needed == 'true'
@@ -94,11 +113,24 @@ jobs:
       package_train: ${{ needs.plan.outputs.package_train }}
       generation: ${{ needs.plan.outputs.generation }}
       public_base_url: ${{ needs.plan.outputs.public_base_url }}
+      target: ${{ needs.plan.outputs.target }}
+      architecture: ${{ needs.plan.outputs.architecture }}
+      package_arch: ${{ needs.plan.outputs.package_arch }}
+      freebsd_target: ${{ needs.plan.outputs.freebsd_target }}
+      freebsd_target_arch: ${{ needs.plan.outputs.freebsd_target_arch }}
+      poudriere_arch: ${{ needs.plan.outputs.poudriere_arch }}
+      kernel: ${{ needs.plan.outputs.kernel }}
+      executor: ${{ needs.plan.outputs.executor }}
+      image_profile: ${{ needs.plan.outputs.image_profile }}
+      firmware: ${{ needs.plan.outputs.firmware }}
+      image_capabilities: ${{ needs.plan.outputs.image_capabilities }}
+      installer_format: ${{ needs.plan.outputs.installer_format }}
+      publish_enabled: ${{ needs.plan.outputs.publish_enabled }}
     secrets: inherit
 
   publish:
     needs: [plan, build]
-    if: needs.build.result == 'success'
+    if: needs.build.result == 'success' && needs.plan.outputs.publish_enabled == 'true'
     runs-on: ubuntu-24.04
     environment: channel-publisher
     permissions: {contents: read, id-token: write}
@@ -124,14 +156,37 @@ jobs:
           SIGNING_KEY: ${{ secrets.FREESENSE_PKG_SIGNING_KEY }}
         run: |
           key=$(mktemp); trap 'rm -f "$key"' EXIT; chmod 600 "$key"; printf '%s' "${SIGNING_KEY}" >"$key"
-          "${RUNNER_TEMP}/fsbuild" channel update --component system \
+          if [[ "${{ needs.plan.outputs.package_arch }}" == amd64 ]]; then
+            "${RUNNER_TEMP}/fsbuild" channel update --component system \
+              --version "${{ needs.plan.outputs.release_version }}" \
+              --fingerprint "${{ needs.plan.outputs.system }}" \
+              --url "${{ needs.plan.outputs.public_base_url }}/artifacts/system/${{ needs.plan.outputs.system }}/amd64" \
+              --architecture amd64 --package-arch amd64 \
+              --generation "${{ needs.plan.outputs.generation }}" --package-train "${{ needs.plan.outputs.package_train }}" \
+              --freebsd-pin-id "${{ needs.plan.outputs.freebsd_pin_id }}" \
+              --abi "${{ needs.plan.outputs.abi }}" --altabi "${{ needs.plan.outputs.altabi }}" \
+              --osversion "${{ needs.plan.outputs.osversion }}" \
+              --published-at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --private-key "$key"
+            "${RUNNER_TEMP}/fsbuild" channel verify --component system \
+              --fingerprint "${{ needs.plan.outputs.system }}" --private-key "$key"
+          fi
+          "${RUNNER_TEMP}/fsbuild" channel update --qualified-manifest --component system \
             --version "${{ needs.plan.outputs.release_version }}" \
             --fingerprint "${{ needs.plan.outputs.system }}" \
-            --url "${{ needs.plan.outputs.public_base_url }}/artifacts/system/${{ needs.plan.outputs.system }}/amd64" \
+            --url "${{ needs.plan.outputs.public_base_url }}/artifacts/system/${{ needs.plan.outputs.system }}/${{ needs.plan.outputs.package_arch }}" \
             --generation "${{ needs.plan.outputs.generation }}" --package-train "${{ needs.plan.outputs.package_train }}" \
             --freebsd-pin-id "${{ needs.plan.outputs.freebsd_pin_id }}" \
+            --architecture "${{ needs.plan.outputs.architecture }}" --package-arch "${{ needs.plan.outputs.package_arch }}" \
             --abi "${{ needs.plan.outputs.abi }}" --altabi "${{ needs.plan.outputs.altabi }}" \
             --osversion "${{ needs.plan.outputs.osversion }}" \
             --published-at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --private-key "$key"
-          "${RUNNER_TEMP}/fsbuild" channel verify --component system \
+          "${RUNNER_TEMP}/fsbuild" channel verify --qualified-manifest \
+            --package-arch "${{ needs.plan.outputs.package_arch }}" --component system \
             --fingerprint "${{ needs.plan.outputs.system }}" --private-key "$key"
+      - name: Record publication target for release orchestration
+        run: printf '%s\n' '${{ needs.plan.outputs.target }}' >"${RUNNER_TEMP}/publication-target"
+      - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+        with:
+          name: publication-target
+          path: ${{ runner.temp }}/publication-target
+          retention-days: 1

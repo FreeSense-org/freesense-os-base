@@ -8,6 +8,26 @@ export FREESENSE_SYSTEM_OVERLAY_DIR=/root/freesense-system-ports
 phase optional-ports-tree
 ./build.sh --update-poudriere-ports
 cp tools/conf/pfPorts/poudriere_packages tools/conf/pfPorts/poudriere_bulk
+policy=/root/freesense-packages/architecture-policy.json
+jq -e --arg arch "${PACKAGE_ARCH}" '
+  .schema_version == "freesense.optional-package-architectures/v1" and
+  (.architectures[$arch].exclude | type) == "array" and
+  all(.architectures[$arch].exclude[];
+    (.origin | type) == "string" and
+    (.reason | type) == "string" and (.reason | length) >= 20 and
+    (.issue | type) == "string" and startswith("https://") and
+    (.review_date | type) == "string")
+' "${policy}" >/dev/null || { echo "invalid optional-package architecture policy" >&2; exit 1; }
+jq -r --arg arch "${PACKAGE_ARCH}" '.architectures[$arch].exclude[].origin' \
+  "${policy}" >/tmp/optional-exclusions
+while IFS= read -r origin; do
+  [ -f "/root/freesense-packages/${origin}/Makefile" ] || {
+    echo "optional-package exclusion origin does not exist: ${origin}" >&2; exit 1;
+  }
+  awk -v excluded="${origin}" '$0 != excluded' tools/conf/pfPorts/poudriere_bulk \
+    >tools/conf/pfPorts/poudriere_bulk.next
+  mv tools/conf/pfPorts/poudriere_bulk.next tools/conf/pfPorts/poudriere_bulk
+done </tmp/optional-exclusions
 
 phase optional-system-seed
 seed_poudriere_repository /root/system-repo

@@ -153,9 +153,14 @@ grep -Fq '"${_repoc_root}/etc/version"' \
   exit 1
 }
 phase iso-tools-fetch
-mkdir -p /root/freebsd-tools/release/amd64 /root/freebsd-tools/release/scripts
-fetch -qo /root/freebsd-tools/release/amd64/mkisoimages.sh \
-  "https://raw.githubusercontent.com/freebsd/freebsd-src/${FREEBSD_SHA}/release/amd64/mkisoimages.sh"
+mkdir -p "/root/freebsd-tools/release/${FREEBSD_TARGET}" /root/freebsd-tools/release/scripts
+if [ "${ARCHITECTURE}" = arm64 ]; then
+  fetch -qo /root/freebsd-tools/release/arm64/make-memstick.sh \
+    "https://raw.githubusercontent.com/freebsd/freebsd-src/${FREEBSD_SHA}/release/arm64/make-memstick.sh"
+else
+  fetch -qo /root/freebsd-tools/release/amd64/mkisoimages.sh \
+    "https://raw.githubusercontent.com/freebsd/freebsd-src/${FREEBSD_SHA}/release/amd64/mkisoimages.sh"
+fi
 fetch -qo /root/freebsd-tools/release/scripts/make-manifest.sh \
   "https://raw.githubusercontent.com/freebsd/freebsd-src/${FREEBSD_SHA}/release/scripts/make-manifest.sh"
 fetch -qo /root/freebsd-tools/release/scripts/tools.subr \
@@ -163,7 +168,11 @@ fetch -qo /root/freebsd-tools/release/scripts/tools.subr \
 mkdir -p /root/freebsd-tools/tools/boot
 fetch -qo /root/freebsd-tools/tools/boot/install-boot.sh \
   "https://raw.githubusercontent.com/freebsd/freebsd-src/${FREEBSD_SHA}/tools/boot/install-boot.sh"
-test -s /root/freebsd-tools/release/amd64/mkisoimages.sh
+if [ "${ARCHITECTURE}" = arm64 ]; then
+  test -s /root/freebsd-tools/release/arm64/make-memstick.sh
+else
+  test -s /root/freebsd-tools/release/amd64/mkisoimages.sh
+fi
 test -s /root/freebsd-tools/release/scripts/make-manifest.sh
 test -s /root/freebsd-tools/release/scripts/tools.subr
 test -s /root/freebsd-tools/tools/boot/install-boot.sh
@@ -225,18 +234,25 @@ export PATH
 phase iso-assemble
 ./build.sh --assemble-iso
 phase iso-ready
-iso=$(find tmp -type f -name '*.iso' -print -quit)
-test -n "${iso}" && test -s "${iso}"
-sha=$(sha256 -q "${iso}")
-size=$(stat -f %z "${iso}")
+image=$(find tmp -type f -name "*.${INSTALLER_FORMAT}" -print -quit)
+test -n "${image}" && test -s "${image}"
 release_version=${PRODUCT_VERSION%%-*}
 if [ "${CHANNEL}" = stable ]; then
-  name="FreeSense-${release_version}-amd64.iso"
+  prefix="FreeSense-${release_version}"
 else
-  name="FreeSense-${release_version}-g${GENERATION}-amd64.iso"
+  prefix="FreeSense-${release_version}-g${GENERATION}"
 fi
+if [ "${INSTALLER_FORMAT}" = img ]; then
+  name="${prefix}-${ARCHITECTURE}-installer.img.xz"
+  xz -T0 -9 -c "${image}" >"/root/${name}"
+  image="/root/${name}"
+else
+  name="${prefix}-${ARCHITECTURE}.iso"
+fi
+sha=$(sha256 -q "${image}")
+size=$(stat -f %z "${image}")
 phase iso-publish
-upload_immutable "${iso}" "${RESULT}/${name}"
+upload_immutable "${image}" "${RESULT}/${name}"
 jq -n --arg fingerprint "${FINGERPRINT}" --arg sha256 "${sha}" --arg file "${name}" \
   --arg bundle "${BUNDLE_ID}" \
   --arg system "${SYSTEM_ID}" --arg platform "${PLATFORM_ID}" --arg source "${SOURCE_SHA}" \
@@ -244,9 +260,12 @@ jq -n --arg fingerprint "${FINGERPRINT}" --arg sha256 "${sha}" --arg file "${nam
   --arg worker_tools "${WORKER_TOOLS_SHA256}" \
   --arg package_train "${PACKAGE_TRAIN}" --arg channel "${CHANNEL}" \
   --arg packages "${PACKAGES_ID}" \
+  --arg architecture "${ARCHITECTURE}" --arg package_arch "${PACKAGE_ARCH}" \
+  --arg image_profile "${IMAGE_PROFILE}" --arg firmware "${FIRMWARE}" \
+  --argjson capabilities "${IMAGE_CAPABILITIES}" \
   --arg channel_payload "${CHANNEL_PAYLOAD_SHA256}" --argjson size "${size}" \
   --argjson generation "${GENERATION}" \
-  '{schema_version:"freesense.iso/v2",fingerprint:$fingerprint,bundle_fingerprint:$bundle,sha256:$sha256,size:$size,file:$file,system:$system,generation:$generation,inputs:{platform:$platform,source:$source,freebsd:$freebsd,worker_image:$worker_image,worker_tools:$worker_tools,package_train:$package_train,packages:$packages,channel:$channel,channel_payload:$channel_payload}}' \
+  '{schema_version:(if $architecture == "arm64" then "freesense.installer/v1" else "freesense.iso/v2" end),fingerprint:$fingerprint,bundle_fingerprint:$bundle,sha256:$sha256,size:$size,file:$file,system:$system,generation:$generation,architecture:$architecture,package_arch:$package_arch,platform:$image_profile,firmware:($firmware|split(",")),capabilities:$capabilities,inputs:{platform:$platform,source:$source,freebsd:$freebsd,worker_image:$worker_image,worker_tools:$worker_tools,package_train:$package_train,packages:$packages,channel:$channel,channel_payload:$channel_payload}}' \
   >/tmp/complete.json
 upload_immutable /tmp/complete.json "${RESULT}/complete.json"
 phase iso-complete

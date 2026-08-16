@@ -3,6 +3,7 @@ set -euo pipefail
 
 declare public_base_url= fingerprint= bundle= system= packages= generation= channel=
 declare filesystem= virtual_size_gib= failure_dir=
+declare architecture=amd64
 while (($#)); do
   case "$1" in
     --public-base-url) public_base_url=$2; shift 2 ;;
@@ -12,12 +13,14 @@ while (($#)); do
     --packages) packages=$2; shift 2 ;;
     --generation) generation=$2; shift 2 ;;
     --channel) channel=$2; shift 2 ;;
+    --architecture) architecture=$2; shift 2 ;;
     --filesystem) filesystem=$2; shift 2 ;;
     --virtual-size-gib) virtual_size_gib=$2; shift 2 ;;
     --failure-dir) failure_dir=$2; shift 2 ;;
     *) echo "unknown cloud smoke argument: $1" >&2; exit 2 ;;
   esac
 done
+[[ "$architecture" == amd64 || "$architecture" == arm64 ]]
 [[ "$filesystem" == ufs || "$filesystem" == zfs ]]
 [[ "$virtual_size_gib" =~ ^[1-9][0-9]*$ ]]
 virtual_size=$((virtual_size_gib * 1024 * 1024 * 1024))
@@ -185,6 +188,18 @@ qemu-img resize "${work}/disk.qcow2" "$((virtual_size_gib + 8))G"
 
 prepare_ovmf() {
   local vars=$1 candidate code= template=
+  if [[ "$architecture" == arm64 ]]; then
+    for candidate in /usr/share/AAVMF/AAVMF_CODE.fd /usr/share/edk2/aarch64/QEMU_EFI-pflash.raw; do
+      [[ ! -f "$candidate" ]] || { code=$candidate; break; }
+    done
+    for candidate in /usr/share/AAVMF/AAVMF_VARS.fd /usr/share/edk2/aarch64/vars-template-pflash.raw; do
+      [[ ! -f "$candidate" ]] || { template=$candidate; break; }
+    done
+    [[ -n "$code" && -n "$template" ]]
+    cp "$template" "$vars"
+    ovmf_code=$code
+    return
+  fi
   for candidate in \
     /usr/share/OVMF/OVMF_CODE_4M.fd \
     /usr/share/OVMF/OVMF_CODE.fd \
@@ -201,6 +216,12 @@ prepare_ovmf() {
   cp "$template" "$vars"
   ovmf_code=$code
 }
+
+if [[ "$architecture" == arm64 ]]; then
+  qemu_command=(qemu-system-aarch64 -machine virt,accel=tcg,thread=multi -cpu max -m 4096 -nographic)
+else
+  qemu_command=(qemu-system-x86_64 -machine accel=kvm -m 4096 -nographic)
+fi
 
 prepare_qga() {
   local socket=$1
@@ -415,6 +436,7 @@ diagnose_ssh_timeout() {
 boot_and_wait() {
   local disk=$1 format=$2 firmware=$3 log=$4
   local firmware_args=()
+  [[ "$architecture" != arm64 ]] || firmware=uefi
   if [[ "$firmware" == uefi ]]; then
     prepare_ovmf "${work}/OVMF_VARS.fd"
     firmware_args=(
@@ -423,7 +445,7 @@ boot_and_wait() {
     )
   fi
   prepare_qga "${work}/qga.sock"
-  qemu-system-x86_64 -machine accel=kvm -m 4096 -nographic \
+  "${qemu_command[@]}" \
     "${firmware_args[@]}" \
     "${qga_args[@]}" \
     -drive "if=virtio,format=${format},file=${disk},cache=none" \
@@ -547,7 +569,7 @@ cloud-localds --network-config="${work}/network-config-two" \
   "${work}/cidata-two.iso" "${work}/user-data-two" "${work}/meta-data-two"
 prepare_ovmf "${work}/OVMF_VARS-two.fd"
 prepare_qga "${work}/qga-two.sock"
-qemu-system-x86_64 -machine accel=kvm -m 4096 -nographic \
+"${qemu_command[@]}" \
   -drive "if=pflash,format=raw,readonly=on,file=${ovmf_code}" \
   -drive "if=pflash,format=raw,file=${work}/OVMF_VARS-two.fd" \
   "${qga_args[@]}" \

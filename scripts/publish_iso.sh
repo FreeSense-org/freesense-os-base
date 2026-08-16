@@ -10,7 +10,7 @@ for name in R2_BUCKET R2_ENDPOINT RUNNER_TEMP; do
 done
 
 document=$1
-jq -e '.schema_version == "freesense.download/v2"' "$document" >/dev/null
+jq -e '.schema_version == "freesense.download/v2" or .schema_version == "freesense.download/v3"' "$document" >/dev/null
 
 count=$(jq '.artifacts | length' "$document")
 ((count == 3 || count == 5))
@@ -21,6 +21,7 @@ for ((index=0; index<count; index++)); do
   marker_url=$(jq -er ".artifacts[$index].marker_url" "$document")
   public_url=$(jq -er ".artifacts[$index].url" "$document")
   format=$(jq -er ".artifacts[$index].format" "$document")
+  compression=$(jq -er ".artifacts[$index].compression" "$document")
   source_url="${marker_url%/complete.json}/${file}"
   ((expected_size <= 5 * 1024 * 1024 * 1024)) || {
     echo "release artifact exceeds the single immutable PutObject limit" >&2
@@ -54,6 +55,7 @@ for ((index=0; index<count; index++)); do
     printf '%s  %s\n' "$expected_sha" "$artifact_path" | sha256sum --check --status
     content_type=application/octet-stream
     [[ "$format" == iso ]] && content_type=application/x-iso9660-image
+    [[ "$compression" == xz ]] && content_type=application/x-xz
     aws s3api put-object --bucket "$R2_BUCKET" --key "$object" --body "$artifact_path" \
       --endpoint-url "$R2_ENDPOINT" --content-type "$content_type" \
       --cache-control 'public, max-age=31536000, immutable' \

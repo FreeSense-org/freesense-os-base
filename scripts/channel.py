@@ -10,8 +10,12 @@ import json
 from pathlib import Path
 import re
 import subprocess
+import sys
 import tempfile
 import urllib.request
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from build_platform import load_policy, manifest_name, target
 
 
 USER_AGENT = "FreeSense-build/1"
@@ -30,13 +34,21 @@ def fetch_bytes(url: str) -> bytes:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--url", default="https://pkg.freesense.org/v1/repos.manifest.json")
+    parser.add_argument("--url")
+    parser.add_argument("--target", default="amd64")
     parser.add_argument("--public-key", type=Path, required=True)
     parser.add_argument("--channel", choices=("devel", "stable"), required=True)
     parser.add_argument("--component", choices=("system", "packages"), required=True)
     parser.add_argument("--github-output", type=Path)
     parser.add_argument("--json-output", type=Path)
     args = parser.parse_args()
+
+    policy = load_policy(Path(__file__).resolve().parents[1] / "config/build-policy.json")
+    selected_target = target(policy, args.target)
+    if args.url is None:
+        args.url = "https://pkg.freesense.org/v1/" + manifest_name(
+            selected_target, legacy=args.target == "amd64"
+        )
 
     envelope_bytes = fetch_bytes(args.url)
     envelope = json.loads(envelope_bytes)
@@ -78,7 +90,16 @@ def main() -> int:
     if payload_schema == "freesense.channels/v3" and not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", release_version):
         raise SystemExit("selected channel has an invalid release version")
     abi = channel.get("abi", "")
-    abi_match = re.fullmatch(r"FreeBSD:([0-9]+):amd64", abi)
+    abi_match = re.fullmatch(r"FreeBSD:([0-9]+):(amd64|aarch64)", abi)
+    declared_architecture = channel.get("architecture", "amd64")
+    declared_package_arch = channel.get("package_arch", "amd64")
+    if (
+        declared_architecture != selected_target["architecture"]
+        or declared_package_arch != selected_target["package_arch"]
+        or abi != selected_target["abi"]
+        or channel.get("altabi") != selected_target["altabi"]
+    ):
+        raise SystemExit("selected channel belongs to a different architecture")
     selected_system = channel.get("system")
     osversion = selected_system.get("osversion", 0) if isinstance(selected_system, dict) else 0
     if osversion != 0 and (
@@ -99,9 +120,10 @@ def main() -> int:
     if not isinstance(verified, bool):
         raise SystemExit("selected channel component has an invalid verification state")
     url = component.get("url", "")
-    expected_url = f"https://pkg.freesense.org/v1/artifacts/system/{fingerprint}/amd64"
+    package_arch = selected_target["package_arch"]
+    expected_url = f"https://pkg.freesense.org/v1/artifacts/system/{fingerprint}/{package_arch}"
     if args.component == "packages":
-        expected_url = f"https://pkg.freesense.org/v1/artifacts/packages/{package_train}/{fingerprint}/amd64"
+        expected_url = f"https://pkg.freesense.org/v1/artifacts/packages/{package_train}/{fingerprint}/{package_arch}"
     if url != expected_url:
         raise SystemExit("selected channel component has a non-canonical artifact URL")
     values = {
@@ -116,6 +138,8 @@ def main() -> int:
         "osversion": osversion,
         "channel": args.channel,
         "release_version": release_version,
+        "architecture": selected_target["architecture"],
+        "package_arch": package_arch,
         "payload_sha256": hashlib.sha256(payload_bytes).hexdigest(),
         "payload_base64": envelope["payload"],
         "signature_base64": envelope["signature"],
@@ -149,7 +173,7 @@ def main() -> int:
             packages_pin_id = selected_packages.get("freebsd_pin_id", declared_pin_id)
             expected_packages_url = (
                 f"https://pkg.freesense.org/v1/artifacts/packages/"
-                f"{package_train}/{packages_fingerprint}/amd64"
+                f"{package_train}/{packages_fingerprint}/{package_arch}"
             )
             if (
                 not SHA256.fullmatch(packages_fingerprint)
@@ -171,7 +195,7 @@ def main() -> int:
         else:
             raise SystemExit("selected channel packages are invalid")
 
-    marker_url = url.removesuffix("/amd64") + "/complete.json"
+    marker_url = url.removesuffix("/" + package_arch) + "/complete.json"
     try:
         marker = json.loads(fetch_bytes(marker_url))
         inputs = marker["inputs"]
@@ -250,7 +274,7 @@ def main() -> int:
             "artifact_freebsd_pin_id": artifact_pin_id,
         })
         if isinstance(selected_packages, dict):
-            packages_marker_url = selected_packages["url"].removesuffix("/amd64") + "/complete.json"
+            packages_marker_url = selected_packages["url"].removesuffix("/" + package_arch) + "/complete.json"
             try:
                 packages_marker = json.loads(fetch_bytes(packages_marker_url))
                 packages_inputs = packages_marker["inputs"]
