@@ -108,6 +108,15 @@ class WorkerVersionValidationTests(unittest.TestCase):
             cloud,
         )
 
+    def test_system_kernel_validation_accepts_compressed_payload(self) -> None:
+        system = (ROOT / "scripts/runner/stages/system.sh").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("boot/kernel/kernel(\\.gz)?$", system)
+        self.assertIn('case "${kernel_member}" in', system)
+        self.assertIn("gzip -dc /tmp/freesense-built-kernel.gz", system)
+        self.assertIn("ELF 64-bit.*ARM aarch64", system)
+
     def test_cloud_first_boot_uses_supported_growth_and_sanitization(self) -> None:
         cloud = (ROOT / "scripts/runner/stages/cloud.sh").read_text(encoding="utf-8")
         self.assertIn('growfs_enable="YES"', cloud)
