@@ -2,6 +2,12 @@ name: Pin FreeBSD
 
 on:
   workflow_dispatch:
+    inputs:
+      force:
+        description: Rotate the pin before the normal 14-day boundary
+        type: boolean
+        default: false
+        required: false
   schedule:
     - cron: "0 2 * * *"
 
@@ -27,6 +33,7 @@ jobs:
       id-token: write
       pull-requests: write
     env:
+      FORCE_PIN: ${{ inputs.force || false }}
       R2_CREDENTIAL_BROKER_URL: ${{ vars.R2_CREDENTIAL_BROKER_URL }}
       R2_CREDENTIAL_BROKER_AUDIENCE: ${{ vars.R2_CREDENTIAL_BROKER_AUDIENCE }}
       R2_BUCKET: ${{ vars.R2_BUILD_BUCKET }}
@@ -45,7 +52,10 @@ jobs:
           set -euo pipefail
           valid_until=$(jq -er .valid_until config/freebsd-16.json)
           due_at=$(date -u --date="${valid_until} - 4 hours" +%s)
-          if (( $(date -u +%s) >= due_at )); then
+          if [[ "${FORCE_PIN}" == true ]]; then
+            echo "due=true" >>"${GITHUB_OUTPUT}"
+            echo "Manual early pin rotation requested."
+          elif (( $(date -u +%s) >= due_at )); then
             echo "due=true" >>"${GITHUB_OUTPUT}"
           else
             echo "due=false" >>"${GITHUB_OUTPUT}"
@@ -227,6 +237,12 @@ jobs:
             arm_catalog_sha=$(jq -r .sha256 "${RUNNER_TEMP}/catalog-aarch64-blob.json")
             arm_catalog_size=$(jq -r .size "${RUNNER_TEMP}/catalog-aarch64-blob.json")
           fi
+          if [[ "${FORCE_PIN}" == true ]]; then
+            pin_valid_from=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          else
+            pin_valid_from=$(jq -er .valid_until config/freebsd-16.json)
+          fi
+          pin_valid_until=$(date -u --date="${pin_valid_from} + 14 days" +%Y-%m-%dT%H:%M:%SZ)
           jq -n \
             --arg freebsd_sha "${freebsd_sha}" --arg revision "${revision}" \
             --argjson osversion "${osversion}" \
@@ -258,8 +274,8 @@ jobs:
             --argjson arm_catalog_size "${arm_catalog_size}" \
             --argjson image_size "$(jq -r .size "${RUNNER_TEMP}/image-blob.json")" \
             --argjson tools_size "$(jq -r .size "${RUNNER_TEMP}/worker-tools-blob.json")" \
-            --arg valid_from "$(jq -er .valid_until config/freebsd-16.json)" \
-            --arg valid_until "$(date -u --date="$(jq -er .valid_until config/freebsd-16.json) + 14 days" +%Y-%m-%dT%H:%M:%SZ)" \
+            --arg valid_from "${pin_valid_from}" \
+            --arg valid_until "${pin_valid_until}" \
             '{schema_version:"freesense.freebsd-pin/v3",valid_from:$valid_from,valid_until:$valid_until,freebsd_source:{commit:$freebsd_sha,revision_prefix:$revision,build_date:$builddate,osversion:$osversion},freebsd_ports:{commit:$ports_sha},targets:{amd64:{ready:true,jail_seed:{url:$base_url,upstream_sha256:$base_upstream_sha256,object:$base_object,sha256:$base_sha256,size:$base_size},package_catalog:{url:$amd_catalog_url,object:$amd_catalog_object,sha256:$amd_catalog_sha256,size:$amd_catalog_size}},arm64:({ready:$arm_ready,jail_seed:{url:$arm_base_url},package_catalog:{url:$arm_catalog_url}} + if $arm_ready then {jail_seed:{url:$arm_base_url,upstream_sha256:$arm_base_upstream_sha256,object:$arm_base_object,sha256:$arm_base_sha256,size:$arm_base_size},package_catalog:{url:$arm_catalog_url,object:$arm_catalog_object,sha256:$arm_catalog_sha256,size:$arm_catalog_size}} else {} end)},worker_image:{url:$image_url,upstream_compressed_sha256:$image_upstream_sha256,object:$image_object,sha256:$image_sha256,size:$image_size},worker_tools:{object:$tools_object,sha256:$tools_sha256,size:$tools_size}}' \
             > config/freebsd-16.json
           jq -e '.targets.amd64.ready and (.targets.arm64.ready|type)=="boolean" and (.freebsd_source.commit|length)==40' config/freebsd-16.json
