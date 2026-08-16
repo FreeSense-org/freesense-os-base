@@ -127,6 +127,27 @@ def validate_bootstrap_snapshot(lock: dict, pinned_osversion: int) -> None:
         raise SystemExit("FreeBSD bootstrap snapshot is not compatible with pinned source")
 
 
+def validate_target_bootstrap(
+    target_pin: dict, bootstrap_osversion: int | None, pinned_osversion: int
+) -> None:
+    jail_osversion = target_pin.get("jail_seed", {}).get("osversion")
+    catalog_osversion = target_pin.get("package_catalog", {}).get("osversion")
+    # These fields were added to v3 pins when source and weekly bootstrap
+    # revisions first diverged. Preserve compatibility with earlier v3 locks.
+    if jail_osversion is None and catalog_osversion is None:
+        return
+    if (
+        not isinstance(bootstrap_osversion, int)
+        or not isinstance(jail_osversion, int)
+        or not isinstance(catalog_osversion, int)
+        or jail_osversion != bootstrap_osversion
+        or catalog_osversion < bootstrap_osversion
+        or catalog_osversion > pinned_osversion
+        or pinned_osversion - catalog_osversion > 1
+    ):
+        raise SystemExit("FreeBSD target inputs are outside the bounded bootstrap window")
+
+
 def current_component(manifest_url: str, component: str) -> str:
     try:
         request = urllib.request.Request(
@@ -260,6 +281,11 @@ def main() -> int:
     ):
         raise SystemExit("FreeBSD lock has no exact OSVERSION matching its ABI")
     validate_bootstrap_snapshot(lock, pinned_osversion)
+    validate_target_bootstrap(
+        target_pin,
+        lock.get("bootstrap_snapshot", {}).get("osversion"),
+        pinned_osversion,
+    )
     try:
         valid_from = datetime.fromisoformat(lock["valid_from"].replace("Z", "+00:00"))
         valid_until = datetime.fromisoformat(lock["valid_until"].replace("Z", "+00:00"))
@@ -295,6 +321,8 @@ def main() -> int:
         "freebsd_source": lock["freebsd_source"]["commit"],
         "freebsd_ports": lock["freebsd_ports"]["commit"],
         "jail_seed": jail_seed["sha256"],
+        "package_catalog": target_pin.get("package_catalog", {}).get("sha256", ""),
+        "package_catalog_osversion": target_pin.get("package_catalog", {}).get("osversion", 0),
         "worker_image": lock["worker_image"]["sha256"],
         "worker_tools": worker_tools_lock_sha256,
         "abi": selected_target["abi"],
