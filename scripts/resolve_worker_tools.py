@@ -46,7 +46,7 @@ class Package(NamedTuple):
     dependencies: tuple[tuple[str, str, str], ...]
     built_at: datetime
     ports_commit: str
-    osversion: int
+    osversion: int | None
 
 
 class DuplicateKeyError(ValueError):
@@ -183,13 +183,15 @@ def _parse_package(record: object, line_number: int) -> Package:
         if not isinstance(ports_commit, str) or not SHA1.fullmatch(ports_commit):
             raise ValueError(f"invalid package ports commit in {prefix}")
         osversion_text = annotations.get("FreeBSD_version")
-        if not isinstance(osversion_text, str) or not OSVERSION.fullmatch(osversion_text):
+        if osversion_text is not None and (
+            not isinstance(osversion_text, str) or not OSVERSION.fullmatch(osversion_text)
+        ):
             raise ValueError(f"invalid package OSVERSION in {prefix}")
     except KeyError as error:
         raise ValueError(f"missing field {error.args[0]!r} in {prefix}") from error
     return Package(
         name, version, origin, remote_path, checksum, size, tuple(dependencies),
-        built_at, ports_commit, int(osversion_text),
+        built_at, ports_commit, int(osversion_text) if osversion_text is not None else None,
     )
 
 
@@ -296,7 +298,7 @@ def resolve_worker_tools(lines: Iterable[str]) -> dict[str, object]:
     packages, all_packages, duplicate_names = _parse_catalog(lines)
     ports_sha = _select_ports_commit(all_packages)
     order = _dependency_order(packages, duplicate_names)
-    osversions = {package.osversion for package in order}
+    osversions = {package.osversion for package in order if package.osversion is not None}
     if len(osversions) != 1:
         raise ValueError("worker-tool closure has inconsistent package OSVERSION values")
     osversion = next(iter(osversions))
