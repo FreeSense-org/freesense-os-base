@@ -65,18 +65,27 @@ class WorkerVersionValidationTests(unittest.TestCase):
                 self.assertIn(value, common)
                 self.assertNotIn(value, packages)
 
-    def test_arm64_poudriere_jail_disables_native_xtools(self) -> None:
+    def test_arm64_poudriere_jail_builds_native_xtools_from_pinned_source(self) -> None:
         common = (ROOT / "scripts/runner/worker-common.sh").read_text(encoding="utf-8")
         create_jail = common[common.index("create_jail() {") :]
         arm64_case = create_jail.index(
             'if [ "${FREEBSD_TARGET_ARCH}" = aarch64 ]; then'
         )
-        cross_flag = create_jail.index("poudriere_cross_args=-X", arm64_case)
-        jail_command = create_jail.index("poudriere jail -c", cross_flag)
-        self.assertLess(arm64_case, cross_flag)
-        self.assertLess(cross_flag, jail_command)
-        self.assertIn("${poudriere_cross_args} -v 16.0-CURRENT", create_jail)
-        self.assertEqual(create_jail.count("poudriere_cross_args=-X"), 1)
+        source_path = create_jail.index(
+            "poudriere_source=/root/freesense-src/tmp/FreeBSD-src", arm64_case
+        )
+        jail_command = create_jail.index('poudriere jail -c', source_path)
+        self.assertLess(arm64_case, source_path)
+        self.assertLess(source_path, jail_command)
+        self.assertIn(
+            'clone_exact https://github.com/freebsd/freebsd-src.git', create_jail
+        )
+        self.assertIn('"${poudriere_source}" "${FREEBSD_SHA}"', create_jail)
+        self.assertIn(
+            '-b -J 4 -v 16.0-CURRENT -m "src=${poudriere_source}"', create_jail
+        )
+        self.assertNotIn("poudriere_cross_args=-X", create_jail)
+        self.assertIn('-v 16.0-CURRENT -m tar=/root/jail-base.txz', create_jail)
         self.assertIn(
             'qemu-aarch64-static -L "${jail_root}" "${probe}"', create_jail
         )
