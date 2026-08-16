@@ -19,7 +19,16 @@ for package in "${core}"/*.pkg; do
   case "${name}" in
     FreeSense-default-config|FreeSense-default-config-serial) continue ;;
   esac
-  case "${name}" in FreeSense-kernel-*) kernel_package=${package} ;; esac
+  case "${name}" in
+    FreeSense-kernel-debug-*) ;;
+    FreeSense-kernel-*)
+      [ -z "${kernel_package}" ] || {
+        echo "multiple built kernel packages found" >&2
+        exit 1
+      }
+      kernel_package=${package}
+      ;;
+  esac
   merge_package "${package}" /root/work/system/All "${inventory}" reject
 done
 [ -n "${kernel_package}" ] || { echo "built kernel package is missing" >&2; exit 1; }
