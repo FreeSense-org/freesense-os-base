@@ -9,15 +9,26 @@ prepare_release_inputs() {
 verify_release_channel() {
   phase channel-fetch
   printf '%s' "${CHANNEL_PAYLOAD_B64}" | openssl base64 -d -A >/tmp/channel-payload.json
-  printf '%s' "${CHANNEL_SIGNATURE_B64}" | openssl base64 -d -A >/tmp/channel-signature.bin
+  if [ -n "${CHANNEL_SIGNATURE_B64}" ]; then
+    printf '%s' "${CHANNEL_SIGNATURE_B64}" | openssl base64 -d -A >/tmp/channel-signature.bin
+  elif [ "${PUBLISH_ENABLED}" = false ]; then
+    openssl dgst -sha256 -sign /root/sign/repo.key -out /tmp/channel-signature.bin \
+      /tmp/channel-payload.json
+  else
+    echo "release channel signature is missing" >&2
+    return 1
+  fi
   openssl dgst -sha256 -verify /root/sign/channel-public.pem \
     -signature /tmp/channel-signature.bin /tmp/channel-payload.json >/dev/null
   test "$(sha256 -q /tmp/channel-payload.json)" = "${CHANNEL_PAYLOAD_SHA256}"
   jq -e --arg channel "${CHANNEL}" --arg system "${SYSTEM_ID}" \
     --arg packages "${PACKAGES_ID}" \
+    --arg architecture "${ARCHITECTURE}" --arg package_arch "${PACKAGE_ARCH}" \
     --arg train "${PACKAGE_TRAIN}" --argjson system_generation "${SYSTEM_GENERATION}" \
     '.schema_version == "freesense.channels/v3" and
      .channels[$channel].package_train == $train and
+     (.channels[$channel].architecture // "amd64") == $architecture and
+     (.channels[$channel].package_arch // "amd64") == $package_arch and
      .channels[$channel].system.fingerprint == $system and
      .channels[$channel].system.generation == $system_generation and
      .channels[$channel].system.verified == true and

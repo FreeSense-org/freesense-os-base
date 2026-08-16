@@ -19,7 +19,9 @@ for name in AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN R2_ENDPOIN
   FREESENSE_REPO_SIGNING_KEY STAGE FINGERPRINT PLATFORM_ID SYSTEM_ID SOURCE_SHA \
   SYSTEM_SHA PACKAGES_SHA PACKAGES_ID OS_BASE_SHA FREEBSD_SHA PORTS_SHA JAIL_OBJECT FREEBSD_PIN_ID PACKAGE_TRAIN PRODUCT_VERSION \
   IMAGE_SHA256 WORKER_TOOLS_SHA256 GENERATION SYSTEM_GENERATION PUBLIC_BASE_URL CHANNEL CHANNEL_PAYLOAD_SHA256 \
-  CHANNEL_PAYLOAD_B64 CHANNEL_SIGNATURE_B64 BUNDLE_ID CLOUD_FILESYSTEM CLOUD_VIRTUAL_SIZE_GIB; do
+  CHANNEL_PAYLOAD_B64 CHANNEL_SIGNATURE_B64 BUNDLE_ID CLOUD_FILESYSTEM CLOUD_VIRTUAL_SIZE_GIB \
+  TARGET ARCHITECTURE PACKAGE_ARCH FREEBSD_TARGET FREEBSD_TARGET_ARCH POUDRIERE_ARCH KERNEL \
+  EXECUTOR IMAGE_PROFILE FIRMWARE IMAGE_CAPABILITIES INSTALLER_FORMAT PUBLISH_ENABLED; do
   eval "$name=\$(decode \"\${${name}_B64}\")"
 done
 unset AWS_ACCESS_KEY_ID_B64 AWS_SECRET_ACCESS_KEY_B64 AWS_SESSION_TOKEN_B64
@@ -28,6 +30,12 @@ export HOME=/root PATH="/usr/local/sbin:/usr/local/bin:${PATH}"
 export ASSUME_ALWAYS_YES=yes LC_ALL=C LANG=C TZ=UTC
 umask 022
 case "${STAGE}" in system|packages|iso|cloud) : ;; *) echo "invalid build stage" >&2; exit 1 ;; esac
+case "${TARGET}:${ARCHITECTURE}:${PACKAGE_ARCH}:${FREEBSD_TARGET}:${FREEBSD_TARGET_ARCH}:${POUDRIERE_ARCH}" in
+  amd64:amd64:amd64:amd64:amd64:amd64.amd64) : ;;
+  arm64:arm64:aarch64:arm64:aarch64:arm64.aarch64) : ;;
+  *) echo "invalid target descriptor" >&2; exit 1 ;;
+esac
+case "${PUBLISH_ENABLED}" in true|false) : ;; *) echo "invalid publication policy" >&2; exit 1 ;; esac
 case "${CHANNEL}" in devel|stable) : ;; *) echo "invalid selected channel" >&2; exit 1 ;; esac
 case "${GENERATION}:${SYSTEM_GENERATION}" in
   *[!0-9:]*|:*|*:) echo "invalid build generation" >&2; exit 1 ;;
@@ -76,9 +84,12 @@ if [ "${STAGE}" = iso ] || [ "${STAGE}" = cloud ]; then
   [ "${#CHANNEL_PAYLOAD_SHA256}" -eq 64 ] || {
     echo "release image requires the exact signed channel payload" >&2; exit 1;
   }
-  [ -n "${CHANNEL_PAYLOAD_B64}" ] && [ -n "${CHANNEL_SIGNATURE_B64}" ] || {
-    echo "release image requires the exact signed channel document" >&2; exit 1;
+  [ -n "${CHANNEL_PAYLOAD_B64}" ] || {
+    echo "release image requires the exact channel payload" >&2; exit 1;
   }
+  if [ "${PUBLISH_ENABLED}" = true ] && [ -z "${CHANNEL_SIGNATURE_B64}" ]; then
+    echo "published release image requires the exact signed channel document" >&2; exit 1
+  fi
 fi
 PREFIX=v1
 RESULT="R2:${R2_BUCKET}/${PREFIX}/artifacts/${STAGE}/${FINGERPRINT}"
@@ -204,6 +215,10 @@ export FREESENSE_SYSTEM_FINGERPRINT="${SYSTEM_ID}"
 export FREESENSE_CHANNEL_PUBLIC_KEY_FILE="/root/sign/channel-public.pem"
 export DO_NOT_SIGN_PKG_REPO=1
 export FREESENSE_MAKE_JOBS_NUMBER_LIMIT=4
+export TARGET="${FREEBSD_TARGET}"
+export TARGET_ARCH="${FREEBSD_TARGET_ARCH}"
+export ARCH_LIST="${POUDRIERE_ARCH}"
+export BUILD_KERNELS="${KERNEL}"
 EOF
   phase source-ready
 }
@@ -339,8 +354,9 @@ merge_package() {
 
 seed_poudriere_repository() {
   source_repository=$1
-  repository=/usr/local/poudriere/data/packages/FreeSense_main_amd64-FreeSense_main
-  jail_version_file=/usr/local/etc/poudriere.d/jails/FreeSense_main_amd64/version
+  jail_name="FreeSense_main_${FREEBSD_TARGET_ARCH}"
+  repository="/usr/local/poudriere/data/packages/${jail_name}-FreeSense_main"
+  jail_version_file="/usr/local/etc/poudriere.d/jails/${jail_name}/version"
   staging=${repository}.part.$$
   seed_inventory=/tmp/system-seed-inventory.$$
   package_count=0
@@ -401,7 +417,7 @@ seed_poudriere_repository() {
 }
 
 poudriere_latest_repository() {
-  repository=/usr/local/poudriere/data/packages/FreeSense_main_amd64-FreeSense_main
+  repository="/usr/local/poudriere/data/packages/FreeSense_main_${FREEBSD_TARGET_ARCH}-FreeSense_main"
   latest=${repository}/.latest
   [ -L "${latest}" ] || { echo "Poudriere repository has no atomic .latest link" >&2; return 1; }
   resolved=$(realpath "${latest}") || return 1
@@ -416,8 +432,20 @@ poudriere_latest_repository() {
 create_jail() {
   phase poudriere-jail
   [ -s /root/jail-base.txz ] || fetch_input "${JAIL_OBJECT}" /root/jail-base.txz
-  poudriere jail -c -j FreeSense_main_amd64 -a amd64.amd64 \
+  if [ "${FREEBSD_TARGET_ARCH}" = aarch64 ]; then
+    command -v qemu-aarch64-static >/dev/null || { echo "qemu-aarch64-static is required" >&2; return 1; }
+    service qemu_user_static forcestart >/dev/null
+    binmiscctl lookup aarch64 >/dev/null || { echo "aarch64 binmisc registration is missing" >&2; return 1; }
+  fi
+  poudriere jail -c -j "FreeSense_main_${FREEBSD_TARGET_ARCH}" -a "${POUDRIERE_ARCH}" \
     -v 16.0-CURRENT -m tar=/root/jail-base.txz
+  if [ "${FREEBSD_TARGET_ARCH}" = aarch64 ]; then
+    probe="/usr/local/poudriere/jails/FreeSense_main_${FREEBSD_TARGET_ARCH}/bin/echo"
+    file "${probe}" | grep -q 'ARM aarch64' || { echo "aarch64 jail probe has wrong architecture" >&2; return 1; }
+    "${probe}" freesense-aarch64-probe | grep -qx freesense-aarch64-probe || {
+      echo "aarch64 target executable probe failed" >&2; return 1;
+    }
+  fi
   phase poudriere-jail-ready
 }
 
@@ -481,9 +509,11 @@ verify_repository() (
   printf '%s' "${digest}" | openssl dgst -sha256 -verify /root/sign/repo.pub \
     -signature "${work}/packagesite.yaml.sig" >/dev/null
 
-  jq -Rr '
+  strict_arch=${PACKAGE_ARCH:+yes}
+  jq -Rr --arg expected_arch "FreeBSD:16:${PACKAGE_ARCH:-amd64}" --arg strict_arch "${strict_arch}" '
     select(length > 0) | fromjson |
-    if ((.repopath | type) == "string" and
+    if ((.arch == $expected_arch or ($strict_arch == "" and (.arch == null))) and
+        (.repopath | type) == "string" and
         (.repopath | test("^All/[^/]+[.]pkg$")) and
         ((.repopath | test("[\\t\\r\\n]")) | not) and
         (.sum | type) == "string" and
@@ -538,7 +568,7 @@ fetch_repository() {
   mkdir -p "${part}"
   phase repository-fetch
   rclone copy --error-on-no-transfer --retries 10 --low-level-retries 20 \
-    "R2:${R2_BUCKET}/${PREFIX}/artifacts/${kind}/${id}/amd64" "${part}"
+    "R2:${R2_BUCKET}/${PREFIX}/artifacts/${kind}/${id}/${PACKAGE_ARCH}" "${part}"
   rclone copyto --error-on-no-transfer --retries 10 --low-level-retries 20 \
     "R2:${R2_BUCKET}/${PREFIX}/artifacts/${kind}/${id}/complete.json" \
     "${part}/complete.json"
@@ -596,7 +626,7 @@ publish_repository() {
   test -n "$(find "${directory}/All" -type f -name '*.pkg' -print -quit)"
   find "${directory}" -type f ! -name complete.json | while IFS= read -r file; do
     relative=${file#"${directory}/"}
-    upload_immutable "${file}" "${RESULT}/amd64/${relative}"
+    upload_immutable "${file}" "${RESULT}/${PACKAGE_ARCH}/${relative}"
   done
   jq -n --arg stage "${STAGE}" --arg fingerprint "${FINGERPRINT}" \
     --arg platform "${PLATFORM_ID}" --arg system "${SYSTEM_ID}" \
@@ -607,8 +637,10 @@ publish_repository() {
     --arg worker_tools "${WORKER_TOOLS_SHA256}" \
     --arg freebsd_pin_id "${FREEBSD_PIN_ID}" \
     --arg jail_object "${JAIL_OBJECT}" --arg signing_public_key "${derived_fingerprint}" \
-    --argjson generation "${GENERATION}" \
-    '{schema_version:"freesense.artifact/v1",stage:$stage,fingerprint:$fingerprint,generation:$generation,inputs:{platform:$platform,system:$system,source:$source,system_ports:$system_ports,freebsd:$freebsd,ports:$ports,freebsd_pin_id:$freebsd_pin_id,package_train:$package_train,os_definition:$os_definition,worker_image:$worker_image,worker_tools:$worker_tools,jail_object:$jail_object,signing_public_key:$signing_public_key}} | if $stage == "packages" then .inputs.packages = $packages | .inputs.built_against_system = $system else . end' \
+    --arg architecture "${ARCHITECTURE}" --arg package_arch "${PACKAGE_ARCH}" \
+    --arg image_profile "${IMAGE_PROFILE}" --arg firmware "${FIRMWARE}" \
+    --argjson capabilities "${IMAGE_CAPABILITIES}" --argjson generation "${GENERATION}" \
+    '{schema_version:"freesense.artifact/v1",stage:$stage,fingerprint:$fingerprint,generation:$generation,architecture:$architecture,package_arch:$package_arch,platform:$image_profile,firmware:($firmware|split(",")),capabilities:$capabilities,inputs:{platform:$platform,system:$system,source:$source,system_ports:$system_ports,freebsd:$freebsd,ports:$ports,freebsd_pin_id:$freebsd_pin_id,package_train:$package_train,os_definition:$os_definition,worker_image:$worker_image,worker_tools:$worker_tools,jail_object:$jail_object,signing_public_key:$signing_public_key}} | if $stage == "packages" then .inputs.packages = $packages | .inputs.built_against_system = $system else . end' \
     >"${directory}/complete.json"
   upload_immutable "${directory}/complete.json" "${RESULT}/complete.json"
   phase repository-complete

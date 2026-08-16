@@ -92,6 +92,9 @@ func commandChannel(ctx context.Context, args []string) error {
 	fingerprint := flags.String("fingerprint", "", "exact artifact fingerprint")
 	privateKeyFile := flags.String("private-key", "", "RSA channel signing key")
 	output := flags.String("output", "-", "JSON report path or -")
+	architecture := flags.String("architecture", "amd64", "product architecture")
+	packageArch := flags.String("package-arch", "amd64", "pkg repository architecture")
+	qualifiedManifest := flags.Bool("qualified-manifest", false, "use repos.<package-arch>.manifest.json")
 	var mutate func(control.Payload) (control.Payload, error)
 
 	switch args[0] {
@@ -127,7 +130,9 @@ func commandChannel(ctx context.Context, args []string) error {
 				SystemFingerprint: *systemFingerprint, BuiltAgainstSystem: *builtAgainstSystem,
 				FreeBSDPinID: *freeBSDPinID,
 				URL:          *artifactURL, Generation: *generation, Version: *version, PackageTrain: *packageTrain,
-				ABI: *abi, AltABI: *altABI, OSVersion: *osVersion, PublishedAt: when,
+				ABI: *abi, AltABI: *altABI, Architecture: *architecture, PackageArch: *packageArch,
+				DeclareArchitecture: *qualifiedManifest,
+				OSVersion:           *osVersion, PublishedAt: when,
 			})
 		}
 	case "verify":
@@ -169,7 +174,9 @@ func commandChannel(ctx context.Context, args []string) error {
 		mutate = func(payload control.Payload) (control.Payload, error) {
 			common := control.UpdateOptions{
 				Channel: "devel", FreeBSDPinID: *freeBSDPinID, Version: *version, PackageTrain: *packageTrain,
-				ABI: *abi, AltABI: *altABI, PublishedAt: when,
+				ABI: *abi, AltABI: *altABI, Architecture: *architecture, PackageArch: *packageArch,
+				DeclareArchitecture: *qualifiedManifest,
+				PublishedAt:         when,
 			}
 			system := common
 			system.Component, system.Fingerprint, system.URL, system.Generation =
@@ -201,8 +208,12 @@ func commandChannel(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
+	manifestKey, err := control.ManifestKeyForPackageArch(*packageArch, *qualifiedManifest)
+	if err != nil {
+		return err
+	}
 	for attempt := 1; attempt <= 5; attempt++ {
-		existing, getErr := backend.Get(ctx, control.ManifestKey)
+		existing, getErr := backend.Get(ctx, manifestKey)
 		payload := control.Payload{}
 		var beforeMutation []byte
 		if getErr == nil {
@@ -238,7 +249,7 @@ func commandChannel(ctx context.Context, args []string) error {
 		}
 		content := store.BytesContent(encoded)
 		if errors.Is(getErr, store.ErrNotFound) {
-			_, created, putErr := backend.PutIfAbsent(ctx, control.ManifestKey, content)
+			_, created, putErr := backend.PutIfAbsent(ctx, manifestKey, content)
 			if putErr == nil && created {
 				return writeJSON(*output, map[string]any{"updated": true, "attempt": attempt, "sha256": content.SHA256})
 			}
@@ -247,7 +258,7 @@ func commandChannel(ctx context.Context, args []string) error {
 			}
 			continue
 		}
-		_, err = backend.CompareAndSwap(ctx, control.ManifestKey, existing.ETag, content)
+		_, err = backend.CompareAndSwap(ctx, manifestKey, existing.ETag, content)
 		if err == nil {
 			return writeJSON(*output, map[string]any{"updated": true, "attempt": attempt, "sha256": content.SHA256})
 		}
@@ -318,6 +329,9 @@ func commandResult(ctx context.Context, args []string) error {
 	generation := flags.Uint64("generation", 0, "expected reserved or selected generation")
 	filesystem := flags.String("filesystem", "", "expected cloud filesystem")
 	virtualSizeGiB := flags.Uint64("virtual-size-gib", 0, "expected cloud virtual size in GiB")
+	architecture := flags.String("architecture", "amd64", "product architecture")
+	packageArch := flags.String("package-arch", "amd64", "pkg repository architecture")
+	imageProfile := flags.String("image-profile", "generic-amd64", "image platform profile")
 	githubOutput := flags.String("github-output", os.Getenv("GITHUB_OUTPUT"), "GitHub output file")
 	if err := parseFlags(flags, args[1:]); err != nil {
 		return err
@@ -338,6 +352,10 @@ func commandResult(ctx context.Context, args []string) error {
 	if *stage == "cloud" && ((*filesystem != "ufs" && *filesystem != "zfs") || *virtualSizeGiB == 0) {
 		return errors.New("cloud result checks require --filesystem and --virtual-size-gib")
 	}
+	if !((*architecture == "amd64" && *packageArch == "amd64") ||
+		(*architecture == "arm64" && *packageArch == "aarch64")) {
+		return errors.New("result architecture mapping is invalid")
+	}
 	backend, err := openStore()
 	if err != nil {
 		return err
@@ -356,7 +374,7 @@ func commandResult(ctx context.Context, args []string) error {
 	} else if err != nil {
 		return err
 	} else {
-		marker, validateErr := validateResultMarker(*stage, *id, *systemID, *packagesID, *platformID, *freeBSDPinID, *filesystem, *virtualSizeGiB, *generation, object.Data)
+		marker, validateErr := validateResultMarker(*stage, *id, *systemID, *packagesID, *platformID, *freeBSDPinID, *filesystem, *architecture, *packageArch, *imageProfile, *virtualSizeGiB, *generation, object.Data)
 		if validateErr != nil {
 			return validateErr
 		}
@@ -373,9 +391,9 @@ func commandResult(ctx context.Context, args []string) error {
 				}
 			}
 		} else {
-			prefix := fmt.Sprintf("artifacts/%s/%s/amd64", *stage, *id)
+			prefix := fmt.Sprintf("artifacts/%s/%s/%s", *stage, *id, *packageArch)
 			if *stage == "packages" {
-				prefix = fmt.Sprintf("artifacts/packages/%s/%s/amd64", *packageTrain, *id)
+				prefix = fmt.Sprintf("artifacts/packages/%s/%s/%s", *packageTrain, *id, *packageArch)
 			}
 			for _, catalog := range []string{"meta.conf", "packagesite.pkg"} {
 				info, headErr := store.HeadArtifact(ctx, backend, prefix+"/"+catalog)
@@ -399,16 +417,21 @@ func commandResult(ctx context.Context, args []string) error {
 }
 
 type resultMarker struct {
-	SchemaVersion     string `json:"schema_version"`
-	Stage             string `json:"stage"`
-	Fingerprint       string `json:"fingerprint"`
-	Generation        uint64 `json:"generation"`
-	System            string `json:"system"`
-	SHA256            string `json:"sha256"`
-	Size              int64  `json:"size"`
-	File              string `json:"file"`
-	BundleFingerprint string `json:"bundle_fingerprint"`
-	Filesystem        string `json:"filesystem"`
+	SchemaVersion     string          `json:"schema_version"`
+	Stage             string          `json:"stage"`
+	Fingerprint       string          `json:"fingerprint"`
+	Generation        uint64          `json:"generation"`
+	System            string          `json:"system"`
+	SHA256            string          `json:"sha256"`
+	Size              int64           `json:"size"`
+	File              string          `json:"file"`
+	BundleFingerprint string          `json:"bundle_fingerprint"`
+	Filesystem        string          `json:"filesystem"`
+	Architecture      string          `json:"architecture"`
+	PackageArch       string          `json:"package_arch"`
+	Platform          string          `json:"platform"`
+	Firmware          []string        `json:"firmware"`
+	Capabilities      map[string]bool `json:"capabilities"`
 	Files             []struct {
 		Format      string `json:"format"`
 		SHA256      string `json:"sha256"`
@@ -424,13 +447,18 @@ type resultMarker struct {
 	} `json:"inputs"`
 }
 
-func validateResultMarker(stage, id, systemID, packagesID, platformID, freeBSDPinID, filesystem string, virtualSizeGiB, generation uint64, data []byte) (resultMarker, error) {
+func validateResultMarker(stage, id, systemID, packagesID, platformID, freeBSDPinID, filesystem, architecture, packageArch, imageProfile string, virtualSizeGiB, generation uint64, data []byte) (resultMarker, error) {
 	var marker resultMarker
 	if err := json.Unmarshal(data, &marker); err != nil || marker.Fingerprint != id || marker.Generation == 0 {
 		return resultMarker{}, errors.New("result completion marker conflicts with its content ID")
 	}
 	if generation != 0 && marker.Generation != generation {
 		return resultMarker{}, errors.New("result completion marker belongs to a different generation")
+	}
+	legacyAMD64 := marker.Architecture == "" && marker.PackageArch == "" && architecture == "amd64"
+	if !legacyAMD64 && (marker.Architecture != architecture || marker.PackageArch != packageArch ||
+		marker.Platform != imageProfile || len(marker.Firmware) == 0 || marker.Capabilities == nil) {
+		return resultMarker{}, errors.New("result completion marker belongs to a different architecture or platform")
 	}
 	if stage == "iso" {
 		legacy := marker.SchemaVersion == "freesense.iso/v1" && marker.Inputs.Packages == ""

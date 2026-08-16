@@ -1,5 +1,5 @@
 {
-  "schema_version": "freesense.build-policy/v2",
+  "schema_version": "freesense.build-policy/v3",
   "package_train": "1.1",
   "release": {
     "stable_train": "1.0",
@@ -10,13 +10,51 @@
     "allow_stable_to_development": true,
     "allow_development_to_stable": false
   },
-  "cloud": {
-    "architecture": "amd64",
-    "formats": ["qcow2", "raw"],
-    "partition_scheme": "gpt",
-    "firmware": ["bios", "uefi"],
-    "swap": "none",
-    "variants": {
+  "default_target": "amd64",
+  "default_image_profiles": {
+    "amd64": "generic-amd64",
+    "arm64": "generic-arm64-uefi"
+  },
+  "targets": {
+    "amd64": {
+      "architecture": "amd64",
+      "freebsd_target": "amd64",
+      "freebsd_target_arch": "amd64",
+      "package_arch": "amd64",
+      "poudriere_arch": "amd64.amd64",
+      "abi": "FreeBSD:16:amd64",
+      "altabi": "freebsd:16:x86:64",
+      "kernel": "pfSense",
+      "executor": "native-amd64",
+      "build_enabled": true,
+      "publish_enabled": true
+    },
+    "arm64": {
+      "architecture": "arm64",
+      "freebsd_target": "arm64",
+      "freebsd_target_arch": "aarch64",
+      "package_arch": "aarch64",
+      "poudriere_arch": "arm64.aarch64",
+      "abi": "FreeBSD:16:aarch64",
+      "altabi": "freebsd:16:aarch64:64",
+      "kernel": "pfSense",
+      "executor": "amd64-cross-qemu-user",
+      "build_enabled": true,
+      "publish_enabled": false
+    }
+  },
+  "image_profiles": {
+    "generic-amd64": {
+      "target": "amd64",
+      "platform": "generic-amd64",
+      "partition_scheme": "gpt",
+      "firmware": ["bios", "uefi"],
+      "installer": "iso",
+      "filesystems": ["ufs", "zfs"],
+      "formats": ["qcow2", "raw"],
+      "devices": ["virtio-blk", "virtio-net"],
+      "capabilities": {"bios": true, "uefi": true, "iso": true, "installer_img": false, "cloud_init": true},
+      "variants": {
       "ufs": {
         "virtual_size_gib": 16,
         "root_growth": true
@@ -30,10 +68,24 @@
         "boot_environments": true,
         "autotrim": false
       }
+      }
+    },
+    "generic-arm64-uefi": {
+      "target": "arm64",
+      "platform": "generic-arm64-uefi",
+      "partition_scheme": "gpt",
+      "firmware": ["uefi"],
+      "installer": "img",
+      "filesystems": ["ufs", "zfs"],
+      "formats": ["qcow2", "raw"],
+      "devices": ["virtio-blk", "virtio-net"],
+      "capabilities": {"bios": false, "uefi": true, "iso": false, "installer_img": true, "cloud_init": true},
+      "variants": {
+        "ufs": {"virtual_size_gib": 16, "root_growth": true},
+        "zfs": {"virtual_size_gib": 32, "root_growth": true, "pool": "FreeSense", "root_dataset": "FreeSense/ROOT/default", "topology": "stripe", "boot_environments": true, "autotrim": false}
+      }
     }
   },
-  "abi": "FreeBSD:16:amd64",
-  "altabi": "freebsd:16:x86:64",
   "public_base_url": "https://pkg.freesense.org/v1",
   "stable_soak_hours": 168,
   "runner": {

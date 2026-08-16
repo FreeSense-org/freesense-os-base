@@ -13,6 +13,19 @@ on:
         options: [devel, stable]
         default: devel
         required: true
+      target:
+        type: choice
+        options: [amd64, arm64]
+        default: amd64
+        required: true
+      system_fingerprint:
+        description: Required ARM64 System result for pre-publication image builds
+        type: string
+        required: false
+      packages_fingerprint:
+        description: Required ARM64 Packages result for pre-publication image builds
+        type: string
+        required: false
   workflow_run:
     workflows: [System, Optional packages]
     types: [completed]
@@ -28,6 +41,7 @@ jobs:
     permissions: {contents: read, actions: read}
     outputs:
       ready: ${{ steps.gate.outputs.ready }}
+      target: ${{ steps.gate.outputs.target }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       - id: gate
@@ -49,10 +63,22 @@ jobs:
             exit 0
           fi
 
+          mkdir -p "${RUNNER_TEMP}/publication"
+          gh run download "${UPSTREAM_RUN_ID}" --name publication-target \
+            --dir "${RUNNER_TEMP}/publication"
+          target=$(tr -d '\r\n' <"${RUNNER_TEMP}/publication/publication-target")
+          [[ "${target}" == amd64 || "${target}" == arm64 ]] || {
+            echo "upstream publication target is invalid" >&2; exit 1;
+          }
+          echo "target=${target}" >>"${GITHUB_OUTPUT}"
+
           public_base_url=$(jq -er .public_base_url config/build-policy.json)
+          manifest="repos.manifest.json"
+          [[ "${target}" == arm64 ]] && manifest="repos.aarch64.manifest.json"
           python3 scripts/channel.py --public-key config/channel-signing-public.pem \
-            --url "${public_base_url}/repos.manifest.json?workflow_run=${UPSTREAM_RUN_ID}" \
-            --channel devel --component system --json-output "${RUNNER_TEMP}/system.json"
+            --url "${public_base_url}/${manifest}?workflow_run=${UPSTREAM_RUN_ID}" \
+            --target "${target}" --channel devel --component system \
+            --json-output "${RUNNER_TEMP}/system.json"
           if jq -e '
             .verified == "true" and
             .packages_verified == "true" and
@@ -198,6 +224,21 @@ jobs:
       channel_payload_sha256: ${{ steps.plan.outputs.channel_payload_sha256 }}
       channel_payload_base64: ${{ steps.plan.outputs.channel_payload_base64 }}
       channel_signature_base64: ${{ steps.plan.outputs.channel_signature_base64 }}
+      target: ${{ steps.plan.outputs.target }}
+      architecture: ${{ steps.plan.outputs.architecture }}
+      package_arch: ${{ steps.plan.outputs.package_arch }}
+      freebsd_target: ${{ steps.plan.outputs.freebsd_target }}
+      freebsd_target_arch: ${{ steps.plan.outputs.freebsd_target_arch }}
+      poudriere_arch: ${{ steps.plan.outputs.poudriere_arch }}
+      kernel: ${{ steps.plan.outputs.kernel }}
+      executor: ${{ steps.plan.outputs.executor }}
+      image_profile: ${{ steps.plan.outputs.image_profile }}
+      firmware: ${{ steps.plan.outputs.firmware }}
+      image_capabilities: ${{ steps.plan.outputs.image_capabilities }}
+      installer_format: ${{ steps.plan.outputs.installer_format }}
+      publish_enabled: ${{ steps.plan.outputs.publish_enabled }}
+      cloud_ufs_virtual_size_gib: ${{ steps.plan.outputs.cloud_ufs_virtual_size_gib }}
+      cloud_zfs_virtual_size_gib: ${{ steps.plan.outputs.cloud_zfs_virtual_size_gib }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
@@ -206,13 +247,35 @@ jobs:
         env:
           SELECTED_CHANNEL: ${{ inputs.operation == 'retry-stable-bundle' && 'stable' || (github.event_name == 'workflow_dispatch' && inputs.channel || 'devel') }}
         run: |
-          python3 scripts/channel.py --public-key config/channel-signing-public.pem \
-            --channel "${SELECTED_CHANNEL}" --component system \
-            --json-output "${RUNNER_TEMP}/system.json"
+          target="${{ github.event_name == 'workflow_dispatch' && inputs.target || needs.release_gate.outputs.target }}"
+          if [[ "${target}" == arm64 && "${{ github.event_name }}" == workflow_dispatch ]]; then
+            [[ "${SELECTED_CHANNEL}" == devel ]] || {
+              echo "ARM64 is Development-only until a separate Stable promotion" >&2; exit 1;
+            }
+            system="${{ inputs.system_fingerprint }}"; packages="${{ inputs.packages_fingerprint }}"
+            [[ "${system}" =~ ^[0-9a-f]{64}$ && "${packages}" =~ ^[0-9a-f]{64}$ ]] || {
+              echo "ARM64 image builds require exact System and Packages fingerprints" >&2; exit 1;
+            }
+            public_base_url=$(jq -er .public_base_url config/build-policy.json)
+            package_train=$(jq -er .package_train config/build-policy.json)
+            curl --fail --silent --show-error --location \
+              "${public_base_url}/artifacts/system/${system}/complete.json" -o "${RUNNER_TEMP}/system-marker.json"
+            curl --fail --silent --show-error --location \
+              "${public_base_url}/artifacts/packages/${package_train}/${packages}/complete.json" -o "${RUNNER_TEMP}/packages-marker.json"
+            python3 scripts/staged_system_closure.py --target arm64 \
+              --marker "${RUNNER_TEMP}/system-marker.json" \
+              --packages-marker "${RUNNER_TEMP}/packages-marker.json" \
+              --output "${RUNNER_TEMP}/system.json"
+          else
+            python3 scripts/channel.py --public-key config/channel-signing-public.pem \
+              --target "${target}" --channel "${SELECTED_CHANNEL}" --component system \
+              --json-output "${RUNNER_TEMP}/system.json"
+          fi
       - id: plan
-        run: >-
-          python3 scripts/plan.py iso --system-closure "${RUNNER_TEMP}/system.json"
-          --github-output "${GITHUB_OUTPUT}"
+        run: |
+          target="${{ github.event_name == 'workflow_dispatch' && inputs.target || needs.release_gate.outputs.target }}"
+          python3 scripts/plan.py iso --target "${target}" --system-closure "${RUNNER_TEMP}/system.json" \
+            --github-output "${GITHUB_OUTPUT}"
       - run: go build -trimpath -o "${RUNNER_TEMP}/fsbuild" ./cmd/fsbuild
       - name: Acquire generation coordinator
         env:
@@ -278,6 +341,19 @@ jobs:
       channel_payload_base64: ${{ needs.iso-plan.outputs.channel_payload_base64 }}
       channel_signature_base64: ${{ needs.iso-plan.outputs.channel_signature_base64 }}
       bundle_id: ${{ needs.iso-plan.outputs.bundle_fingerprint }}
+      target: ${{ needs.iso-plan.outputs.target }}
+      architecture: ${{ needs.iso-plan.outputs.architecture }}
+      package_arch: ${{ needs.iso-plan.outputs.package_arch }}
+      freebsd_target: ${{ needs.iso-plan.outputs.freebsd_target }}
+      freebsd_target_arch: ${{ needs.iso-plan.outputs.freebsd_target_arch }}
+      poudriere_arch: ${{ needs.iso-plan.outputs.poudriere_arch }}
+      kernel: ${{ needs.iso-plan.outputs.kernel }}
+      executor: ${{ needs.iso-plan.outputs.executor }}
+      image_profile: ${{ needs.iso-plan.outputs.image_profile }}
+      firmware: ${{ needs.iso-plan.outputs.firmware }}
+      image_capabilities: ${{ needs.iso-plan.outputs.image_capabilities }}
+      installer_format: ${{ needs.iso-plan.outputs.installer_format }}
+      publish_enabled: ${{ needs.iso-plan.outputs.publish_enabled }}
     secrets: inherit
 
   cloud-ufs:
@@ -310,8 +386,21 @@ jobs:
       channel_payload_base64: ${{ needs.iso-plan.outputs.channel_payload_base64 }}
       channel_signature_base64: ${{ needs.iso-plan.outputs.channel_signature_base64 }}
       bundle_id: ${{ needs.iso-plan.outputs.bundle_fingerprint }}
+      target: ${{ needs.iso-plan.outputs.target }}
+      architecture: ${{ needs.iso-plan.outputs.architecture }}
+      package_arch: ${{ needs.iso-plan.outputs.package_arch }}
+      freebsd_target: ${{ needs.iso-plan.outputs.freebsd_target }}
+      freebsd_target_arch: ${{ needs.iso-plan.outputs.freebsd_target_arch }}
+      poudriere_arch: ${{ needs.iso-plan.outputs.poudriere_arch }}
+      kernel: ${{ needs.iso-plan.outputs.kernel }}
+      executor: ${{ needs.iso-plan.outputs.executor }}
+      image_profile: ${{ needs.iso-plan.outputs.image_profile }}
+      firmware: ${{ needs.iso-plan.outputs.firmware }}
+      image_capabilities: ${{ needs.iso-plan.outputs.image_capabilities }}
+      installer_format: ${{ needs.iso-plan.outputs.installer_format }}
+      publish_enabled: ${{ needs.iso-plan.outputs.publish_enabled }}
       cloud_filesystem: ufs
-      cloud_virtual_size_gib: "16"
+      cloud_virtual_size_gib: ${{ needs.iso-plan.outputs.cloud_ufs_virtual_size_gib }}
     secrets: inherit
 
   cloud-zfs:
@@ -344,14 +433,28 @@ jobs:
       channel_payload_base64: ${{ needs.iso-plan.outputs.channel_payload_base64 }}
       channel_signature_base64: ${{ needs.iso-plan.outputs.channel_signature_base64 }}
       bundle_id: ${{ needs.iso-plan.outputs.bundle_fingerprint }}
+      target: ${{ needs.iso-plan.outputs.target }}
+      architecture: ${{ needs.iso-plan.outputs.architecture }}
+      package_arch: ${{ needs.iso-plan.outputs.package_arch }}
+      freebsd_target: ${{ needs.iso-plan.outputs.freebsd_target }}
+      freebsd_target_arch: ${{ needs.iso-plan.outputs.freebsd_target_arch }}
+      poudriere_arch: ${{ needs.iso-plan.outputs.poudriere_arch }}
+      kernel: ${{ needs.iso-plan.outputs.kernel }}
+      executor: ${{ needs.iso-plan.outputs.executor }}
+      image_profile: ${{ needs.iso-plan.outputs.image_profile }}
+      firmware: ${{ needs.iso-plan.outputs.firmware }}
+      image_capabilities: ${{ needs.iso-plan.outputs.image_capabilities }}
+      installer_format: ${{ needs.iso-plan.outputs.installer_format }}
+      publish_enabled: ${{ needs.iso-plan.outputs.publish_enabled }}
       cloud_filesystem: zfs
-      cloud_virtual_size_gib: "32"
+      cloud_virtual_size_gib: ${{ needs.iso-plan.outputs.cloud_zfs_virtual_size_gib }}
     secrets: inherit
 
   publish-download:
     needs: [iso-plan, iso, cloud-ufs, cloud-zfs]
     runs-on: ubuntu-24.04
     environment: channel-publisher
+    if: needs.iso-plan.outputs.publish_enabled == 'true'
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
@@ -362,6 +465,8 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           python3 scripts/publish_download.py --channel "${{ needs.iso-plan.outputs.channel }}" \
+            --target "${{ needs.iso-plan.outputs.target }}" \
+            --image-profile "${{ needs.iso-plan.outputs.image_profile }}" \
             --version "${{ needs.iso-plan.outputs.release_version }}" \
             --fingerprint "${{ needs.iso-plan.outputs.fingerprint }}" \
             --bundle-fingerprint "${{ needs.iso-plan.outputs.bundle_fingerprint }}" \
@@ -409,12 +514,19 @@ jobs:
           R2_BUCKET: ${{ vars.R2_BUILD_BUCKET }}
           R2_ENDPOINT: ${{ vars.R2_ENDPOINT }}
         run: |
+          qualified="${{ needs.iso-plan.outputs.channel }}.${{ needs.iso-plan.outputs.architecture }}.json"
           aws s3 cp "${RUNNER_TEMP}/${{ needs.iso-plan.outputs.channel }}.json" \
-            "s3://${R2_BUCKET}/v1/releases/${{ needs.iso-plan.outputs.channel }}.json" \
+            "s3://${R2_BUCKET}/v1/releases/${qualified}" \
             --endpoint-url "${R2_ENDPOINT}" --no-progress --content-type application/json \
             --cache-control 'public, max-age=60, must-revalidate'
           curl --fail --silent --show-error --location \
-            "https://pkg.freesense.org/v1/releases/${{ needs.iso-plan.outputs.channel }}.json?run=${GITHUB_RUN_ID}" \
+            "https://pkg.freesense.org/v1/releases/${qualified}?run=${GITHUB_RUN_ID}" \
             --output "${RUNNER_TEMP}/published.json"
           diff <(jq -S . "${RUNNER_TEMP}/${{ needs.iso-plan.outputs.channel }}.json") \
             <(jq -S . "${RUNNER_TEMP}/published.json")
+          if [[ "${{ needs.iso-plan.outputs.architecture }}" == amd64 ]]; then
+            aws s3 cp "${RUNNER_TEMP}/${{ needs.iso-plan.outputs.channel }}.json" \
+              "s3://${R2_BUCKET}/v1/releases/${{ needs.iso-plan.outputs.channel }}.json" \
+              --endpoint-url "${R2_ENDPOINT}" --no-progress --content-type application/json \
+              --cache-control 'public, max-age=60, must-revalidate'
+          fi

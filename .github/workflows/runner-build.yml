@@ -30,6 +30,19 @@ on:
       bundle_id: {type: string, required: false, default: ""}
       cloud_filesystem: {type: string, required: false, default: ""}
       cloud_virtual_size_gib: {type: string, required: false, default: "0"}
+      target: {type: string, required: false, default: amd64}
+      architecture: {type: string, required: false, default: amd64}
+      package_arch: {type: string, required: false, default: amd64}
+      freebsd_target: {type: string, required: false, default: amd64}
+      freebsd_target_arch: {type: string, required: false, default: amd64}
+      poudriere_arch: {type: string, required: false, default: amd64.amd64}
+      kernel: {type: string, required: false, default: pfSense}
+      executor: {type: string, required: false, default: native-amd64}
+      image_profile: {type: string, required: false, default: generic-amd64}
+      firmware: {type: string, required: false, default: 'bios,uefi'}
+      image_capabilities: {type: string, required: false, default: '{"bios":true,"cloud_init":true,"installer_img":false,"iso":true,"uefi":true}'}
+      installer_format: {type: string, required: false, default: iso}
+      publish_enabled: {type: string, required: false, default: 'true'}
 
 jobs:
   build:
@@ -77,6 +90,19 @@ jobs:
       BUNDLE_ID: ${{ inputs.bundle_id }}
       CLOUD_FILESYSTEM: ${{ inputs.cloud_filesystem }}
       CLOUD_VIRTUAL_SIZE_GIB: ${{ inputs.cloud_virtual_size_gib }}
+      TARGET: ${{ inputs.target }}
+      ARCHITECTURE: ${{ inputs.architecture }}
+      PACKAGE_ARCH: ${{ inputs.package_arch }}
+      FREEBSD_TARGET: ${{ inputs.freebsd_target }}
+      FREEBSD_TARGET_ARCH: ${{ inputs.freebsd_target_arch }}
+      POUDRIERE_ARCH: ${{ inputs.poudriere_arch }}
+      KERNEL: ${{ inputs.kernel }}
+      EXECUTOR: ${{ inputs.executor }}
+      IMAGE_PROFILE: ${{ inputs.image_profile }}
+      FIRMWARE: ${{ inputs.firmware }}
+      IMAGE_CAPABILITIES: ${{ inputs.image_capabilities }}
+      INSTALLER_FORMAT: ${{ inputs.installer_format }}
+      PUBLISH_ENABLED: ${{ inputs.publish_enabled }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
@@ -105,7 +131,9 @@ jobs:
         name: Reuse completed immutable result
         run: |
           args=(--stage "${STAGE}" --id "${FINGERPRINT}" --platform-id "${PLATFORM_ID}" \
-            --generation "${GENERATION}" --github-output "${GITHUB_OUTPUT}")
+            --generation "${GENERATION}" --architecture "${ARCHITECTURE}" \
+            --package-arch "${PACKAGE_ARCH}" --image-profile "${IMAGE_PROFILE}" \
+            --github-output "${GITHUB_OUTPUT}")
           if [[ "${STAGE}" == packages || "${STAGE}" == iso || "${STAGE}" == cloud ]]; then args+=(--system-id "${SYSTEM_ID}"); fi
           if [[ "${STAGE}" == iso || "${STAGE}" == cloud ]]; then args+=(--packages-id "${PACKAGES_ID}"); fi
           if [[ "${STAGE}" == cloud ]]; then
@@ -121,6 +149,8 @@ jobs:
           trap 'rm -f "${output}"' EXIT
           "${RUNNER_TEMP}/fsbuild" result check --stage system \
             --id "${SYSTEM_ID}" --platform-id "${PLATFORM_ID}" \
+            --architecture "${ARCHITECTURE}" --package-arch "${PACKAGE_ARCH}" \
+            --image-profile "${IMAGE_PROFILE}" \
             --github-output "${output}"
           grep -qx 'complete=true' "${output}"
       - name: Render checked FreeBSD worker
@@ -150,6 +180,7 @@ jobs:
           --channel "${CHANNEL}"
           --package-train "${PACKAGE_TRAIN}"
           --channel-payload "${CHANNEL_PAYLOAD_SHA256}"
+          --architecture "${ARCHITECTURE}"
       - name: Boot-check completed cloud images
         id: cloud_smoke
         if: inputs.stage == 'cloud'
@@ -165,6 +196,7 @@ jobs:
             --packages "${PACKAGES_ID}" \
             --generation "${GENERATION}" \
             --channel "${CHANNEL}" \
+            --architecture "${ARCHITECTURE}" \
             --filesystem "${CLOUD_FILESYSTEM}" \
             --virtual-size-gib "${CLOUD_VIRTUAL_SIZE_GIB}" \
             --failure-dir "${CLOUD_SMOKE_FAILURE_DIR}"

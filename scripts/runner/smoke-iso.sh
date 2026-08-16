@@ -14,6 +14,7 @@ generation=""
 channel=""
 package_train=""
 channel_payload=""
+architecture=amd64
 while (($#)); do
   case "$1" in
     --public-base-url) public_base_url=${2:-}; shift 2 ;;
@@ -24,6 +25,7 @@ while (($#)); do
     --channel) channel=${2:-}; shift 2 ;;
     --package-train) package_train=${2:-}; shift 2 ;;
     --channel-payload) channel_payload=${2:-}; shift 2 ;;
+    --architecture) architecture=${2:-}; shift 2 ;;
     *) usage ;;
   esac
 done
@@ -36,12 +38,19 @@ done
 [[ $channel == devel || $channel == stable ]] || usage
 [[ $package_train =~ ^[0-9]+[.][0-9]+$ ]] || usage
 [[ $channel_payload =~ ^[0-9a-f]{64}$ ]] || usage
+[[ $architecture == amd64 || $architecture == arm64 ]] || usage
 : "${RUNNER_TEMP:?RUNNER_TEMP is required}"
 
-for tool in curl jq qemu-system-x86_64 setsid sha256sum stat timeout; do
+qemu_tool=qemu-system-x86_64
+[[ $architecture == arm64 ]] && qemu_tool=qemu-system-aarch64
+for tool in curl jq "$qemu_tool" setsid sha256sum stat timeout; do
   command -v "$tool" >/dev/null || { echo "missing ISO smoke dependency: $tool" >&2; exit 1; }
 done
-[[ -r /dev/kvm && -w /dev/kvm ]] || { echo "/dev/kvm is not available for the ISO smoke" >&2; exit 1; }
+if [[ $architecture == amd64 ]]; then
+  [[ -r /dev/kvm && -w /dev/kvm ]] || { echo "/dev/kvm is not available for the ISO smoke" >&2; exit 1; }
+else
+  command -v xz >/dev/null || { echo "xz is required for ARM installer smoke" >&2; exit 1; }
+fi
 
 run_dir=""
 smoke_pid=""
@@ -73,7 +82,7 @@ trap 'exit 143' TERM
 
 run_dir=$(mktemp -d "${RUNNER_TEMP}/freesense-iso-smoke.XXXXXX")
 marker=${run_dir}/complete.json
-iso=${run_dir}/installer.iso
+iso=${run_dir}/installer
 serial_log=${run_dir}/serial.log
 qemu_log=${run_dir}/qemu.log
 artifact_url=${public_base_url}/artifacts/iso/${fingerprint}
@@ -85,9 +94,10 @@ curl --fail --location --silent --show-error --proto '=https' \
 
 jq -e --arg fingerprint "$fingerprint" --arg system "$system" --arg packages "$packages" \
   --arg channel "$channel" --arg train "$package_train" \
-  --arg payload "$channel_payload" --argjson generation "$generation" '
+  --arg payload "$channel_payload" --arg architecture "$architecture" --argjson generation "$generation" '
   ((.schema_version == "freesense.iso/v1" and (.inputs | has("packages") | not)) or
-   (.schema_version == "freesense.iso/v2" and .inputs.packages == $packages)) and
+   (.schema_version == "freesense.iso/v2" and .inputs.packages == $packages) or
+   (.schema_version == "freesense.installer/v1" and .inputs.packages == $packages)) and
   .fingerprint == $fingerprint and
   .system == $system and
   .generation == $generation and
@@ -96,7 +106,11 @@ jq -e --arg fingerprint "$fingerprint" --arg system "$system" --arg packages "$p
   .inputs.channel_payload == $payload and
   (.sha256 | type == "string" and test("^[0-9a-f]{64}$")) and
   (.size | type == "number" and . > 0 and floor == .) and
-  (.file | type == "string" and test("^FreeSense-[0-9]+[.][0-9]+[.][0-9]+(-g[0-9]+)?-amd64[.]iso$"))
+  (.architecture // "amd64") == $architecture and
+  (.file | type == "string" and
+    (if $architecture == "arm64" then
+       test("^FreeSense-[0-9]+[.][0-9]+[.][0-9]+(-g[0-9]+)?-arm64-installer[.]img[.]xz$")
+     else test("^FreeSense-[0-9]+[.][0-9]+[.][0-9]+(-g[0-9]+)?-amd64[.]iso$") end))
 ' "$marker" >/dev/null || { echo "published ISO completion marker is invalid" >&2; exit 1; }
 
 filename=$(jq -r .file "$marker")
@@ -114,11 +128,24 @@ curl --fail --location --silent --show-error --proto '=https' \
 
 readiness=FREESENSE_INSTALLER_READY_V1
 : >"$serial_log"
+if [[ $architecture == arm64 ]]; then
+  xz -dc "$iso" >"${run_dir}/installer.img"
+  iso=${run_dir}/installer.img
+  firmware=""
+  for candidate in /usr/share/AAVMF/AAVMF_CODE.fd /usr/share/edk2/aarch64/QEMU_EFI.fd; do
+    [[ -f $candidate ]] && { firmware=$candidate; break; }
+  done
+  [[ -n $firmware ]] || { echo "AAVMF firmware was not found" >&2; exit 1; }
+  qemu_args=(-name freesense-arm64-installer-smoke -machine virt,accel=tcg,thread=multi \
+    -cpu max -smp 4 -m 4096 -bios "$firmware" -drive if=virtio,format=raw,readonly=on,file="$iso" \
+    -nic none -display none -monitor none -serial "file:${serial_log}" -no-reboot)
+else
+  qemu_args=(-name freesense-iso-smoke -machine q35,accel=kvm -cpu host -smp 2 -m 4096 \
+    -boot order=d,strict=on -cdrom "$iso" -nic none -display none -monitor none \
+    -serial "file:${serial_log}" -no-reboot)
+fi
 setsid timeout --signal=TERM --kill-after=15s 300s \
-  qemu-system-x86_64 -name freesense-iso-smoke \
-  -machine q35,accel=kvm -cpu host -smp 2 -m 4096 \
-  -boot order=d,strict=on -cdrom "$iso" -nic none -display none \
-  -monitor none -serial "file:${serial_log}" -no-reboot >"$qemu_log" 2>&1 &
+  "$qemu_tool" "${qemu_args[@]}" >"$qemu_log" 2>&1 &
 smoke_pid=$!
 
 ready=""

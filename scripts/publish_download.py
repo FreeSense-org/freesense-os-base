@@ -14,12 +14,17 @@ import tempfile
 import urllib.error
 import urllib.request
 
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from build_platform import image_profile, load_policy, target
+
 
 SHA = re.compile(r"^[0-9a-f]{40}$")
 SHA256 = re.compile(r"^[0-9a-f]{64}$")
 VERSION = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+$")
 ISO_FILE = re.compile(r"^FreeSense-[A-Za-z0-9.-]+-amd64\.iso$")
-DOWNLOAD_SCHEMA = "freesense.download/v2"
+DOWNLOAD_SCHEMA = "freesense.download/v3"
+V2_DOWNLOAD_SCHEMA = "freesense.download/v2"
 LEGACY_DOWNLOAD_SCHEMA = "freesense.download/v1"
 RELEASE_NOTES_SCHEMA = "freesense.release-notes/v2"
 DOWNLOAD_BASE_URL = "https://downloads.freesense.org/v1"
@@ -154,10 +159,10 @@ def build_changes(existing: dict | None, provenance: dict[str, str]) -> list[dic
     return changes[:50]
 
 
-def system_package_inventory(base_url: str, fingerprint: str) -> dict[str, dict[str, str]]:
+def system_package_inventory(base_url: str, fingerprint: str, package_arch: str = "amd64") -> dict[str, dict[str, str]]:
     if not SHA256.fullmatch(fingerprint):
         raise SystemExit("invalid System fingerprint for package inventory")
-    url = f"{base_url}/artifacts/system/{fingerprint}/amd64/packagesite.pkg"
+    url = f"{base_url}/artifacts/system/{fingerprint}/{package_arch}/packagesite.pkg"
     archive = fetch_bytes(url)
     with tempfile.TemporaryDirectory(prefix="freesense-packagesite-") as directory:
         path = Path(directory, "packagesite.pkg")
@@ -189,7 +194,7 @@ def system_package_inventory(base_url: str, fingerprint: str) -> dict[str, dict[
     return inventory
 
 
-def package_changes(existing: dict | None, system: str, base_url: str) -> dict:
+def package_changes(existing: dict | None, system: str, base_url: str, package_arch: str = "amd64") -> dict:
     empty = {
         "available": existing is not None,
         "updated": [], "added": [], "removed": [],
@@ -203,8 +208,8 @@ def package_changes(existing: dict | None, system: str, base_url: str) -> dict:
         raise SystemExit("existing release has an invalid System identity")
     if previous_system == system:
         return empty
-    before = system_package_inventory(base_url, previous_system)
-    after = system_package_inventory(base_url, system)
+    before = system_package_inventory(base_url, previous_system, package_arch)
+    after = system_package_inventory(base_url, system, package_arch)
     updated = [
         {"name": name, "from": before[name]["version"],
          "to": after[name]["version"], "origin": after[name]["origin"]}
@@ -347,7 +352,8 @@ def validate_download(release, channel: str, base_url: str,
         )
         return
     artifacts = release.get("artifacts")
-    if (release.get("schema_version") != DOWNLOAD_SCHEMA
+    schema = release.get("schema_version")
+    if (schema not in {V2_DOWNLOAD_SCHEMA, DOWNLOAD_SCHEMA}
             or release.get("channel") != channel
             or not VERSION.fullmatch(release.get("version", ""))
             or not SHA256.fullmatch(release.get("bundle_fingerprint", ""))
@@ -359,8 +365,17 @@ def validate_download(release, channel: str, base_url: str,
             or ("release_notes" in release
                 and not valid_release_notes(release["release_notes"]))):
         raise SystemExit(f"existing {channel} download document is invalid")
+    if schema == DOWNLOAD_SCHEMA:
+        architecture = release.get("architecture")
+        package_arch = release.get("package_arch")
+        if ((architecture, package_arch) not in {("amd64", "amd64"), ("arm64", "aarch64")}
+                or not isinstance(release.get("platform"), str)
+                or not isinstance(release.get("firmware"), list)
+                or not isinstance(release.get("capabilities"), dict)):
+            raise SystemExit(f"existing {channel} download architecture is invalid")
+    installer_format = "img" if release.get("architecture") == "arm64" else "iso"
     expected = {
-        ("installer", None, "iso"),
+        ("installer", None, installer_format),
         ("cloud", "ufs", "qcow2"), ("cloud", "ufs", "raw"),
     }
     if len(artifacts) == 5:
@@ -440,10 +455,16 @@ def main() -> int:
     parser.add_argument("--base-url", default="https://pkg.freesense.org/v1")
     parser.add_argument("--download-base-url", default=DOWNLOAD_BASE_URL)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--target", default="amd64")
+    parser.add_argument("--image-profile")
     args = parser.parse_args()
 
     requested_version = version_tuple(args.version)
-    policy = json.loads((Path(__file__).resolve().parents[1] / "config/build-policy.json").read_text())
+    policy = load_policy(Path(__file__).resolve().parents[1] / "config/build-policy.json")
+    selected_target = target(policy, args.target)
+    selected_profile = image_profile(policy, args.image_profile, args.target)
+    if not selected_target["publish_enabled"]:
+        raise SystemExit(f"publication for target {args.target} is disabled by policy")
     release_policy = policy["release"]
     expected_train = release_policy[
         "stable_train" if args.channel == "stable" else "development_train"
@@ -466,7 +487,8 @@ def main() -> int:
     marker_url = artifact_url + "/complete.json"
     marker = fetch_json(marker_url)
     marker_inputs = marker.get("inputs", {}) if isinstance(marker, dict) else {}
-    current_marker = (marker.get("schema_version") == "freesense.iso/v2"
+    marker_schema = "freesense.iso/v2" if selected_profile["installer"] == "iso" else "freesense.installer/v1"
+    current_marker = (marker.get("schema_version") == marker_schema
                       and marker_inputs.get("packages") == args.packages_fingerprint
                       and marker.get("bundle_fingerprint") == args.bundle_fingerprint
                       ) if isinstance(marker, dict) else False
@@ -488,7 +510,7 @@ def main() -> int:
         cloud_marker_url = cloud_artifact_url + "/complete.json"
         cloud_marker = fetch_json(cloud_marker_url)
         cloud_files = cloud_marker.get("files", []) if isinstance(cloud_marker, dict) else []
-        expected_size = policy["cloud"]["variants"][filesystem]["virtual_size_gib"] * 1024**3
+        expected_size = selected_profile["variants"][filesystem]["virtual_size_gib"] * 1024**3
         if (not isinstance(cloud_marker, dict)
                 or cloud_marker.get("schema_version") != "freesense.cloud-image/v1"
                 or cloud_marker.get("fingerprint") != cloud_fingerprint
@@ -508,7 +530,7 @@ def main() -> int:
             cloud_fingerprint, cloud_marker_url, cloud_files
         )
 
-    release_url = f"{args.base_url}/releases/{args.channel}.json"
+    release_url = f"{args.base_url}/releases/{args.channel}.{selected_target['architecture']}.json"
     existing = fetch_json(release_url, missing=None)
     if existing is not None:
         validate_download(existing, args.channel, args.base_url,
@@ -543,6 +565,11 @@ def main() -> int:
     release_notes = build_release_notes(existing, provenance, args.system, args.base_url)
     release = {
         "schema_version": DOWNLOAD_SCHEMA,
+        "architecture": selected_target["architecture"],
+        "package_arch": selected_target["package_arch"],
+        "platform": selected_profile["name"],
+        "firmware": selected_profile["firmware"],
+        "capabilities": selected_profile["capabilities"],
         "version": args.version,
         "release_id": release_id,
         "display_name": display_name,
@@ -559,8 +586,8 @@ def main() -> int:
         "release_notes": release_notes,
     }
     release["artifacts"].append({
-        "kind": "installer", "format": "iso", "filesystem": None,
-        "compression": "none", "file": marker["file"],
+        "kind": "installer", "format": selected_profile["installer"], "filesystem": None,
+        "compression": "none" if selected_profile["installer"] == "iso" else "xz", "file": marker["file"],
         "url": public_artifact_url(release, args.channel, marker["file"], args.download_base_url),
         "marker_url": marker_url, "sha256": marker["sha256"], "size": marker["size"],
         "build_fingerprint": args.fingerprint,

@@ -56,6 +56,8 @@ type Channel struct {
 	PackageTrain string     `json:"package_train"`
 	ABI          string     `json:"abi"`
 	AltABI       string     `json:"altabi"`
+	Architecture string     `json:"architecture,omitempty"`
+	PackageArch  string     `json:"package_arch,omitempty"`
 	Default      bool       `json:"default"`
 	System       *Component `json:"system,omitempty"`
 	Packages     *Component `json:"packages,omitempty"`
@@ -82,16 +84,19 @@ type UpdateOptions struct {
 	SystemFingerprint string
 	// BuiltAgainstSystem preserves the immutable System used to build packages,
 	// even when a same-pin package repository is selected with a newer System.
-	BuiltAgainstSystem string
-	FreeBSDPinID       string
-	URL                string
-	Generation         uint64
-	Version            string
-	PackageTrain       string
-	ABI                string
-	AltABI             string
-	OSVersion          uint64
-	PublishedAt        time.Time
+	BuiltAgainstSystem  string
+	FreeBSDPinID        string
+	URL                 string
+	Generation          uint64
+	Version             string
+	PackageTrain        string
+	ABI                 string
+	AltABI              string
+	Architecture        string
+	PackageArch         string
+	DeclareArchitecture bool
+	OSVersion           uint64
+	PublishedAt         time.Time
 }
 
 // SealStable publishes one complete immutable Stable-train System/Packages pair. A
@@ -293,6 +298,9 @@ func ParseSigned(data []byte, publicKey *rsa.PublicKey) (Payload, error) {
 }
 
 func Update(payload Payload, options UpdateOptions) (Payload, error) {
+	if options.Architecture == "" && options.PackageArch == "" && regexp.MustCompile(`^FreeBSD:[0-9]+:amd64$`).MatchString(options.ABI) {
+		options.Architecture, options.PackageArch = "amd64", "amd64"
+	}
 	if options.Channel != "devel" {
 		return Payload{}, errors.New("build publication may update only devel")
 	}
@@ -318,9 +326,9 @@ func Update(payload Payload, options UpdateOptions) (Payload, error) {
 		return Payload{}, errors.New("system publication must not have a package build binding")
 	}
 	if options.Component == "system" {
-		abiMatch := regexp.MustCompile(`^FreeBSD:([0-9]+):amd64$`).FindStringSubmatch(options.ABI)
+		abiMatch := regexp.MustCompile(`^FreeBSD:([0-9]+):(amd64|aarch64)$`).FindStringSubmatch(options.ABI)
 		var abiMajor uint64
-		if len(abiMatch) != 2 {
+		if len(abiMatch) != 3 {
 			return Payload{}, errors.New("system publication requires a valid FreeBSD ABI")
 		}
 		if _, err := fmt.Sscanf(abiMatch[1], "%d", &abiMajor); err != nil ||
@@ -330,15 +338,22 @@ func Update(payload Payload, options UpdateOptions) (Payload, error) {
 	} else if options.OSVersion != 0 {
 		return Payload{}, errors.New("packages publication must not declare a System OSVERSION")
 	}
+	validMapping := options.Architecture == "amd64" && options.PackageArch == "amd64" &&
+		options.ABI == "FreeBSD:16:amd64" && options.AltABI == "freebsd:16:x86:64" ||
+		options.Architecture == "arm64" && options.PackageArch == "aarch64" &&
+			options.ABI == "FreeBSD:16:aarch64" && options.AltABI == "freebsd:16:aarch64:64"
+	if !validMapping {
+		return Payload{}, errors.New("component architecture, ABI, and package architecture conflict")
+	}
 	if !regexp.MustCompile(`^[0-9]+\.[0-9]+$`).MatchString(options.PackageTrain) || options.ABI == "" || options.AltABI == "" {
 		return Payload{}, errors.New("package train and ABI fields are required")
 	}
 	if !releaseVersionPattern.MatchString(options.Version) || !strings.HasPrefix(options.Version, options.PackageTrain+".") {
 		return Payload{}, errors.New("release version must be exact and belong to the package train")
 	}
-	expectedPath := fmt.Sprintf("/v1/artifacts/system/%s/amd64", options.Fingerprint)
+	expectedPath := fmt.Sprintf("/v1/artifacts/system/%s/%s", options.Fingerprint, options.PackageArch)
 	if options.Component == "packages" {
-		expectedPath = fmt.Sprintf("/v1/artifacts/packages/%s/%s/amd64", options.PackageTrain, options.Fingerprint)
+		expectedPath = fmt.Sprintf("/v1/artifacts/packages/%s/%s/%s", options.PackageTrain, options.Fingerprint, options.PackageArch)
 	}
 	parsedURL, err := url.Parse(options.URL)
 	if err != nil || parsedURL.Scheme != "https" || parsedURL.Host != "pkg.freesense.org" ||
@@ -385,6 +400,12 @@ func Update(payload Payload, options UpdateOptions) (Payload, error) {
 	channel.PackageTrain = options.PackageTrain
 	channel.ABI = options.ABI
 	channel.AltABI = options.AltABI
+	// Keep the legacy amd64 payload byte-compatible; architecture-qualified
+	// manifests set these fields explicitly through UpdateOptions.
+	if options.DeclareArchitecture || options.Architecture != "amd64" || options.PackageArch != "amd64" {
+		channel.Architecture = options.Architecture
+		channel.PackageArch = options.PackageArch
+	}
 	channel.Default = true
 	component := &Component{
 		Fingerprint:       options.Fingerprint,
@@ -431,6 +452,16 @@ func Update(payload Payload, options UpdateOptions) (Payload, error) {
 	return payload, nil
 }
 
+func ManifestKeyForPackageArch(packageArch string, qualified bool) (string, error) {
+	if packageArch != "amd64" && packageArch != "aarch64" {
+		return "", errors.New("unsupported package architecture")
+	}
+	if packageArch == "amd64" && !qualified {
+		return ManifestKey, nil
+	}
+	return fmt.Sprintf("repos.%s.manifest.json", packageArch), nil
+}
+
 func Verify(payload Payload, component, fingerprint string) (Payload, error) {
 	channel, ok := payload.Channels["devel"]
 	if !ok {
@@ -464,6 +495,8 @@ func channelMetadataMatches(channel Channel, options UpdateOptions) bool {
 		channel.PackageTrain == options.PackageTrain &&
 		channel.ABI == options.ABI &&
 		channel.AltABI == options.AltABI &&
+		(channel.Architecture == "" || channel.Architecture == options.Architecture) &&
+		(channel.PackageArch == "" || channel.PackageArch == options.PackageArch) &&
 		channel.Default
 }
 

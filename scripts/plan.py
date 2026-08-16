@@ -11,10 +11,14 @@ import os
 from pathlib import Path
 import re
 import subprocess
+import sys
 import tempfile
 import urllib.error
 import urllib.request
 from datetime import datetime, timedelta, timezone
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from build_platform import image_profile, load_policy, manifest_name, pin_target, target
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -161,6 +165,8 @@ def current_component(manifest_url: str, component: str) -> str:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("kind", choices=("system", "packages", "iso", "cloud"))
+    parser.add_argument("--target", default="amd64")
+    parser.add_argument("--image-profile")
     parser.add_argument("--filesystem", choices=("ufs", "zfs"))
     parser.add_argument("--github-output", type=Path)
     parser.add_argument("--os-base-sha", default=os.environ.get("GITHUB_SHA", ""))
@@ -170,6 +176,8 @@ def main() -> int:
         raise SystemExit("cloud planning requires --filesystem ufs or zfs")
     if args.kind != "cloud" and args.filesystem is not None:
         raise SystemExit("--filesystem is valid only for cloud planning")
+    if args.kind not in {"iso", "cloud"} and args.image_profile is not None:
+        raise SystemExit("--image-profile is valid only for image planning")
 
     if args.kind in {"packages", "iso", "cloud"}:
         if args.system_closure is None:
@@ -208,14 +216,25 @@ def main() -> int:
     current_packages_generation = closure.get("packages_generation", 0)
     current_packages_verified = closure.get("packages_verified", "false")
     channel_osversion = closure.get("osversion", 0)
+    channel_architecture = closure.get("architecture", "amd64")
+    channel_package_arch = closure.get("package_arch", "amd64")
 
     if args.kind == "system" and not SHA.fullmatch(args.os_base_sha):
         raise SystemExit("--os-base-sha must be a full Git commit")
     lock = json.loads((ROOT / "config/freebsd-16.json").read_text())
-    policy = json.loads((ROOT / "config/build-policy.json").read_text())
-    if lock.get("schema_version") != "freesense.freebsd-pin/v2" or not lock.get("ready"):
-        raise SystemExit("FreeBSD lock is not ready")
-    abi_match = re.fullmatch(r"FreeBSD:([0-9]+):amd64", policy.get("abi", ""))
+    policy = load_policy(ROOT / "config/build-policy.json")
+    selected_target = target(policy, args.target)
+    if not selected_target["build_enabled"]:
+        raise SystemExit(f"target {args.target} builds are disabled")
+    target_pin = pin_target(lock, args.target)
+    jail_seed = target_pin["jail_seed"]
+    selected_profile = image_profile(policy, args.image_profile, args.target)
+    if args.kind in {"packages", "iso", "cloud"} and (
+        channel_architecture != selected_target["architecture"]
+        or channel_package_arch != selected_target["package_arch"]
+    ):
+        raise SystemExit("selected System closure belongs to a different architecture")
+    abi_match = re.fullmatch(r"FreeBSD:([0-9]+):(amd64|aarch64)", selected_target["abi"])
     pinned_osversion = lock.get("freebsd_source", {}).get("osversion")
     if (
         abi_match is None
@@ -246,8 +265,10 @@ def main() -> int:
         raise SystemExit("FreeBSD lock has no pinned worker-tool bundle; run Pin FreeBSD")
 
     artifact_policy = {
-        key: policy[key]
-        for key in ("package_train", "abi", "altabi", "public_base_url")
+        "package_train": policy["package_train"],
+        "abi": selected_target["abi"],
+        "altabi": selected_target["altabi"],
+        "public_base_url": policy["public_base_url"],
     }
     signing_public_key_sha256 = hashlib.sha256(
         (ROOT / "config/channel-signing-public.pem").read_bytes()
@@ -257,11 +278,11 @@ def main() -> int:
         "kind": "freebsd-pin",
         "freebsd_source": lock["freebsd_source"]["commit"],
         "freebsd_ports": lock["freebsd_ports"]["commit"],
-        "jail_seed": lock["jail_seed"]["sha256"],
+        "jail_seed": jail_seed["sha256"],
         "worker_image": lock["worker_image"]["sha256"],
         "worker_tools": worker_tools_lock_sha256,
-        "abi": policy["abi"],
-        "altabi": policy["altabi"],
+        "abi": selected_target["abi"],
+        "altabi": selected_target["altabi"],
     })
     patch_files = [ROOT / "apply.sh", ROOT / "manifest.env", *sorted((ROOT / "patches").glob("*.patch"))]
     platform_recipe = recipe_digest([
@@ -282,7 +303,7 @@ def main() -> int:
             "kind": "platform",
             "freebsd_source": lock["freebsd_source"]["commit"],
             "freebsd_ports": lock["freebsd_ports"]["commit"],
-            "jail_seed": lock["jail_seed"]["sha256"],
+            "jail_seed": jail_seed["sha256"],
             "worker_image": lock["worker_image"]["sha256"],
             "worker_tools": worker_tools_lock_sha256,
             "source": latest_source_sha,
@@ -293,6 +314,7 @@ def main() -> int:
             "runner_recipe": runner_recipe,
             "signing_public_key": signing_public_key_sha256,
             "recipe": platform_recipe,
+            **({} if args.target == "amd64" else {"target": selected_target}),
         })
         desired_system = fingerprint({
             "schema": 2,
@@ -363,7 +385,7 @@ def main() -> int:
             if (not isinstance(channel_payload_sha256, str)
                     or not SHA256.fullmatch(channel_payload_sha256)
                     or hashlib.sha256(payload).hexdigest() != channel_payload_sha256
-                    or not signature):
+                    or (selected_target["publish_enabled"] and not signature)):
                 raise SystemExit("selected release channel document is invalid")
         selected_package_train = channel_package_train
         source_sha = system_source_sha
@@ -390,7 +412,7 @@ def main() -> int:
         ports_sha = lock["freebsd_ports"]["commit"]
         image_sha256 = lock["worker_image"]["sha256"]
         worker_tools_sha256 = worker_tools_lock_sha256
-        jail_object = lock["jail_seed"]["object"]
+        jail_object = jail_seed["object"]
         platform = desired_platform
         system = desired_system
     package_build_config = (
@@ -402,12 +424,20 @@ def main() -> int:
         if args.kind == "packages"
         else "0" * 64
     )
+    optional_architecture_policy = (
+        remote_recipe_digest(
+            "FreeSense-org/freesense-packages", packages_sha,
+            ("architecture-policy.json",),
+        )
+        if args.kind == "packages" else "0" * 64
+    )
     packages = fingerprint({
         "schema": 4,
         "kind": "packages",
         "freebsd_pin": freebsd_pin_id,
         "packages": packages_sha,
         "package_build_config": package_build_config,
+        "architecture_policy": optional_architecture_policy,
         "package_train": selected_package_train,
         "signing_public_key": signing_public_key_sha256,
         "recipe": recipe_digest([
@@ -416,6 +446,7 @@ def main() -> int:
             ROOT / "scripts/runner/worker-common.sh",
             ROOT / "scripts/runner/stages/packages.sh",
         ]),
+        **({} if args.target == "amd64" else {"package_arch": selected_target["package_arch"]}),
     })
     release_version = (
         channel_release_version
@@ -454,7 +485,12 @@ def main() -> int:
         "cloud_recipe": recipe_digest([
             ROOT / "scripts/runner/stages/cloud.sh",
         ]),
-        "cloud_policy": policy["cloud"],
+        "cloud_policy": selected_profile,
+        **({} if args.target == "amd64" else {
+            "architecture": selected_target["architecture"],
+            "package_arch": selected_target["package_arch"],
+            "image_profile": selected_profile["name"],
+        }),
     }
     bundle = fingerprint(shared_assembly)
     iso = fingerprint({
@@ -462,7 +498,7 @@ def main() -> int:
         "kind": "iso",
         "bundle": bundle,
     })
-    cloud_variants = policy.get("cloud", {}).get("variants", {})
+    cloud_variants = selected_profile.get("variants", {})
     if (not isinstance(cloud_variants, dict)
             or set(cloud_variants) != {"ufs", "zfs"}):
         raise SystemExit("cloud policy must define exactly ufs and zfs variants")
@@ -490,13 +526,18 @@ def main() -> int:
         "cloud_ufs": cloud_ids["ufs"], "cloud_zfs": cloud_ids["zfs"],
     }
     selected = identifiers[args.kind]
-    manifest_url = policy["public_base_url"] + "/repos.manifest.json"
+    manifest_url = policy["public_base_url"] + "/" + manifest_name(
+        selected_target, legacy=args.target == "amd64"
+    )
     if args.kind in {"iso", "cloud"}:
         current = ""
     elif args.kind == "packages":
         current = current_packages_fingerprint
     else:
-        current = current_component(manifest_url, "system")
+        # Experimental targets build into immutable staging prefixes before
+        # they are allowed to publish a signed channel root.
+        current = (current_component(manifest_url, "system")
+                   if selected_target["publish_enabled"] else "")
     values: dict[str, object] = {
         **identifiers,
         "fingerprint": selected,
@@ -509,6 +550,7 @@ def main() -> int:
             current_packages_fingerprint if args.kind in {"iso", "cloud"} else ""
         ),
         "package_build_config_sha256": package_build_config,
+        "optional_architecture_policy_sha256": optional_architecture_policy,
         "os_base_sha": os_base_sha,
         "freebsd_sha": freebsd_sha,
         "ports_sha": ports_sha,
@@ -516,8 +558,21 @@ def main() -> int:
         "worker_tools_sha256": worker_tools_sha256,
         "jail_object": jail_object,
         "package_train": selected_package_train,
-        "abi": policy["abi"],
-        "altabi": policy["altabi"],
+        "target": args.target,
+        "architecture": selected_target["architecture"],
+        "package_arch": selected_target["package_arch"],
+        "freebsd_target": selected_target["freebsd_target"],
+        "freebsd_target_arch": selected_target["freebsd_target_arch"],
+        "poudriere_arch": selected_target["poudriere_arch"],
+        "kernel": selected_target["kernel"],
+        "executor": selected_target["executor"],
+        "publish_enabled": selected_target["publish_enabled"],
+        "image_profile": selected_profile["name"],
+        "firmware": ",".join(selected_profile["firmware"]),
+        "image_capabilities": json.dumps(selected_profile["capabilities"], sort_keys=True, separators=(",", ":")),
+        "installer_format": selected_profile["installer"],
+        "abi": selected_target["abi"],
+        "altabi": selected_target["altabi"],
         "osversion": pinned_osversion if args.kind == "system" else channel_osversion,
         "public_base_url": policy["public_base_url"],
         "channel": channel_name,
@@ -530,6 +585,8 @@ def main() -> int:
         "freebsd_pin_id": freebsd_pin_id,
         "cloud_filesystem": selected_filesystem,
         "cloud_virtual_size_gib": cloud_variants[selected_filesystem]["virtual_size_gib"],
+        "cloud_ufs_virtual_size_gib": cloud_variants["ufs"]["virtual_size_gib"],
+        "cloud_zfs_virtual_size_gib": cloud_variants["zfs"]["virtual_size_gib"],
         "product_version": (f"{release_version}-RELEASE"
                             if args.kind in {"iso", "cloud"} and channel_name == "stable"
                             else f"{release_version}-DEVELOPMENT"),

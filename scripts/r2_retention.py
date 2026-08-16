@@ -48,8 +48,14 @@ DEVEL_DOWNLOAD = re.compile(
 )
 DOCUMENT_KEYS = {
     "v1/repos.manifest.json",
+    "v1/repos.amd64.manifest.json",
+    "v1/repos.aarch64.manifest.json",
     "v1/releases/stable.json",
     "v1/releases/devel.json",
+    "v1/releases/stable.amd64.json",
+    "v1/releases/devel.amd64.json",
+    "v1/releases/stable.arm64.json",
+    "v1/releases/devel.arm64.json",
     "v1/state/retention.json",
 }
 MAX_DOCUMENT_SIZE = 1024 * 1024
@@ -336,7 +342,7 @@ def marker_identity(
     elif kind == "iso":
         schema = marker.get("schema_version")
         legacy = schema == "freesense.iso/v1" and inputs.get("packages") is None
-        current = schema == "freesense.iso/v2" and SHA256.fullmatch(
+        current = schema in {"freesense.iso/v2", "freesense.installer/v1"} and SHA256.fullmatch(
             str(inputs.get("packages", ""))
         )
         if (
@@ -667,10 +673,7 @@ def plan_retention(
     channels = manifest.get("channels")
     if not isinstance(channels, dict):
         fail("signed repository manifest has no channels")
-    for channel_name in ("stable", "devel"):
-        channel = channels.get(channel_name)
-        if channel is None:
-            continue
+    for channel_name, channel in channels.items():
         if not isinstance(channel, dict):
             fail(f"signed {channel_name} channel is invalid")
         train = channel.get("package_train")
@@ -799,8 +802,10 @@ def plan_retention(
         reverse=True,
     )
     protected_downloads.update(ordered_downloads[:keep_devel])
-    devel_release = build["documents"].get("v1/releases/devel.json")
-    if devel_release is not None:
+    for release_key in ("v1/releases/devel.json", "v1/releases/devel.amd64.json", "v1/releases/devel.arm64.json"):
+        devel_release = build["documents"].get(release_key)
+        if devel_release is None:
+            continue
         if not isinstance(devel_release, dict) or devel_release.get("channel") != "devel":
             fail("Development release document is invalid")
         release_id = devel_release.get("release_id")
@@ -808,6 +813,12 @@ def plan_retention(
             r"[0-9]+\.[0-9]+\.[0-9]+-g[1-9][0-9]*", release_id
         ):
             fail("Development release document has an invalid release ID")
+        architecture = devel_release.get("architecture", "amd64")
+        if architecture not in {"amd64", "arm64"}:
+            fail("Development release document has an invalid architecture")
+        # v3 publication stores architecture-specific files below the same
+        # immutable release-id directory; protecting that directory keeps the
+        # complete architecture set together.
         protected_downloads.add(f"v1/releases/devel/{release_id}/")
 
     download_candidates: list[dict[str, Any]] = []
@@ -1171,10 +1182,23 @@ def main() -> None:
 
     build = load_json(args.build_inventory)
     downloads = load_json(args.download_inventory)
-    envelope = build.get("documents", {}).get("v1/repos.manifest.json")
+    documents = build.get("documents", {})
+    envelope = documents.get("v1/repos.manifest.json")
     if envelope is None:
         fail("build inventory has no signed repository manifest")
     manifest = verify_manifest(envelope, args.public_key)
+    # The unqualified document remains the amd64 compatibility root.  Fold in
+    # qualified roots so live aarch64 repositories are retention roots too.
+    merged_channels = dict(manifest["channels"])
+    for key in ("v1/repos.amd64.manifest.json", "v1/repos.aarch64.manifest.json"):
+        qualified = documents.get(key)
+        if qualified is None:
+            continue
+        decoded = verify_manifest(qualified, args.public_key)
+        qualifier = key.removeprefix("v1/repos.").removesuffix(".manifest.json")
+        for name, channel in decoded["channels"].items():
+            merged_channels[f"{qualifier}:{name}"] = channel
+    manifest = {**manifest, "channels": merged_channels}
     policy = load_json(args.config / "build-policy.json")
     release_policy = policy.get("release", {})
     stable_train = release_policy.get("stable_train")

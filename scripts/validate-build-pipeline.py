@@ -238,7 +238,7 @@ repository_payload = common.rfind('upload_immutable "${file}"')
 repository_complete = common.rfind('upload_immutable "${directory}/complete.json"')
 require(repository_payload >= 0 and repository_complete > repository_payload,
         "repository completion marker is not uploaded last")
-iso_payload = iso_stage.rfind('upload_immutable "${iso}"')
+iso_payload = iso_stage.rfind('upload_immutable "${image}"')
 iso_complete = iso_stage.rfind('upload_immutable /tmp/complete.json')
 require(iso_payload >= 0 and iso_complete > iso_payload,
         "ISO completion marker is not uploaded last")
@@ -255,7 +255,7 @@ require('"packages": current_packages_fingerprint' in planner_source and
         '"packages_fingerprint": (' in planner_source and
         '"channel_payload": channel_payload_sha256' in planner_source,
         "ISO identity omits the optional package pair or signed channel payload")
-for value in ('"bundle": bundle', '"kind": "cloud"', '"cloud_policy": policy["cloud"]'):
+for value in ('"bundle": bundle', '"kind": "cloud"', '"cloud_policy": selected_profile'):
     require(value in planner_source, f"bundle/cloud identity is missing {value!r}")
 for value in ("freesense.cloud-image/v1", "qemu-img convert",
               "CLOUD_VIRTUAL_SIZE_GIB", "CLOUD_FILESYSTEM",
@@ -306,7 +306,7 @@ for value in ("prepare_qga()", "shutdown_guest()", "/sbin/shutdown -p now",
             f"cloud smoke guest-agent channel is missing {value!r}")
 require("Upload cloud smoke failure artifacts" in reusable,
         "cloud smoke failures are not uploaded as GitHub Actions artifacts")
-require('schema_version:"freesense.iso/v2"' in iso_stage and
+require('"freesense.iso/v2"' in iso_stage and '"freesense.installer/v1"' in iso_stage and
         "packages:$packages" in iso_stage,
         "ISO completion markers omit the exact Packages artifact")
 for value in ("FREESENSE_INSTALLER_PATCH_B64", "git apply --check",
@@ -348,23 +348,32 @@ require("create_source_archive" in system_stage and "create_source_archive" in p
         "package builds do not create their deterministic source distfile")
 
 lock = json.loads(read("config/freebsd-16.json"))
-require(lock.get("schema_version") == "freesense.freebsd-pin/v2" and lock.get("ready") is True,
-        "FreeBSD lock is not ready schema v2")
+require(lock.get("schema_version") == "freesense.freebsd-pin/v3" and
+        lock.get("targets", {}).get("amd64", {}).get("ready") is True,
+        "FreeBSD lock has no ready amd64 target in schema v3")
 for name in ("freebsd_source", "freebsd_ports"):
     require(bool(re.fullmatch(r"[0-9a-f]{40}", lock.get(name, {}).get("commit", ""))),
             f"{name} is not pinned to a full Git commit")
-abi_major = int(policy["abi"].split(":")[1])
+abi_major = int(policy["targets"]["amd64"]["abi"].split(":")[1])
 osversion = lock.get("freebsd_source", {}).get("osversion")
 require(isinstance(osversion, int) and
         abi_major * 100000 <= osversion < (abi_major + 1) * 100000,
         "FreeBSD source is not pinned to an exact OSVERSION matching the ABI")
-for name in ("jail_seed", "worker_image", "worker_tools"):
-    item = lock.get(name, {})
+for name, item in (
+    ("amd64 jail_seed", lock.get("targets", {}).get("amd64", {}).get("jail_seed", {})),
+    ("worker_image", lock.get("worker_image", {})),
+    ("worker_tools", lock.get("worker_tools", {})),
+):
     sha = item.get("sha256", "")
     require(bool(re.fullmatch(r"[0-9a-f]{64}", sha)) and
             item.get("object") == f"inputs/sha256/{sha}" and
             isinstance(item.get("size"), int) and item["size"] > 0,
             f"{name} is not a complete content-addressed pin")
+arm_pin = lock.get("targets", {}).get("arm64", {})
+require(isinstance(arm_pin, dict) and
+        arm_pin.get("jail_seed", {}).get("url", "").endswith("/arm64/16.0-CURRENT/base.txz") and
+        arm_pin.get("package_catalog", {}).get("url", "").startswith("https://pkg.freebsd.org/FreeBSD:16:aarch64/"),
+        "FreeBSD lock has no canonical aarch64 inputs")
 
 pin_contract = pin_workflow + read("scripts/pin-worker-tools.sh")
 for value in ("scripts/resolve_worker_tools.py", "packagesite.yaml.sig",

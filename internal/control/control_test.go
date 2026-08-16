@@ -75,6 +75,30 @@ func TestRollingDevelopmentCannotPromoteToStable(t *testing.T) {
 	}
 }
 
+func TestARM64RepositoryMapping(t *testing.T) {
+	now := time.Date(2026, 8, 16, 12, 0, 0, 0, time.UTC)
+	fingerprint := "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+	payload, err := Update(Payload{}, UpdateOptions{
+		Channel: "devel", Component: "system", Fingerprint: fingerprint,
+		FreeBSDPinID: "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+		URL:          "https://pkg.freesense.org/v1/artifacts/system/" + fingerprint + "/aarch64",
+		Generation:   1, Version: "1.1.0", PackageTrain: "1.1",
+		Architecture: "arm64", PackageArch: "aarch64", DeclareArchitecture: true,
+		ABI: "FreeBSD:16:aarch64", AltABI: "freebsd:16:aarch64:64",
+		OSVersion: 1600019, PublishedAt: now,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	channel := payload.Channels["devel"]
+	if channel.Architecture != "arm64" || channel.PackageArch != "aarch64" {
+		t.Fatalf("ARM64 channel mapping = %q/%q", channel.Architecture, channel.PackageArch)
+	}
+	if got, err := ManifestKeyForPackageArch("aarch64", false); err != nil || got != "repos.aarch64.manifest.json" {
+		t.Fatalf("ARM64 manifest key = %q, %v", got, err)
+	}
+}
+
 func TestStableReleaseCanBeSealedOnlyOnce(t *testing.T) {
 	now := time.Date(2026, 7, 22, 12, 0, 0, 0, time.UTC)
 	systemFingerprint := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
