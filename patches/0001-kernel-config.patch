@@ -282,7 +282,6 @@ index 00000000000..4080df2dee2
 +device		wlan                    # 802.11 support
 +device		wlan_acl
 +nooptions	IEEE80211_DEBUG		# enable debug msgs
-+options 	IEEE80211_AMPDU_AGE     # age frames in AMPDU reorder q's
 +options 	IEEE80211_SUPPORT_MESH  # enable 802.11s draft support
 +device		wlan_wep                # 802.11 WEP support
 +device		wlan_ccmp               # 802.11 CCMP support
@@ -292,9 +291,7 @@ index 00000000000..4080df2dee2
 +device		ath                     # Atheros NICs
 +device		ath_pci                 # Atheros pci/cardbus glue
 +device		ath_hal                 # pci/cardbus chip support
-+options 	AH_SUPPORT_AR5416       # enable AR5416 tx/rx descriptors
 +options 	AH_AR5416_INTERRUPT_MITIGATION  # AR5416 interrupt mitigation
-+options 	ATH_ENABLE_11N          # Enable 802.11n support for AR5416 and later
 +device		ath_rate_sample         # SampleRate tx rate control for ath
 +device		iwm
 +device		iwifw
@@ -367,7 +364,6 @@ index 00000000000..4080df2dee2
 +options 	NETGRAPH_VLAN
 +options 	NETGRAPH_L2TP
 +options 	NETGRAPH_BPF
-+options 	NETGRAPH_ETF
 +options 	NETGRAPH_ETHER
 +options 	NETGRAPH_IFACE
 +options 	NETGRAPH_EIFACE
@@ -425,7 +421,6 @@ index 00000000000..4080df2dee2
 +
 +device		rndtest		# FIPS 140-2 entropy tester
 +device		hifn		# Hifn 7951, 7781, etc.
-+options 	HIFN_DEBUG	# enable debugging support: hw.hifn.debug
 +device		ubsec		# Broadcom 5501, 5601, 58xx
 +device		safe		# safe -- SafeNet crypto accelerator
 +
