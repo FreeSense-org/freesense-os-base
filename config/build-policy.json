@@ -24,7 +24,7 @@
       "poudriere_arch": "amd64.amd64",
       "abi": "FreeBSD:16:amd64",
       "altabi": "freebsd:16:x86:64",
-      "kernel": "pfSense",
+      "kernel": "FreeSense",
       "executor": "native-amd64",
       "build_enabled": true,
       "publish_enabled": true
@@ -37,7 +37,7 @@
       "poudriere_arch": "arm64.aarch64",
       "abi": "FreeBSD:16:aarch64",
       "altabi": "freebsd:16:aarch64:64",
-      "kernel": "pfSense",
+      "kernel": "FreeSense",
       "executor": "amd64-cross-qemu-user",
       "build_enabled": true,
       "publish_enabled": false
