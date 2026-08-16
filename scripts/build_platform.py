@@ -30,7 +30,7 @@ def load_policy(path: Path | None = None) -> dict[str, Any]:
                 "architecture": "amd64", "freebsd_target": "amd64",
                 "freebsd_target_arch": "amd64", "package_arch": "amd64",
                 "poudriere_arch": "amd64.amd64", "abi": abi, "altabi": altabi,
-                "kernel": "pfSense", "executor": "native-amd64",
+                "kernel": "FreeSense", "executor": "native-amd64",
                 "build_enabled": True, "publish_enabled": True,
             }},
             "image_profiles": {"generic-amd64": {
@@ -85,6 +85,8 @@ def _validate_target(name: str, value: Any) -> None:
         "freebsd_target", "freebsd_target_arch", "package_arch", "poudriere_arch", "altabi"
     )) != expected_values[name]:
         raise SystemExit(f"target {name} does not use the canonical FreeBSD mapping")
+    if value["kernel"] != "FreeSense":
+        raise SystemExit(f"target {name} does not use the post-rebrand kernel configuration")
     if not all(isinstance(value[key], bool) for key in ("build_enabled", "publish_enabled")):
         raise SystemExit(f"target {name} enable flags must be boolean")
 

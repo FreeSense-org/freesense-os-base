@@ -40,6 +40,8 @@ class BuildPlatformTests(unittest.TestCase):
                          ("arm64", "aarch64"))
         self.assertEqual((arm64["package_arch"], arm64["abi"], arm64["altabi"]),
                          ("aarch64", "FreeBSD:16:aarch64", "freebsd:16:aarch64:64"))
+        self.assertEqual(amd64["kernel"], "FreeSense")
+        self.assertEqual(arm64["kernel"], "FreeSense")
         self.assertEqual(build_platform.manifest_name(amd64, legacy=True),
                          "repos.manifest.json")
         self.assertEqual(build_platform.manifest_name(amd64),
@@ -57,6 +59,15 @@ class BuildPlatformTests(unittest.TestCase):
         policy = build_platform.load_policy(ROOT / "config/build-policy.json")
         with self.assertRaises(SystemExit):
             build_platform.image_profile(policy, "generic-amd64", "arm64")
+
+    def test_target_rejects_pre_rebrand_kernel_name(self):
+        policy = json.loads((ROOT / "config/build-policy.json").read_text())
+        policy["targets"]["arm64"]["kernel"] = "pfSense"
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "policy.json"
+            path.write_text(json.dumps(policy), encoding="utf-8")
+            with self.assertRaisesRegex(SystemExit, "post-rebrand"):
+                build_platform.load_policy(path)
 
     def test_staged_arm_pair_produces_a_valid_unsigned_channel_payload(self):
         system_id, packages_id = "a" * 64, "b" * 64

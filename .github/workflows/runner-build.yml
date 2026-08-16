@@ -36,7 +36,7 @@ on:
       freebsd_target: {type: string, required: false, default: amd64}
       freebsd_target_arch: {type: string, required: false, default: amd64}
       poudriere_arch: {type: string, required: false, default: amd64.amd64}
-      kernel: {type: string, required: false, default: pfSense}
+      kernel: {type: string, required: false, default: FreeSense}
       executor: {type: string, required: false, default: native-amd64}
       image_profile: {type: string, required: false, default: generic-amd64}
       firmware: {type: string, required: false, default: 'bios,uefi'}

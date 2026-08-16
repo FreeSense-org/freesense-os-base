@@ -348,6 +348,9 @@ require("create_source_archive" in system_stage and "create_source_archive" in p
         "package builds do not create their deterministic source distfile")
 
 lock = json.loads(read("config/freebsd-16.json"))
+require(all(target.get("kernel") == "FreeSense" for target in policy["targets"].values()) and
+        "default: FreeSense" in reusable,
+        "build descriptors do not select the post-rebrand FreeSense kernel")
 require(lock.get("schema_version") == "freesense.freebsd-pin/v3" and
         lock.get("targets", {}).get("amd64", {}).get("ready") is True,
         "FreeBSD lock has no ready amd64 target in schema v3")
