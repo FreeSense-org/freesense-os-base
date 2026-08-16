@@ -130,6 +130,9 @@ jobs:
             --build-date "${builddate}" \
             --output "${RUNNER_TEMP}/worker-tools.tar" \
             --report "${RUNNER_TEMP}/worker-tools.json"
+          tools_osversion=$(jq -er '.osversion | select(type == "number")' \
+            "${RUNNER_TEMP}/worker-tools.json")
+          [[ "${tools_osversion}" == "${osversion}" ]]
           ports_sha=$(jq -r .ports_sha "${RUNNER_TEMP}/worker-tools.json")
           [[ "${ports_sha}" =~ ^[0-9a-f]{40}$ ]]
           resolved_ports_sha=$(gh api "repos/freebsd/freebsd-ports/commits/${ports_sha}" --jq .sha)

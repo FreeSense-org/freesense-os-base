@@ -75,6 +75,7 @@ printf '%s' "$catalog_digest" | openssl dgst -sha256 \
 python3 scripts/resolve_worker_tools.py resolve \
   --catalog "$work/packagesite.yaml" --output "$work/manifest.json"
 ports_sha=$(jq -er '.ports_sha | select(test("^[0-9a-f]{40}$"))' "$work/manifest.json")
+osversion=$(jq -er '.osversion | select(type == "number")' "$work/manifest.json")
 
 bundle_root=$work/bundle
 mkdir -p "$bundle_root/All"
@@ -88,6 +89,7 @@ python3 scripts/resolve_worker_tools.py verify \
   --manifest "$work/manifest.json" --directory "$bundle_root"
 jq -er '.install_order[]' "$work/manifest.json" >"$bundle_root/install-order"
 jq -er '.commands[]' "$work/manifest.json" >"$bundle_root/required-tools"
+jq -er '.osversion | select(type == "number")' "$work/manifest.json" >"$bundle_root/required-osversion"
 cp "$work/manifest.json" "$bundle_root/manifest.json"
 
 LC_ALL=C tar --sort=name --format=pax --mtime="$bundle_mtime" \
@@ -98,6 +100,7 @@ mv "$output_part" "$output"
 
 jq -n \
   --arg ports_sha "$ports_sha" \
-  '{schema_version:"freesense.worker-tools-pin/v1",ports_sha:$ports_sha}' \
+  --argjson osversion "$osversion" \
+  '{schema_version:"freesense.worker-tools-pin/v1",ports_sha:$ports_sha,osversion:$osversion}' \
   >"$report_part"
 mv "$report_part" "$report"
