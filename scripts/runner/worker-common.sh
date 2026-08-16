@@ -442,9 +442,11 @@ create_jail() {
   poudriere jail -c -j "FreeSense_main_${FREEBSD_TARGET_ARCH}" -a "${POUDRIERE_ARCH}" \
     ${poudriere_cross_args} -v 16.0-CURRENT -m tar=/root/jail-base.txz
   if [ "${FREEBSD_TARGET_ARCH}" = aarch64 ]; then
-    probe="/usr/local/poudriere/jails/FreeSense_main_${FREEBSD_TARGET_ARCH}/bin/echo"
+    jail_root="/usr/local/poudriere/jails/FreeSense_main_${FREEBSD_TARGET_ARCH}"
+    probe="${jail_root}/bin/echo"
     file "${probe}" | grep -q 'ARM aarch64' || { echo "aarch64 jail probe has wrong architecture" >&2; return 1; }
-    "${probe}" freesense-aarch64-probe | grep -qx freesense-aarch64-probe || {
+    qemu-aarch64-static -L "${jail_root}" "${probe}" freesense-aarch64-probe \
+      | grep -qx freesense-aarch64-probe || {
       echo "aarch64 target executable probe failed" >&2; return 1;
     }
   fi
