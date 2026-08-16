@@ -251,6 +251,10 @@ require("repos.manifest.json" not in iso_stage + assembly_common and
         "CHANNEL_PAYLOAD_B64" in assembly_common and "CHANNEL_SIGNATURE_B64" in assembly_common,
         "ISO does not consume the exact selected signed channel payload")
 planner_source = read("scripts/plan.py")
+kernel_patch = read("patches/0001-kernel-config.patch")
+require("diff --git a/sys/arm64/conf/pfSense" in kernel_patch and
+        "HIFN_RNDTEST" not in kernel_patch,
+        "ARM64 kernel configuration is missing or retains removed FreeBSD options")
 require('"packages": current_packages_fingerprint' in planner_source and
         '"packages_fingerprint": (' in planner_source and
         '"channel_payload": channel_payload_sha256' in planner_source,
