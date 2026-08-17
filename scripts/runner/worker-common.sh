@@ -229,6 +229,7 @@ install_poudriere_jexec_launcher() {
   mkdir -p "$(dirname "${launcher}")"
   cat >"${source}" <<'EOF'
 #include <sys/stat.h>
+#include <fcntl.h>
 
 #include <err.h>
 #include <unistd.h>
@@ -237,14 +238,23 @@ int
 main(int argc, char **argv)
 {
   struct stat sb;
-  int fd, maxfd;
+  int fd;
 
   if (argc < 2)
     errx(64, "command required");
-  maxfd = getdtablesize();
-  for (fd = 3; fd < maxfd; fd++)
-    if (fstat(fd, &sb) == 0 && S_ISDIR(sb.st_mode))
-      close(fd);
+  for (fd = 0; fd < 3; fd++) {
+    if (fstat(fd, &sb) == 0 && S_ISDIR(sb.st_mode)) {
+      int nullfd = open("/dev/null", O_RDWR);
+      if (nullfd >= 0) {
+        dup2(nullfd, fd);
+        if (nullfd > 2)
+          close(nullfd);
+      }
+    }
+  }
+  closefrom(3);
+  if (chdir("/") != 0)
+    err(72, "chdir /");
   execvp(argv[1], &argv[1]);
   err(71, "execvp %s", argv[1]);
 }

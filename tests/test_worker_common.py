@@ -106,7 +106,8 @@ class WorkerVersionValidationTests(unittest.TestCase):
             common.index("\nrun_poudriere_build() {")
         ]
         self.assertIn("fstat(fd, &sb) == 0 && S_ISDIR(sb.st_mode)", installer)
-        self.assertIn("for (fd = 3; fd < maxfd; fd++)", installer)
+        self.assertIn("closefrom(3)", installer)
+        self.assertIn('chdir("/")', installer)
         self.assertIn('execvp(argv[1], &argv[1])', installer)
         self.assertIn('cc -O2 -Wall -Wextra -o "${launcher}"', installer)
         install = configure.index("install_poudriere_jexec_launcher")
