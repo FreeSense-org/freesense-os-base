@@ -13,7 +13,7 @@ install_worker_tools() (
 
   phase tools-fetch
   cleanup_worker_tools
-  for attempt in $(seq 1 15); do
+  for attempt in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
     if fetch -qo "${worker_tools_archive}" \
       "${PUBLIC_BASE_URL}/inputs/sha256/${WORKER_TOOLS_SHA256}"; then
       break
