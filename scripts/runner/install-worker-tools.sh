@@ -34,22 +34,25 @@ install_worker_tools() (
   tar -xpf "${worker_tools_archive}" -C "${worker_tools}"
   test -s "${worker_tools}/install-order"
   test -s "${worker_tools}/required-tools"
-  test -s "${worker_tools}/required-osversion"
 
-  required_osversion=$(cat "${worker_tools}/required-osversion")
-  running_osversion=$(uname -U)
-  case "${required_osversion}:${running_osversion}" in
-    16[0-9][0-9][0-9][0-9][0-9]:16[0-9][0-9][0-9][0-9][0-9]) : ;;
-    *) echo "invalid worker-tool OSVERSION binding" >&2; exit 1 ;;
-  esac
-  if [ "${required_osversion}" -eq "${running_osversion}" ]; then
-    ignore_osversion=no
-  elif [ "${required_osversion}" -eq $((running_osversion + 1)) ]; then
-    ignore_osversion=yes
-    echo "Allowing one-revision worker bootstrap: ${running_osversion} -> ${required_osversion}"
+  if [ -s "${worker_tools}/required-osversion" ]; then
+    required_osversion=$(cat "${worker_tools}/required-osversion")
+    running_osversion=$(uname -U)
+    case "${required_osversion}:${running_osversion}" in
+      16[0-9][0-9][0-9][0-9][0-9]:16[0-9][0-9][0-9][0-9][0-9]) : ;;
+      *) echo "invalid worker-tool OSVERSION binding" >&2; exit 1 ;;
+    esac
+    if [ "${required_osversion}" -eq "${running_osversion}" ]; then
+      ignore_osversion=no
+    elif [ "${required_osversion}" -eq $((running_osversion + 1)) ]; then
+      ignore_osversion=yes
+      echo "Allowing one-revision worker bootstrap: ${running_osversion} -> ${required_osversion}"
+    else
+      echo "worker-tool OSVERSION ${required_osversion} is incompatible with userland ${running_osversion}" >&2
+      exit 1
+    fi
   else
-    echo "worker-tool OSVERSION ${required_osversion} is incompatible with userland ${running_osversion}" >&2
-    exit 1
+    ignore_osversion=no
   fi
 
   phase tools-install
