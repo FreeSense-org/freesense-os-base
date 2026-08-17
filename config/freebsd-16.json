@@ -55,10 +55,10 @@
   },
   "worker_image": {
     "url": "https://download.freebsd.org/snapshots/VM-IMAGES/16.0-CURRENT/amd64/Latest/FreeBSD-16.0-CURRENT-amd64-BASIC-CLOUDINIT-ufs.qcow2.xz",
-    "upstream_compressed_sha256": "7d21a4b6d02c1d7e6826a0054b880a8ca70fdea1768c212da7214c5fcf362034",
-    "object": "inputs/sha256/1622b144260a4e2c08ae6d853fe01572a0d36a493b5ac8ab66a1583625c7593e",
-    "sha256": "1622b144260a4e2c08ae6d853fe01572a0d36a493b5ac8ab66a1583625c7593e",
-    "size": 1044840448
+    "upstream_compressed_sha256": "936c9f15fc3c2b21fcbcc64c4ad3550913a535f5f79998d20272691ae20b0e1d",
+    "object": "inputs/sha256/8ffcac28fa2fce237ad7b0b506bb0401e1c590134aa63cc7cb1f135ec0ef5eb6",
+    "sha256": "8ffcac28fa2fce237ad7b0b506bb0401e1c590134aa63cc7cb1f135ec0ef5eb6",
+    "size": 1044316160
   },
   "worker_tools": {
     "object": "inputs/sha256/83ed2f26890af3e0304520565fae0154aeb6c5e811ca191b64040eb44e760297",
