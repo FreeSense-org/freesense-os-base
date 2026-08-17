@@ -93,7 +93,7 @@ class WorkerVersionValidationTests(unittest.TestCase):
             '    "${probe}" freesense-aarch64-probe', create_jail
         )
 
-    def test_arm64_poudriere_closes_only_directory_fds_before_jexec(self) -> None:
+    def test_poudriere_closes_only_directory_fds_before_jexec(self) -> None:
         common = (ROOT / "scripts/runner/worker-common.sh").read_text(
             encoding="utf-8"
         )
@@ -109,18 +109,12 @@ class WorkerVersionValidationTests(unittest.TestCase):
         self.assertIn("for (fd = 3; fd < maxfd; fd++)", installer)
         self.assertIn('execvp(argv[1], &argv[1])', installer)
         self.assertIn('cc -O2 -Wall -Wextra -o "${launcher}"', installer)
-        arm64_case = configure.index(
-            'if [ "${FREEBSD_TARGET_ARCH}" = aarch64 ]; then'
-        )
-        install = configure.index("install_poudriere_jexec_launcher", arm64_case)
+        install = configure.index("install_poudriere_jexec_launcher")
         prefix = configure.index(
             "JEXEC_SETSID=/usr/local/libexec/freesense-close-dir-fds",
             install,
         )
-        arm64_end = configure.index("\n  fi", prefix)
-        self.assertLess(arm64_case, install)
         self.assertLess(install, prefix)
-        self.assertLess(prefix, arm64_end)
         self.assertNotIn("mv /usr/sbin/jexec", common)
 
     def test_cloud_assembly_uses_fingerprint_repository_trust(self) -> None:
