@@ -284,15 +284,13 @@ PKG_REPRODUCIBLE=yes
 PRESERVE_TIMESTAMP=yes
 BUILDER_HOSTNAME=freesense-builder
 EOF
-  if [ "${FREEBSD_TARGET_ARCH}" = aarch64 ]; then
-    # FreeBSD 16 jail_attach() rejects callers that inherited directory file
-    # descriptors. Poudriere's metadata queue keeps those descriptors open, so
-    # use its command-prefix hook to close only directory descriptors in the
-    # disposable jexec child. Pipes and regular files remain available.
-    install_poudriere_jexec_launcher
-    printf '%s\n' \
-      'JEXEC_SETSID=/usr/local/libexec/freesense-close-dir-fds' >>"${temporary}"
-  fi
+  # FreeBSD 16 jail_attach() rejects callers that inherited directory file
+  # descriptors. Poudriere's metadata queue keeps those descriptors open, so
+  # use its command-prefix hook to close only directory descriptors in the
+  # disposable jexec child on all architectures. Pipes and regular files remain available.
+  install_poudriere_jexec_launcher
+  printf '%s\n' \
+    'JEXEC_SETSID=/usr/local/libexec/freesense-close-dir-fds' >>"${temporary}"
   chmod 644 "${temporary}"
   mv -f "${temporary}" "${config}"
 }
