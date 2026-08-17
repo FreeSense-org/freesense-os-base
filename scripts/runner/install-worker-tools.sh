@@ -13,8 +13,13 @@ install_worker_tools() (
 
   phase tools-fetch
   cleanup_worker_tools
-  fetch -qo "${worker_tools_archive}" \
-    "${PUBLIC_BASE_URL}/inputs/sha256/${WORKER_TOOLS_SHA256}"
+  for attempt in $(seq 1 15); do
+    if fetch -qo "${worker_tools_archive}" \
+      "${PUBLIC_BASE_URL}/inputs/sha256/${WORKER_TOOLS_SHA256}"; then
+      break
+    fi
+    sleep 2
+  done
   test "$(sha256 -q "${worker_tools_archive}")" = "${WORKER_TOOLS_SHA256}"
   mkdir -p "${worker_tools}"
   tar -xpf "${worker_tools_archive}" -C "${worker_tools}"
