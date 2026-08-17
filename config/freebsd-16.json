@@ -1,10 +1,12 @@
 {
   "schema_version": "freesense.freebsd-pin/v3",
-  "valid_from": "2026-08-16T10:58:41Z",
-  "valid_until": "2026-08-30T10:58:41Z",
+  "valid_from": "2026-08-05T06:00:00Z",
+  "valid_until": "2026-08-19T06:00:00Z",
   "freebsd_source": {
-    "commit": "81d5356799a1db1701cb3f91146131c34dede413",
-    "osversion": 1600020
+    "commit": "e004ff15f87e6aa8f2aa13cd5600ae13457b95f1",
+    "revision_prefix": "e004ff15f87e",
+    "build_date": "20260804",
+    "osversion": 1600019
   },
   "bootstrap_snapshot": {
     "commit": "e9a4d3969a3164d41d41480bacd3520fcf05ccbf",
@@ -13,25 +15,20 @@
     "osversion": 1600019
   },
   "freebsd_ports": {
-    "commit": "c7c8dab6ae323568bab55907b11c2cef4f885055"
+    "commit": "ca7ba106939a488129189fd13657b9e5f9d535d1"
   },
   "targets": {
     "amd64": {
       "ready": true,
       "jail_seed": {
         "url": "https://download.freebsd.org/snapshots/amd64/16.0-CURRENT/base.txz",
-        "osversion": 1600019,
-        "upstream_sha256": "3b818b2592cd52eeee044183f04a66dfaed9549dc45441743d43b81708044dec",
-        "object": "inputs/sha256/3b818b2592cd52eeee044183f04a66dfaed9549dc45441743d43b81708044dec",
-        "sha256": "3b818b2592cd52eeee044183f04a66dfaed9549dc45441743d43b81708044dec",
-        "size": 174440556
+        "upstream_sha256": "83ecbde1b91e5917d0c368a6abbe5ea6bb89e9cd42ef00454763cfda467cfa34",
+        "object": "inputs/sha256/83ecbde1b91e5917d0c368a6abbe5ea6bb89e9cd42ef00454763cfda467cfa34",
+        "sha256": "83ecbde1b91e5917d0c368a6abbe5ea6bb89e9cd42ef00454763cfda467cfa34",
+        "size": 174377760
       },
       "package_catalog": {
-        "url": "https://pkg.freebsd.org/FreeBSD:16:amd64/latest/packagesite.pkg",
-        "osversion": 1600020,
-        "object": "inputs/sha256/b12b22fc820939985d4d17cea77cd7c5413b4f569f9c2db3c4a41f137dd87803",
-        "sha256": "b12b22fc820939985d4d17cea77cd7c5413b4f569f9c2db3c4a41f137dd87803",
-        "size": 9557313
+        "url": "https://pkg.freebsd.org/FreeBSD:16:amd64/latest/packagesite.pkg"
       }
     },
     "arm64": {
@@ -61,8 +58,8 @@
     "size": 1044316160
   },
   "worker_tools": {
-    "object": "inputs/sha256/83ed2f26890af3e0304520565fae0154aeb6c5e811ca191b64040eb44e760297",
-    "sha256": "83ed2f26890af3e0304520565fae0154aeb6c5e811ca191b64040eb44e760297",
-    "size": 45957120
+    "object": "inputs/sha256/ce815c64287858216fe9957065cae932bdec6a1d253e322f6eb320733a454ffe",
+    "sha256": "ce815c64287858216fe9957065cae932bdec6a1d253e322f6eb320733a454ffe",
+    "size": 37847040
   }
 }
