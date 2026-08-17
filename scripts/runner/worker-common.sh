@@ -223,47 +223,6 @@ EOF
   phase source-ready
 }
 
-install_poudriere_jexec_launcher() {
-  launcher=/usr/local/libexec/freesense-close-dir-fds
-  source=/tmp/freesense-close-dir-fds.c
-  mkdir -p "$(dirname "${launcher}")"
-  cat >"${source}" <<'EOF'
-#include <sys/stat.h>
-#include <fcntl.h>
-
-#include <err.h>
-#include <unistd.h>
-
-int
-main(int argc, char **argv)
-{
-  struct stat sb;
-  int fd;
-
-  if (argc < 2)
-    errx(64, "command required");
-  for (fd = 0; fd < 3; fd++) {
-    if (fstat(fd, &sb) == 0 && S_ISDIR(sb.st_mode)) {
-      int nullfd = open("/dev/null", O_RDWR);
-      if (nullfd >= 0) {
-        dup2(nullfd, fd);
-        if (nullfd > 2)
-          close(nullfd);
-      }
-    }
-  }
-  closefrom(3);
-  if (chdir("/") != 0)
-    err(72, "chdir /");
-  execvp(argv[1], &argv[1]);
-  err(71, "execvp %s", argv[1]);
-}
-EOF
-  cc -O2 -Wall -Wextra -o "${launcher}" "${source}"
-  chmod 755 "${launcher}"
-  rm -f "${source}"
-}
-
 configure_poudriere() {
   config=/usr/local/etc/poudriere.conf
   mkdir -p "$(dirname "${config}")"
@@ -294,13 +253,6 @@ PKG_REPRODUCIBLE=yes
 PRESERVE_TIMESTAMP=yes
 BUILDER_HOSTNAME=freesense-builder
 EOF
-  # FreeBSD 16 jail_attach() rejects callers that inherited directory file
-  # descriptors. Poudriere's metadata queue keeps those descriptors open, so
-  # use its command-prefix hook to close only directory descriptors in the
-  # disposable jexec child on all architectures. Pipes and regular files remain available.
-  install_poudriere_jexec_launcher
-  printf '%s\n' \
-    'JEXEC_SETSID=/usr/local/libexec/freesense-close-dir-fds' >>"${temporary}"
   chmod 644 "${temporary}"
   mv -f "${temporary}" "${config}"
 }
