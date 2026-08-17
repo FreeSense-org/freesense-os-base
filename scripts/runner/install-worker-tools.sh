@@ -13,14 +13,23 @@ install_worker_tools() (
 
   phase tools-fetch
   cleanup_worker_tools
+  download_ok=false
   for attempt in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
-    if fetch -qo "${worker_tools_archive}" \
+    rm -f "${worker_tools_archive}"
+    if fetch -o "${worker_tools_archive}" \
       "${PUBLIC_BASE_URL}/inputs/sha256/${WORKER_TOOLS_SHA256}"; then
-      break
+      if [ -s "${worker_tools_archive}" ] && [ "$(sha256 -q "${worker_tools_archive}")" = "${WORKER_TOOLS_SHA256}" ]; then
+        download_ok=true
+        break
+      fi
     fi
+    echo "worker tools fetch attempt ${attempt} failed, retrying..." >&2
     sleep 2
   done
-  test "$(sha256 -q "${worker_tools_archive}")" = "${WORKER_TOOLS_SHA256}"
+  [ "${download_ok}" = true ] || {
+    echo "failed to download worker tools from ${PUBLIC_BASE_URL}/inputs/sha256/${WORKER_TOOLS_SHA256}" >&2
+    exit 1
+  }
   mkdir -p "${worker_tools}"
   tar -xpf "${worker_tools_archive}" -C "${worker_tools}"
   test -s "${worker_tools}/install-order"
