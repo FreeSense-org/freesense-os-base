@@ -245,6 +245,7 @@ def main() -> int:
         # while the immutable marker records the System used for the build.
         expected_system = values["built_against_system"]
         required_sha["packages"] = inputs.get("packages", "")
+    pin_id = inputs.get("freebsd_pin_id") or artifact_pin_id
     if (
         inputs.get("system") != expected_system
         or (args.component == "packages"
@@ -252,8 +253,8 @@ def main() -> int:
         or any(not SHA.fullmatch(value) for value in required_sha.values())
         or any(not SHA256.fullmatch(value) for value in required_sha256.values())
         or not re.fullmatch(r"inputs/sha256/[0-9a-f]{64}", inputs.get("jail_object", ""))
-        or inputs.get("freebsd_pin_id", artifact_pin_id) != artifact_pin_id
-        or (declared_pin_id and declared_pin_id != artifact_pin_id)
+        or not SHA256.fullmatch(pin_id)
+        or (declared_pin_id and declared_pin_id != pin_id)
     ):
         raise SystemExit(
             f"selected {args.component} completion marker conflicts with its channel entry"
@@ -271,7 +272,7 @@ def main() -> int:
             "artifact_worker_tools_sha256": required_sha256["worker_tools"],
             "artifact_jail_object": inputs["jail_object"],
             "artifact_signing_public_key_sha256": required_sha256["signing_public_key"],
-            "artifact_freebsd_pin_id": artifact_pin_id,
+            "artifact_freebsd_pin_id": pin_id,
         })
         if isinstance(selected_packages, dict):
             packages_marker_url = selected_packages["url"].removesuffix("/" + package_arch) + "/complete.json"
@@ -282,6 +283,7 @@ def main() -> int:
                 raise SystemExit("selected packages completion marker is invalid") from error
             packages_source = packages_inputs.get("packages", "")
             packages_built_against = values["packages_built_against_system"]
+            packages_pin_id = packages_inputs.get("freebsd_pin_id") or pin_id
             if (
                 not isinstance(packages_marker, dict)
                 or not isinstance(packages_inputs, dict)
@@ -293,12 +295,12 @@ def main() -> int:
                 or packages_inputs.get("system") != packages_built_against
                 or packages_inputs.get("built_against_system", packages_inputs.get("system"))
                     != packages_built_against
-                or packages_inputs.get("freebsd_pin_id", artifact_pin_id) != artifact_pin_id
+                or packages_pin_id != pin_id
                 or not SHA.fullmatch(packages_source)
             ):
                 raise SystemExit("selected packages completion marker conflicts with its channel entry")
             values["artifact_packages_sha"] = packages_source
-    values["freebsd_pin_id"] = artifact_pin_id
+    values["freebsd_pin_id"] = pin_id
     if not args.json_output and not args.github_output:
         print(json.dumps(values, indent=2, sort_keys=True))
     if args.json_output:
