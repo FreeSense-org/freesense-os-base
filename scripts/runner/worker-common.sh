@@ -529,9 +529,15 @@ verify_repository() (
     -signature "${work}/packagesite.yaml.sig" >/dev/null
 
   strict_arch=${PACKAGE_ARCH:+yes}
-  jq -Rr --arg expected_arch "FreeBSD:16:${PACKAGE_ARCH:-amd64}" --arg strict_arch "${strict_arch}" '
+  jq -Rr \
+    --arg expected_abi "${ABI:-FreeBSD:16:amd64}" \
+    --arg expected_altabi "${ALTABI:-freebsd:16:x86:64}" \
+    --arg expected_arch "FreeBSD:16:${PACKAGE_ARCH:-amd64}" \
+    --arg strict_arch "${strict_arch}" '
     select(length > 0) | fromjson |
-    if ((.arch == $expected_arch or ($strict_arch == "" and (.arch == null))) and
+    if ((.arch == $expected_abi or .arch == $expected_altabi or .arch == $expected_arch or
+         .arch == "freebsd:16:*" or .arch == "FreeBSD:16:*" or .arch == "*:*" or
+         ($strict_arch == "" and (.arch == null))) and
         (.repopath | type) == "string" and
         (.repopath | test("^All/[^/]+[.]pkg$")) and
         ((.repopath | test("[\\t\\r\\n]")) | not) and
