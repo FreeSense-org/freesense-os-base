@@ -59,6 +59,18 @@ export REPO_KIND=system OVERLAY_DIR=/root/freesense-system-ports
 phase system-ports-tree
 ./build.sh --update-poudriere-ports
 cp tools/conf/pfPorts/poudriere_system tools/conf/pfPorts/poudriere_bulk
+if [ "${PACKAGE_ARCH}" = aarch64 ]; then
+  for excluded in \
+    sysutils/xe-guest-utilities \
+    dns/coredns \
+    net/speedtest-go \
+    net/cloud-init \
+    sysutils/%%PRODUCT_NAME%%-cloud-init; do
+    awk -v excluded="${excluded}" '$0 != excluded' tools/conf/pfPorts/poudriere_bulk \
+      >tools/conf/pfPorts/poudriere_bulk.next
+    mv tools/conf/pfPorts/poudriere_bulk.next tools/conf/pfPorts/poudriere_bulk
+  done
+fi
 create_source_archive
 phase system-packages-build
 run_poudriere_build env NOLINUX=yes ./build.sh --update-pkg-repo
