@@ -132,6 +132,8 @@ jobs:
       target: ${{ needs.plan.outputs.target }}
       architecture: ${{ needs.plan.outputs.architecture }}
       package_arch: ${{ needs.plan.outputs.package_arch }}
+      abi: ${{ needs.plan.outputs.abi }}
+      altabi: ${{ needs.plan.outputs.altabi }}
       freebsd_target: ${{ needs.plan.outputs.freebsd_target }}
       freebsd_target_arch: ${{ needs.plan.outputs.freebsd_target_arch }}
       poudriere_arch: ${{ needs.plan.outputs.poudriere_arch }}
