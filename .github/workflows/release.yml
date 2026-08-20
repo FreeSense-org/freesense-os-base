@@ -227,6 +227,8 @@ jobs:
       target: ${{ steps.plan.outputs.target }}
       architecture: ${{ steps.plan.outputs.architecture }}
       package_arch: ${{ steps.plan.outputs.package_arch }}
+      abi: ${{ steps.plan.outputs.abi }}
+      altabi: ${{ steps.plan.outputs.altabi }}
       freebsd_target: ${{ steps.plan.outputs.freebsd_target }}
       freebsd_target_arch: ${{ steps.plan.outputs.freebsd_target_arch }}
       poudriere_arch: ${{ steps.plan.outputs.poudriere_arch }}
@@ -344,6 +346,8 @@ jobs:
       target: ${{ needs.iso-plan.outputs.target }}
       architecture: ${{ needs.iso-plan.outputs.architecture }}
       package_arch: ${{ needs.iso-plan.outputs.package_arch }}
+      abi: ${{ needs.iso-plan.outputs.abi }}
+      altabi: ${{ needs.iso-plan.outputs.altabi }}
       freebsd_target: ${{ needs.iso-plan.outputs.freebsd_target }}
       freebsd_target_arch: ${{ needs.iso-plan.outputs.freebsd_target_arch }}
       poudriere_arch: ${{ needs.iso-plan.outputs.poudriere_arch }}
@@ -389,6 +393,8 @@ jobs:
       target: ${{ needs.iso-plan.outputs.target }}
       architecture: ${{ needs.iso-plan.outputs.architecture }}
       package_arch: ${{ needs.iso-plan.outputs.package_arch }}
+      abi: ${{ needs.iso-plan.outputs.abi }}
+      altabi: ${{ needs.iso-plan.outputs.altabi }}
       freebsd_target: ${{ needs.iso-plan.outputs.freebsd_target }}
       freebsd_target_arch: ${{ needs.iso-plan.outputs.freebsd_target_arch }}
       poudriere_arch: ${{ needs.iso-plan.outputs.poudriere_arch }}
@@ -436,6 +442,8 @@ jobs:
       target: ${{ needs.iso-plan.outputs.target }}
       architecture: ${{ needs.iso-plan.outputs.architecture }}
       package_arch: ${{ needs.iso-plan.outputs.package_arch }}
+      abi: ${{ needs.iso-plan.outputs.abi }}
+      altabi: ${{ needs.iso-plan.outputs.altabi }}
       freebsd_target: ${{ needs.iso-plan.outputs.freebsd_target }}
       freebsd_target_arch: ${{ needs.iso-plan.outputs.freebsd_target_arch }}
       poudriere_arch: ${{ needs.iso-plan.outputs.poudriere_arch }}

@@ -33,6 +33,8 @@ on:
       target: {type: string, required: false, default: amd64}
       architecture: {type: string, required: false, default: amd64}
       package_arch: {type: string, required: false, default: amd64}
+      abi: {type: string, required: false, default: 'FreeBSD:16:amd64'}
+      altabi: {type: string, required: false, default: 'freebsd:16:x86:64'}
       freebsd_target: {type: string, required: false, default: amd64}
       freebsd_target_arch: {type: string, required: false, default: amd64}
       poudriere_arch: {type: string, required: false, default: amd64.amd64}
@@ -93,6 +95,8 @@ jobs:
       TARGET: ${{ inputs.target }}
       ARCHITECTURE: ${{ inputs.architecture }}
       PACKAGE_ARCH: ${{ inputs.package_arch }}
+      ABI: ${{ inputs.abi }}
+      ALTABI: ${{ inputs.altabi }}
       FREEBSD_TARGET: ${{ inputs.freebsd_target }}
       FREEBSD_TARGET_ARCH: ${{ inputs.freebsd_target_arch }}
       POUDRIERE_ARCH: ${{ inputs.poudriere_arch }}
