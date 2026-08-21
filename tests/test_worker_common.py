@@ -208,7 +208,7 @@ class WorkerVersionValidationTests(unittest.TestCase):
             smoke,
         )
         self.assertIn("diagnose_ssh_timeout()", smoke)
-        self.assertIn("forwarded TCP/22 is reachable", smoke)
+        self.assertIn("forwarded TCP/${port} is reachable", smoke)
         self.assertIn("verbose public-key attempt for ${user}", smoke)
         self.assertIn("for user in admin root", smoke)
         self.assertIn("IdentitiesOnly=yes", smoke)

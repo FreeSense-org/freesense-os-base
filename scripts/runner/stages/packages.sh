@@ -15,7 +15,7 @@ jq -e --arg arch "${PACKAGE_ARCH}" '
   all(.architectures[$arch].exclude[];
     (.origin | type) == "string" and
     (.reason | type) == "string" and (.reason | length) >= 20 and
-    (.issue | type) == "string" and startswith("https://") and
+    ((.issue | type) == "string" and (.issue | startswith("https://"))) and
     (.review_date | type) == "string")
 ' "${policy}" >/dev/null || { echo "invalid optional-package architecture policy" >&2; exit 1; }
 jq -r --arg arch "${PACKAGE_ARCH}" '.architectures[$arch].exclude[].origin' \
