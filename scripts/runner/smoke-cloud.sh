@@ -414,12 +414,12 @@ diagnose_guest_ssh() {
 }
 
 diagnose_ssh_timeout() {
-  local log=$1 user
-  echo "cloud smoke SSH readiness timed out" >&2
-  if timeout 3 bash -c '</dev/tcp/127.0.0.1/10022' 2>/dev/null; then
-    echo "cloud smoke diagnostic: forwarded TCP/22 is reachable" >&2
+  local log=$1 port=${2:-10022} user
+  echo "cloud smoke SSH readiness timed out on port ${port}" >&2
+  if timeout 3 bash -c "</dev/tcp/127.0.0.1/${port}" 2>/dev/null; then
+    echo "cloud smoke diagnostic: forwarded TCP/${port} is reachable" >&2
   else
-    echo "cloud smoke diagnostic: forwarded TCP/22 is unreachable" >&2
+    echo "cloud smoke diagnostic: forwarded TCP/${port} is unreachable" >&2
   fi
   diagnose_guest_ssh
   for user in admin root; do
@@ -427,7 +427,7 @@ diagnose_ssh_timeout() {
     timeout 15 ssh -vvv \
       -o BatchMode=yes -o IdentitiesOnly=yes \
       -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-      -o ConnectTimeout=5 -i "${work}/id" -p 10022 \
+      -o ConnectTimeout=5 -i "${work}/id" -p "$port" \
       "${user}@127.0.0.1" true </dev/null >&2 || true
   done
   cat "$log" >&2
@@ -581,7 +581,7 @@ prepare_qga "${work}/qga-two.sock"
   -serial "file:${work}/uefi-two.log" -monitor none &
 qemu_pid=$!
 for _ in {1..120}; do
-  if ssh -q -o BatchMode=yes -o StrictHostKeyChecking=no \
+  if ssh -q -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=no \
     -o UserKnownHostsFile=/dev/null -o ConnectTimeout=2 \
     -i "${work}/id" -p 10023 admin@127.0.0.1 \
     'grep -q "<wan>" /conf/config.xml &&
@@ -594,7 +594,7 @@ for _ in {1..120}; do
   sleep 5
 done
 [[ "${two_nic_ready:-false}" == true ]] || {
-  cat "${work}/uefi-two.log" >&2
+  diagnose_ssh_timeout "${work}/uefi-two.log" 10023
   exit 1
 }
 shutdown_guest 10023 "two-NIC UEFI boot"
