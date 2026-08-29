@@ -118,9 +118,10 @@ jobs:
             "${RUNNER_TEMP}/param.bootstrap.h")
           [[ "${bootstrap_osversion}" =~ ^16[0-9]{5}$ ]]
 
-          # CURRENT package catalogs may advance one OSVERSION before the next
-          # weekly VM/base snapshot. Pin the exact newer source while retaining
-          # the official weekly artifacts as an explicitly recorded bootstrap.
+          # CURRENT package catalogs may advance ahead of the weekly VM/base
+          # snapshot.  Keep this tolerance deliberately narrow while allowing
+          # the current two-revision publication lag for the ARM64 catalog.
+          max_bootstrap_osversion_delta=2
           freebsd_sha=$(gh api "repos/freebsd/freebsd-src/commits/main" --jq .sha)
           [[ "${freebsd_sha}" =~ ^[0-9a-f]{40}$ ]]
           curl "${retry[@]}" -o "${RUNNER_TEMP}/param.source.h" \
@@ -128,7 +129,7 @@ jobs:
           osversion=$(awk '/^#[[:space:]]*define[[:space:]]+__FreeBSD_version[[:space:]]+/ {print $3}' \
             "${RUNNER_TEMP}/param.source.h")
           [[ "${osversion}" =~ ^16[0-9]{5}$ ]]
-          (( osversion >= bootstrap_osversion && osversion - bootstrap_osversion <= 1 ))
+          (( osversion >= bootstrap_osversion && osversion - bootstrap_osversion <= max_bootstrap_osversion_delta ))
           packagesite_url=https://pkg.freebsd.org/FreeBSD:16:amd64/latest/packagesite.pkg
           curl "${retry[@]}" -o "${RUNNER_TEMP}/packagesite.pkg" "${packagesite_url}"
           arm_packagesite_url=https://pkg.freebsd.org/FreeBSD:16:aarch64/latest/packagesite.pkg
@@ -152,7 +153,7 @@ jobs:
               arm_catalog_osversion=${arm_catalog_osversions[0]}
               if (( arm_catalog_osversion < bootstrap_osversion ||
                     arm_catalog_osversion > osversion ||
-                    osversion - arm_catalog_osversion > 1 )); then
+                    osversion - arm_catalog_osversion > max_bootstrap_osversion_delta )); then
                 echo "aarch64 catalog OSVERSION is outside the bounded bootstrap window" >&2
                 arm_ready=false
               fi

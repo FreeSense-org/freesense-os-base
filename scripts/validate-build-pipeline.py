@@ -389,6 +389,7 @@ for value in ("scripts/resolve_worker_tools.py", "packagesite.yaml.sig",
 require("bootstrap_snapshot" in pin_contract and "bootstrap_osversion" in pin_contract,
         "Pin FreeBSD does not record its bounded bootstrap snapshot")
 require("arm_catalog_osversion" in pin_contract and
+        "max_bootstrap_osversion_delta=2" in pin_contract and
         "aarch64 catalog OSVERSION is outside the bounded bootstrap window" in pin_contract,
         "Pin FreeBSD does not validate the target catalog bootstrap window")
 
