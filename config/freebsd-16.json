@@ -13,7 +13,7 @@
     "osversion": 1600020
   },
   "freebsd_ports": {
-    "commit": "e66ef70ebb366492b0a7a5790a91624bfcf31346"
+    "commit": "95b5f9bb60f4e14153ecff84d9dfe60f6c7ff936"
   },
   "targets": {
     "amd64": {
