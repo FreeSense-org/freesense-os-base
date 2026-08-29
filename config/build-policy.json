@@ -40,7 +40,7 @@
       "kernel": "FreeSense",
       "executor": "amd64-cross-qemu-user",
       "build_enabled": true,
-      "publish_enabled": false
+      "publish_enabled": true
     }
   },
   "image_profiles": {

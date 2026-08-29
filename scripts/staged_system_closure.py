@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
 """Convert a verified immutable System marker into a planner closure.
 
-This is used only for build-enabled/publish-disabled targets.  It lets the
-optional-package stage consume an exact System result without creating a
-public signed channel document prematurely.
+This lets the optional-package and image stages consume an exact System result
+before its architecture-qualified channel document is published.
 """
 
 from __future__ import annotations
@@ -40,8 +39,6 @@ def main() -> int:
     profile = image_profile(policy, None, args.target)
     pin = json.loads((ROOT / "config/freebsd-16.json").read_text(encoding="utf-8"))
     selected_pin = pin_target(pin, args.target)
-    if target["publish_enabled"]:
-        fail("staged System closures are only valid for publish-disabled targets")
     try:
         marker = json.loads(args.marker.read_text(encoding="utf-8"))
     except (OSError, ValueError) as error:
