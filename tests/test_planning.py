@@ -283,7 +283,7 @@ class PlannerChannelTests(unittest.TestCase):
                 1600020,
             )
 
-    def test_target_catalog_may_match_source_or_one_revision_bootstrap(self):
+    def test_target_catalog_may_lag_bootstrap_once_or_match_source(self):
         source_catalog = {
             "jail_seed": {"osversion": 1600019},
             "package_catalog": {"osversion": 1600020},
@@ -292,12 +292,17 @@ class PlannerChannelTests(unittest.TestCase):
             "jail_seed": {"osversion": 1600019},
             "package_catalog": {"osversion": 1600019},
         }
+        lagging_catalog = {
+            "jail_seed": {"osversion": 1600019},
+            "package_catalog": {"osversion": 1600018},
+        }
         plan.validate_target_bootstrap(source_catalog, 1600019, 1600020)
         plan.validate_target_bootstrap(bootstrap_catalog, 1600019, 1600020)
+        plan.validate_target_bootstrap(lagging_catalog, 1600019, 1600020)
         with self.assertRaisesRegex(SystemExit, "bounded bootstrap window"):
             plan.validate_target_bootstrap(
                 {"jail_seed": {"osversion": 1600019},
-                 "package_catalog": {"osversion": 1600018}},
+                 "package_catalog": {"osversion": 1600017}},
                 1600019,
                 1600020,
             )

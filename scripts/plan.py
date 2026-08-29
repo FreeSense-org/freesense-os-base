@@ -141,9 +141,12 @@ def validate_target_bootstrap(
         or not isinstance(jail_osversion, int)
         or not isinstance(catalog_osversion, int)
         or jail_osversion != bootstrap_osversion
-        or catalog_osversion < bootstrap_osversion
+        # A package compiled for the immediately preceding CURRENT revision
+        # remains compatible with the newer weekly userland.  This allows the
+        # independently-published ARM64 catalog to lag the base snapshot once.
+        or catalog_osversion < bootstrap_osversion - 1
         or catalog_osversion > pinned_osversion
-        or pinned_osversion - catalog_osversion > 1
+        or pinned_osversion - catalog_osversion > 2
     ):
         raise SystemExit("FreeBSD target inputs are outside the bounded bootstrap window")
 
