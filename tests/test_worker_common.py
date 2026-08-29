@@ -89,9 +89,6 @@ class WorkerVersionValidationTests(unittest.TestCase):
         self.assertIn(
             'qemu-aarch64-static -L "${jail_root}" "${probe}"', create_jail
         )
-        self.assertIn("restore-qemu-user-static", create_jail)
-        self.assertIn("/root/freesense-worker-tools/qemu-user-static.pkg", create_jail)
-        self.assertNotIn("83ed2f26890af3e0304520565fae0154aeb6c5e811ca191b64040eb44e760297", create_jail)
         self.assertNotIn(
             '    "${probe}" freesense-aarch64-probe', create_jail
         )

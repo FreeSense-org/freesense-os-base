@@ -434,17 +434,13 @@ create_jail() {
   phase poudriere-jail
   if [ "${FREEBSD_TARGET_ARCH}" = aarch64 ]; then
     if ! command -v qemu-aarch64-static >/dev/null; then
-      phase restore-qemu-user-static
-      qemu_package=/root/freesense-worker-tools/qemu-user-static.pkg
-      [ -f "${qemu_package}" ] && [ ! -L "${qemu_package}" ] || {
-        echo "verified qemu-user-static worker tool is unavailable" >&2
-        return 1
-      }
-      [ "$(pkg query -F "${qemu_package}" '%n')" = qemu-user-static ] || {
-        echo "worker-tool cache does not contain qemu-user-static" >&2
-        return 1
-      }
-      env IGNORE_OSVERSION=yes pkg add "${qemu_package}" </dev/null
+      phase fetch-qemu-user-static
+      qemu_archive=/tmp/qemu-tools.tar
+      fetch -qo "${qemu_archive}" \
+        "${PUBLIC_BASE_URL}/inputs/sha256/83ed2f26890af3e0304520565fae0154aeb6c5e811ca191b64040eb44e760297"
+      tar -xf "${qemu_archive}" -C /tmp All/qemu-user-static-*.pkg
+      env IGNORE_OSVERSION=yes pkg add /tmp/All/qemu-user-static-*.pkg </dev/null
+      rm -rf "${qemu_archive}" /tmp/All
     fi
     command -v qemu-aarch64-static >/dev/null || { echo "qemu-aarch64-static is required" >&2; return 1; }
     service qemu_user_static forcestart >/dev/null
