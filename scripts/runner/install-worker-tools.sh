@@ -83,6 +83,17 @@ install_worker_tools() (
       env ASSUME_ALWAYS_YES=no DEFAULT_ALWAYS_YES=no IGNORE_OSVERSION="${ignore_osversion}" \
         pkg add "${worker_tools}/${package}" </dev/null
     fi
+
+    # Some source-build paths may replace the host's qemu-user-static package
+    # before Poudriere creates the ARM jail.  Keep the exact already-verified
+    # package from this content-addressed worker-tools bundle for that recovery
+    # path; never fall back to an independently pinned blob.
+    if [ "${package_name}" = qemu-user-static ]; then
+      qemu_cache=/root/freesense-worker-tools
+      mkdir -p "${qemu_cache}"
+      install -m 0644 "${worker_tools}/${package}" \
+        "${qemu_cache}/qemu-user-static.pkg"
+    fi
   done <"${worker_tools}/install-order"
   dependency_issues=$(pkg check -d -n -q -a 2>&1) || {
     status=$?
@@ -103,5 +114,6 @@ install_worker_tools() (
       exit 1
     }
   done <"${worker_tools}/required-tools"
+  test -s /root/freesense-worker-tools/qemu-user-static.pkg
   phase tools-ready
 )
