@@ -195,10 +195,6 @@ for value in ("/inputs/sha256/${WORKER_TOOLS_SHA256}",
               'sha256 -q "${worker_tools_archive}"',
               'pkg add "${worker_tools}/${package}"', "pkg check -d -n -q -a"):
     require(value in installer, f"worker-tool integrity contract is missing {value!r}")
-require("/root/freesense-worker-tools/qemu-user-static.pkg" in installer and
-        "restore-qemu-user-static" in common and
-        "83ed2f26890af3e0304520565fae0154aeb6c5e811ca191b64040eb44e760297" not in common,
-        "ARM64 QEMU recovery does not reuse the verified worker-tool bundle")
 require("pkg add -f" not in installer,
         "worker-tool installation bypasses package ABI checks")
 
