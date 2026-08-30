@@ -158,7 +158,7 @@ jobs:
             --github-output "${output}"
           grep -qx 'complete=true' "${output}"
       - name: Render checked FreeBSD worker
-        if: steps.reuse.outputs.complete != 'true'
+        if: steps.reuse.outputs.complete != 'true' && steps.reuse.outputs.assembled != 'true'
         env:
           FREESENSE_REPO_SIGNING_KEY: ${{ secrets.FREESENSE_PKG_SIGNING_KEY }}
         run: |
@@ -166,7 +166,7 @@ jobs:
             --stages scripts/runner/stages --output "${RUNNER_TEMP}/worker.sh"
           sh -n "${RUNNER_TEMP}/worker.sh"
       - name: Build in a fresh 12-vCPU, 32-GiB FreeBSD VM
-        if: steps.reuse.outputs.complete != 'true'
+        if: steps.reuse.outputs.complete != 'true' && steps.reuse.outputs.assembled != 'true'
         env:
           FSBUILD: ${{ runner.temp }}/fsbuild
         run: >-

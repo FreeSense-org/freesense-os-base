@@ -370,14 +370,8 @@ func commandResult(ctx context.Context, args []string) error {
 		}
 		key = fmt.Sprintf("artifacts/packages/%s/%s/complete.json", *packageTrain, *id)
 	}
-	object, err := store.GetArtifact(ctx, backend, key)
-	complete := false
-	if errors.Is(err, store.ErrNotFound) {
-		complete = false
-	} else if err != nil {
-		return err
-	} else {
-		marker, validateErr := validateResultMarker(*stage, *id, *systemID, *packagesID, *platformID, *freeBSDPinID, *filesystem, *architecture, *packageArch, *imageProfile, *virtualSizeGiB, *generation, object.Data)
+	verify := func(data []byte) error {
+		marker, validateErr := validateResultMarker(*stage, *id, *systemID, *packagesID, *platformID, *freeBSDPinID, *filesystem, *architecture, *packageArch, *imageProfile, *virtualSizeGiB, *generation, data)
 		if validateErr != nil {
 			return validateErr
 		}
@@ -405,7 +399,32 @@ func commandResult(ctx context.Context, args []string) error {
 				}
 			}
 		}
+		return nil
+	}
+	object, err := store.GetArtifact(ctx, backend, key)
+	complete := false
+	assembled := false
+	if errors.Is(err, store.ErrNotFound) {
+		if *stage == "iso" || *stage == "cloud" {
+			assembledKey := fmt.Sprintf("artifacts/%s/%s/assembled.json", *stage, *id)
+			assembledObject, assembledErr := store.GetArtifact(ctx, backend, assembledKey)
+			if assembledErr == nil {
+				if err := verify(assembledObject.Data); err != nil {
+					return err
+				}
+				assembled = true
+			} else if !errors.Is(assembledErr, store.ErrNotFound) {
+				return assembledErr
+			}
+		}
+	} else if err != nil {
+		return err
+	} else {
+		if err := verify(object.Data); err != nil {
+			return err
+		}
 		complete = true
+		assembled = *stage == "iso" || *stage == "cloud"
 	}
 	if *githubOutput == "" {
 		return errors.New("--github-output is required")
@@ -415,7 +434,7 @@ func commandResult(ctx context.Context, args []string) error {
 		return err
 	}
 	defer file.Close()
-	_, err = fmt.Fprintf(file, "complete=%t\n", complete)
+	_, err = fmt.Fprintf(file, "complete=%t\nassembled=%t\n", complete, assembled)
 	return err
 }
 

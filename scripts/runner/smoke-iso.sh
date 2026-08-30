@@ -143,7 +143,7 @@ if [[ $architecture == arm64 ]]; then
     [[ -f $candidate ]] && { firmware=$candidate; break; }
   done
   [[ -n $firmware ]] || { echo "AAVMF firmware was not found" >&2; exit 1; }
-  qemu_args=(-name freesense-arm64-installer-smoke -machine virt,accel=tcg,thread=multi \
+  qemu_args=(-name freesense-arm64-installer-smoke -machine virt -accel tcg,thread=multi \
     -cpu max -smp 4 -m 4096 -bios "$firmware" -drive if=virtio,format=raw,readonly=on,file="$iso" \
     -nic none -display none -monitor none -serial "file:${serial_log}" -no-reboot)
 else
