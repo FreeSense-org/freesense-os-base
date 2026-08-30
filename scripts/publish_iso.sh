@@ -13,7 +13,10 @@ document=$1
 jq -e '.schema_version == "freesense.download/v2" or .schema_version == "freesense.download/v3"' "$document" >/dev/null
 
 count=$(jq '.artifacts | length' "$document")
-((count == 3 || count == 5))
+((count == 1 || count == 3 || count == 5)) || {
+  echo "release document must contain 1, 3, or 5 artifacts" >&2
+  exit 1
+}
 for ((index=0; index<count; index++)); do
   file=$(jq -er ".artifacts[$index].file" "$document")
   expected_sha=$(jq -er ".artifacts[$index].sha256" "$document")

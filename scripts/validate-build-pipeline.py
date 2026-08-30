@@ -168,6 +168,7 @@ for value in ('"download-writer"', 'bucket: "downloads"', "R2_DOWNLOAD_BUCKET"):
             f"downloads-bucket credential boundary is missing {value!r}")
 publisher = read("scripts/publish_iso.sh")
 for value in ("https://downloads.freesense.org/v1/releases/", "sha256sum --check",
+              "count == 1 || count == 3 || count == 5",
               "refusing to overwrite a conflicting downloads object"):
     require(value in publisher, f"ISO publisher is missing {value!r}")
 require("freebsd_pin_id" in reusable and "product_version" in reusable,
