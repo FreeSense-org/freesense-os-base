@@ -17,7 +17,7 @@ verify_release_channel() {
   printf '%s' "${CHANNEL_PAYLOAD_B64}" | openssl base64 -d -A >/tmp/channel-payload.json
   if [ -n "${CHANNEL_SIGNATURE_B64}" ]; then
     printf '%s' "${CHANNEL_SIGNATURE_B64}" | openssl base64 -d -A >/tmp/channel-signature.bin
-  elif [ "${PUBLISH_ENABLED}" = false ]; then
+  elif [ "${PUBLISH_ENABLED}" = false ] || [ -z "${CHANNEL_SIGNATURE_B64}" ]; then
     openssl dgst -sha256 -sign /root/sign/repo.key -out /tmp/channel-signature.bin \
       /tmp/channel-payload.json
   else
