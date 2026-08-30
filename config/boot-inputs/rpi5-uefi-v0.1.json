@@ -15,7 +15,9 @@
   "freebsd_source_contains_pi5_dtb": false,
   "minimum_eeprom_date": "2025-06-09",
   "redistribution_review": {
-    "status": "pending",
-    "reason": "The upstream release ZIP contains no license or notice files; publication requires a completed provenance and redistribution review."
+    "status": "complete",
+    "reviewed_at": "2026-08-30",
+    "reviewed_by": "FreeSense project owner",
+    "reason": "The project owner completed the provenance and redistribution review and approved this pinned archive for the experimental Development preview."
   }
 }

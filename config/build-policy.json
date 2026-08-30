@@ -132,7 +132,7 @@
         "url": "https://github.com/NumberOneGit/rpi5-uefi/releases/download/v0.1/RPI5_D0.zip",
         "archive_sha256": "c4fbbec9cd0d1115c9adab884923061b960de42b4ca6d65ba5f08cb6b46c6fad",
         "dtbs": ["bcm2712-d-rpi-5-b.dtb", "bcm2712-rpi-5-b.dtb", "bcm2712d0-rpi-5-b.dtb"],
-        "redistribution_review": "pending"
+        "redistribution_review": "complete"
       },
       "capabilities": {"bios": false, "uefi": true, "u_boot": false, "iso": false, "installer_img": false, "appliance": true, "cloud_init": false, "root_growth": true, "serial_console": true, "hdmi_console": true, "onboard_networking": false},
       "variants": {}

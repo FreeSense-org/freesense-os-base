@@ -657,7 +657,7 @@ def main() -> int:
         "artifact_format": selected_profile.get("format", selected_profile["installer"]),
         "compression": selected_profile.get("compression", "none" if selected_profile["installer"] == "iso" else "xz"),
         "publication_ready": all(
-            profile.get("boot_inputs", {}).get("redistribution_review") != "pending"
+            profile.get("boot_inputs", {}).get("redistribution_review") in (None, "complete")
             for profile in appliance_profiles
         ),
         "appliance_rpi4b_spec": json.dumps(next((profile for profile in appliance_profiles if profile["name"] == "arm64-rpi4b"), {}), sort_keys=True, separators=(",", ":")),
