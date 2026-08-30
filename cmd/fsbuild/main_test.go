@@ -53,7 +53,7 @@ func TestValidateResultMarkerAcceptsCompleteClosures(t *testing.T) {
 			id:         resultID,
 			systemID:   systemID,
 			platformID: platformID,
-			marker:     isoMarker(resultID, systemID, platformID, "FreeSense-1.1.0-arm64-installer.img.xz"),
+			marker:     installerMarker(resultID, systemID, platformID, "FreeSense-1.1.0-arm64-installer.img.xz"),
 		},
 		{
 			name:       "legacy iso",
@@ -261,6 +261,12 @@ func repositoryMarkerWithPin(stage, fingerprint, boundSystem, platform, pinID st
 
 func isoMarker(fingerprint, system, platform, file string) resultMarker {
 	return isoMarkerWithPackages(fingerprint, system, resultID, platform, file)
+}
+
+func installerMarker(fingerprint, system, platform, file string) resultMarker {
+	marker := isoMarker(fingerprint, system, platform, file)
+	marker.SchemaVersion = "freesense.installer/v1"
+	return marker
 }
 
 func isoMarkerWithPackages(fingerprint, system, packages, platform, file string) resultMarker {

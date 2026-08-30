@@ -172,6 +172,16 @@ jobs:
         run: >-
           scripts/runner/run-vm.sh --image-sha256 "${IMAGE_SHA256}"
           --script "${RUNNER_TEMP}/worker.sh" --timeout 18000
+          --failure-dir "${RUNNER_TEMP}/build-vm-failure"
+      - name: Upload build VM failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: build-vm-failure-${{ inputs.stage }}-${{ inputs.fingerprint }}
+          path: ${{ runner.temp }}/build-vm-failure/
+          if-no-files-found: ignore
+          retention-days: 14
+          compression-level: 6
       - name: Boot-check completed ISO
         if: inputs.stage == 'iso'
         run: >-
@@ -185,6 +195,10 @@ jobs:
           --package-train "${PACKAGE_TRAIN}"
           --channel-payload "${CHANNEL_PAYLOAD_SHA256}"
           --architecture "${ARCHITECTURE}"
+      - name: Commit boot-verified ISO result
+        if: inputs.stage == 'iso'
+        run: >-
+          "${RUNNER_TEMP}/fsbuild" result promote --stage iso --id "${FINGERPRINT}"
       - name: Boot-check completed cloud images
         id: cloud_smoke
         if: inputs.stage == 'cloud'
@@ -204,9 +218,13 @@ jobs:
             --filesystem "${CLOUD_FILESYSTEM}" \
             --virtual-size-gib "${CLOUD_VIRTUAL_SIZE_GIB}" \
             --failure-dir "${CLOUD_SMOKE_FAILURE_DIR}"
+      - name: Commit boot-verified cloud result
+        if: inputs.stage == 'cloud'
+        run: >-
+          "${RUNNER_TEMP}/fsbuild" result promote --stage cloud --id "${FINGERPRINT}"
       - name: Upload cloud smoke failure artifacts
         if: failure() && inputs.stage == 'cloud'
-        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
         with:
           name: cloud-smoke-failure-${{ inputs.cloud_filesystem }}-${{ inputs.fingerprint }}
           path: ${{ runner.temp }}/cloud-smoke-failure/

@@ -100,12 +100,18 @@ def _validate_profile(name: str, value: Any, targets: dict[str, Any]) -> None:
     }
     if set(value) != required or value["target"] not in targets or value["platform"] != name:
         raise SystemExit(f"image profile {name} has invalid fields")
-    if value["partition_scheme"] != "gpt" or value["filesystems"] != ["ufs", "zfs"]:
-        raise SystemExit(f"image profile {name} must provide GPT UFS and ZFS images")
-    if value["formats"] != ["qcow2", "raw"]:
-        raise SystemExit(f"image profile {name} must provide QCOW2 and raw images")
     if not isinstance(value["capabilities"], dict) or not isinstance(value["variants"], dict):
         raise SystemExit(f"image profile {name} has invalid capabilities")
+    if value["partition_scheme"] != "gpt":
+        raise SystemExit(f"image profile {name} must use GPT")
+    cloud_enabled = value["capabilities"].get("cloud_init") is True
+    expected_filesystems = ["ufs", "zfs"] if cloud_enabled else []
+    expected_formats = ["qcow2", "raw"] if cloud_enabled else []
+    expected_variants = {"ufs", "zfs"} if cloud_enabled else set()
+    if (value["filesystems"] != expected_filesystems
+            or value["formats"] != expected_formats
+            or set(value["variants"]) != expected_variants):
+        raise SystemExit(f"image profile {name} cloud policy is inconsistent")
 
 
 def target(policy: dict[str, Any], name: str | None) -> dict[str, Any]:

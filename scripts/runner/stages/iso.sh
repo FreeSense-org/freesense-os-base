@@ -274,6 +274,6 @@ jq -n --arg fingerprint "${FINGERPRINT}" --arg sha256 "${sha}" --arg file "${nam
   --arg channel_payload "${CHANNEL_PAYLOAD_SHA256}" --argjson size "${size}" \
   --argjson generation "${GENERATION}" \
   '{schema_version:(if $architecture == "arm64" then "freesense.installer/v1" else "freesense.iso/v2" end),fingerprint:$fingerprint,bundle_fingerprint:$bundle,sha256:$sha256,size:$size,file:$file,system:$system,generation:$generation,architecture:$architecture,package_arch:$package_arch,platform:$image_profile,firmware:($firmware|split(",")),capabilities:$capabilities,inputs:{platform:$platform,source:$source,freebsd:$freebsd,worker_image:$worker_image,worker_tools:$worker_tools,package_train:$package_train,packages:$packages,channel:$channel,channel_payload:$channel_payload}}' \
-  >/tmp/complete.json
-upload_immutable /tmp/complete.json "${RESULT}/complete.json"
+  >/tmp/assembled.json
+upload_immutable /tmp/assembled.json "${RESULT}/assembled.json"
 phase iso-complete

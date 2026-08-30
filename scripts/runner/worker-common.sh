@@ -433,16 +433,10 @@ poudriere_latest_repository() {
 create_jail() {
   phase poudriere-jail
   if [ "${FREEBSD_TARGET_ARCH}" = aarch64 ]; then
-    if ! command -v qemu-aarch64-static >/dev/null; then
-      phase fetch-qemu-user-static
-      qemu_archive=/tmp/qemu-tools.tar
-      fetch -qo "${qemu_archive}" \
-        "${PUBLIC_BASE_URL}/inputs/sha256/83ed2f26890af3e0304520565fae0154aeb6c5e811ca191b64040eb44e760297"
-      tar -xf "${qemu_archive}" -C /tmp All/qemu-user-static-*.pkg
-      env IGNORE_OSVERSION=yes pkg add /tmp/All/qemu-user-static-*.pkg </dev/null
-      rm -rf "${qemu_archive}" /tmp/All
-    fi
-    command -v qemu-aarch64-static >/dev/null || { echo "qemu-aarch64-static is required" >&2; return 1; }
+    command -v qemu-aarch64-static >/dev/null || {
+      echo "the pinned worker-tools bundle is missing qemu-aarch64-static" >&2
+      return 1
+    }
     service qemu_user_static forcestart >/dev/null
     binmiscctl lookup aarch64 >/dev/null || { echo "aarch64 binmisc registration is missing" >&2; return 1; }
     poudriere_source=/root/freesense-src/tmp/FreeBSD-src

@@ -21,11 +21,6 @@ while (($#)); do
   esac
 done
 [[ "$architecture" == amd64 || "$architecture" == arm64 ]]
-if [[ "$architecture" == arm64 ]]; then
-  if ! command -v qemu-system-aarch64 >/dev/null || ! ls /usr/share/AAVMF/AAVMF_CODE.fd /usr/share/edk2/aarch64/QEMU_EFI-pflash.raw /usr/share/qemu-efi-aarch64/QEMU_EFI.fd /usr/share/edk2/aarch64/QEMU_EFI.fd 2>/dev/null; then
-    sudo apt-get update -y && sudo apt-get install -y qemu-system-arm qemu-efi-aarch64 || true
-  fi
-fi
 [[ "$filesystem" == ufs || "$filesystem" == zfs ]]
 [[ "$virtual_size_gib" =~ ^[1-9][0-9]*$ ]]
 virtual_size=$((virtual_size_gib * 1024 * 1024 * 1024))
@@ -67,13 +62,13 @@ package_failure_artifacts() {
     echo "  logs/             serial console captures"
     echo "  seed/             cloud-init seed used by smoke (no private keys)"
     echo "  images/           published xz plus post-boot qcow2 when available"
-    echo "  complete.json     published cloud image marker"
+    echo "  assembled.json    unpromoted cloud image marker"
     echo "  README.txt        this file"
     echo
     echo "Boot the post-boot disk (when present) with the same cidata seed under"
     echo "seed/ to inspect FreeSense-cloud-init state after the failed smoke run."
   } >"${failure_dir}/README.txt"
-  cp -f "${work}/complete.json" "${failure_dir}/complete.json" 2>/dev/null || true
+  cp -f "${work}/assembled.json" "${failure_dir}/assembled.json" 2>/dev/null || true
   for name in bios.log bios-second.log uefi-two.log; do
     [[ -f "${work}/${name}" ]] || continue
     cp -f "${work}/${name}" "${failure_dir}/logs/${name}"
@@ -142,7 +137,7 @@ cleanup() {
 trap cleanup EXIT
 base="${public_base_url}/artifacts/cloud/${fingerprint}"
 curl --fail --silent --show-error --location --retry 5 \
-  "${base}/complete.json" -o "${work}/complete.json"
+  "${base}/assembled.json?workflow_run=${GITHUB_RUN_ID:-local}" -o "${work}/assembled.json"
 jq -e --arg fingerprint "$fingerprint" --arg bundle "$bundle" \
   --arg system "$system" --arg packages "$packages" \
   --arg channel "$channel" --arg filesystem "$filesystem" \
@@ -156,11 +151,11 @@ jq -e --arg fingerprint "$fingerprint" --arg bundle "$bundle" \
   .disk.scheme == "gpt" and .disk.root_growth == true and
   (if $architecture == "arm64" then (.disk.firmware | sort) == ["uefi"] else (.disk.firmware | sort) == ["bios","uefi"] end) and
   ([.files[].format] | sort) == ["qcow2","raw"]
-' "${work}/complete.json" >/dev/null
+' "${work}/assembled.json" >/dev/null
 
 for format in qcow2 raw; do
-  file=$(jq -er --arg format "$format" '.files[] | select(.format == $format) | .file' "${work}/complete.json")
-  sha=$(jq -er --arg format "$format" '.files[] | select(.format == $format) | .sha256' "${work}/complete.json")
+  file=$(jq -er --arg format "$format" '.files[] | select(.format == $format) | .file' "${work}/assembled.json")
+  sha=$(jq -er --arg format "$format" '.files[] | select(.format == $format) | .sha256' "${work}/assembled.json")
   curl --fail --silent --show-error --location --retry 5 "${base}/${file}" -o "${work}/${file}"
   printf '%s  %s\n' "$sha" "${work}/${file}" | sha256sum --check --status
   xz -dc "${work}/${file}" >"${work}/disk.${format}"
@@ -480,24 +475,16 @@ boot_and_wait() {
 boot_and_wait "${work}/disk.qcow2" qcow2 bios "${work}/bios.log"
 ssh_args=(ssh -q -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i "${work}/id" -p 10022 admin@127.0.0.1)
 "${ssh_args[@]}" "set -eu
-  if pkg query '%n' FreeSense-cloud-init >/dev/null 2>&1; then
-    test \"\$(sysrc -n qemu_guest_agent_enable)\" = YES
-    service qemu-guest-agent status
-    cloud_rc=0
-    cloud_status=\$(cloud-init status --wait 2>&1) || cloud_rc=\$?
-    printf 'cloud-init readiness: rc=%s status=%s\n' \"\${cloud_rc}\" \"\${cloud_status}\"
-    if [ \"\${cloud_rc}\" -ne 0 ] && [ \"\${cloud_rc}\" -ne 2 ]; then
-      exit 1
-    fi
-    case \"\${cloud_status}\" in
-      'status: done'|'status: degraded') ;;
-      *) exit 1 ;;
-    esac
-    grep -q freesense-cloud-smoke /conf/config.xml
-  elif pkg query '%n' qemu-guest-agent >/dev/null 2>&1; then
-    test \"\$(sysrc -n qemu_guest_agent_enable)\" = YES
-    service qemu-guest-agent status
-  fi
+  pkg query '%n' FreeSense-cloud-init >/dev/null
+  pkg query '%n' qemu-guest-agent >/dev/null
+  test \"\$(sysrc -n qemu_guest_agent_enable)\" = YES
+  service qemu-guest-agent status
+  cloud_rc=0
+  cloud_status=\$(cloud-init status --wait 2>&1) || cloud_rc=\$?
+  printf 'cloud-init readiness: rc=%s status=%s\n' \"\${cloud_rc}\" \"\${cloud_status}\"
+  if [ \"\${cloud_rc}\" -ne 0 ] && [ \"\${cloud_rc}\" -ne 2 ]; then exit 1; fi
+  case \"\${cloud_status}\" in 'status: done'|'status: degraded') ;; *) exit 1 ;; esac
+  grep -q freesense-cloud-smoke /conf/config.xml
   test -s /etc/ssh/ssh_host_ed25519_key
   if [ '${filesystem}' = ufs ]; then
     root_kib=\$(df -k / | awk 'NR == 2 {print \$2}')
@@ -539,12 +526,8 @@ shutdown_guest 10022 "first boot"
 
 # A clean second boot of the same disk proves instance-ID idempotency.
 boot_and_wait "${work}/disk.qcow2" qcow2 bios "${work}/bios-second.log"
-"${ssh_args[@]}" "if pkg query '%n' FreeSense-cloud-init >/dev/null 2>&1; then
-    test \"\$(grep -c '<instance_id>freesense-smoke-' /conf/config.xml)\" = 1 &&
-    test \"\$(grep -c 'FreeSense cloud temporary SSH' /conf/config.xml)\" = 1
-  else
-    true
-  fi &&
+"${ssh_args[@]}" "test \"\$(grep -c '<instance_id>freesense-smoke-' /conf/config.xml)\" = 1 &&
+  test \"\$(grep -c 'FreeSense cloud temporary SSH' /conf/config.xml)\" = 1 &&
   if [ '${filesystem}' = zfs ]; then
     df / | grep -q 'FreeSense/ROOT/cloud-smoke-be'
   else
@@ -603,13 +586,10 @@ for _ in {1..120}; do
     if ssh -q -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=no \
       -o UserKnownHostsFile=/dev/null -o ConnectTimeout=2 \
       -i "${work}/id" -p 10023 admin@127.0.0.1 \
-      'if pkg query '\''%n'\'' FreeSense-cloud-init >/dev/null 2>&1; then
-         grep -q "<wan>" /conf/config.xml &&
-         grep -q "<lan>" /conf/config.xml &&
-         ! grep -q "FreeSense cloud temporary SSH" /conf/config.xml
-       else
-         grep -q "<wan>" /conf/config.xml
-       fi'; then
+      'pkg query '\''%n'\'' FreeSense-cloud-init >/dev/null &&
+       grep -q "<wan>" /conf/config.xml &&
+       grep -q "<lan>" /conf/config.xml &&
+       ! grep -q "FreeSense cloud temporary SSH" /conf/config.xml'; then
       two_nic_ready=true
       break
     fi

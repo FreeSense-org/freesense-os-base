@@ -546,9 +546,11 @@ def main() -> int:
         "bundle": bundle,
     })
     cloud_variants = selected_profile.get("variants", {})
+    cloud_enabled = selected_profile["capabilities"].get("cloud_init") is True
+    expected_cloud_variants = {"ufs", "zfs"} if cloud_enabled else set()
     if (not isinstance(cloud_variants, dict)
-            or set(cloud_variants) != {"ufs", "zfs"}):
-        raise SystemExit("cloud policy must define exactly ufs and zfs variants")
+            or set(cloud_variants) != expected_cloud_variants):
+        raise SystemExit("cloud variants do not match the selected profile capabilities")
     for filesystem, variant in cloud_variants.items():
         if (not isinstance(variant, dict)
                 or not isinstance(variant.get("virtual_size_gib"), int)
@@ -566,11 +568,13 @@ def main() -> int:
         for filesystem, variant in cloud_variants.items()
     }
     selected_filesystem = args.filesystem or "ufs"
-    cloud = cloud_ids[selected_filesystem]
+    if args.kind == "cloud" and not cloud_enabled:
+        raise SystemExit(f"image profile {selected_profile['name']} does not support cloud images")
+    cloud = cloud_ids.get(selected_filesystem, "")
     identifiers = {
         "platform": platform, "system": system, "packages": packages,
         "bundle": bundle, "iso": iso, "cloud": cloud,
-        "cloud_ufs": cloud_ids["ufs"], "cloud_zfs": cloud_ids["zfs"],
+        "cloud_ufs": cloud_ids.get("ufs", ""), "cloud_zfs": cloud_ids.get("zfs", ""),
     }
     selected = identifiers[args.kind]
     manifest_url = policy["public_base_url"] + "/" + manifest_name(
@@ -618,6 +622,7 @@ def main() -> int:
         "firmware": ",".join(selected_profile["firmware"]),
         "image_capabilities": json.dumps(selected_profile["capabilities"], sort_keys=True, separators=(",", ":")),
         "installer_format": selected_profile["installer"],
+        "cloud_enabled": cloud_enabled,
         "abi": selected_target["abi"],
         "altabi": selected_target["altabi"],
         "osversion": pinned_osversion if args.kind == "system" else channel_osversion,
@@ -631,9 +636,9 @@ def main() -> int:
         "signing_public_key_sha256": signing_public_key_sha256,
         "freebsd_pin_id": freebsd_pin_id,
         "cloud_filesystem": selected_filesystem,
-        "cloud_virtual_size_gib": cloud_variants[selected_filesystem]["virtual_size_gib"],
-        "cloud_ufs_virtual_size_gib": cloud_variants["ufs"]["virtual_size_gib"],
-        "cloud_zfs_virtual_size_gib": cloud_variants["zfs"]["virtual_size_gib"],
+        "cloud_virtual_size_gib": cloud_variants.get(selected_filesystem, {}).get("virtual_size_gib", 0),
+        "cloud_ufs_virtual_size_gib": cloud_variants.get("ufs", {}).get("virtual_size_gib", 0),
+        "cloud_zfs_virtual_size_gib": cloud_variants.get("zfs", {}).get("virtual_size_gib", 0),
         "product_version": (f"{release_version}-RELEASE"
                             if args.kind in {"iso", "cloud"} and channel_name == "stable"
                             else f"{release_version}-DEVELOPMENT"),

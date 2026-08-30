@@ -315,8 +315,11 @@ func validatePolicyVersion(version, packageTrain, configuredTrain, lifecycle str
 }
 
 func commandResult(ctx context.Context, args []string) error {
+	if len(args) > 0 && args[0] == "promote" {
+		return commandResultPromote(ctx, args[1:])
+	}
 	if len(args) == 0 || args[0] != "check" {
-		return errors.New("usage: fsbuild result check --stage NAME --id SHA256 --platform-id SHA256 [--generation NUMBER] [--system-id SHA256] --github-output PATH")
+		return errors.New("usage: fsbuild result <check|promote> [options]")
 	}
 	flags := newFlagSet("result check")
 	stage := flags.String("stage", "", "system, packages, iso, or cloud")
@@ -416,6 +419,64 @@ func commandResult(ctx context.Context, args []string) error {
 	return err
 }
 
+// commandResultPromote commits the completion marker only after the host-side
+// boot smoke has succeeded. The FreeBSD assembly VM may publish images and an
+// assembled marker, but that marker is deliberately not reusable or releasable.
+func commandResultPromote(ctx context.Context, args []string) error {
+	flags := newFlagSet("result promote")
+	stage := flags.String("stage", "", "iso or cloud")
+	id := flags.String("id", "", "content-derived result ID")
+	if err := parseFlags(flags, args); err != nil {
+		return err
+	}
+	if (*stage != "iso" && *stage != "cloud") || !sha256Pattern.MatchString(*id) {
+		return errors.New("result promotion requires an iso or cloud stage and valid ID")
+	}
+	backend, err := openStore()
+	if err != nil {
+		return err
+	}
+	prefix := fmt.Sprintf("artifacts/%s/%s", *stage, *id)
+	assembled, err := store.GetArtifact(ctx, backend, prefix+"/assembled.json")
+	if err != nil {
+		return fmt.Errorf("read assembled result: %w", err)
+	}
+	var marker resultMarker
+	if err := json.Unmarshal(assembled.Data, &marker); err != nil || marker.Fingerprint != *id {
+		return errors.New("assembled result marker conflicts with its content ID")
+	}
+	if *stage == "iso" {
+		if marker.SchemaVersion != "freesense.iso/v2" && marker.SchemaVersion != "freesense.installer/v1" {
+			return errors.New("assembled installer marker has an invalid schema")
+		}
+		info, headErr := store.HeadArtifact(ctx, backend, prefix+"/"+marker.File)
+		if headErr != nil || info.Size != marker.Size || (info.SHA256 != "" && info.SHA256 != marker.SHA256) {
+			return errors.New("assembled installer marker does not match its immutable image")
+		}
+	} else {
+		if marker.SchemaVersion != "freesense.cloud-image/v1" || len(marker.Files) != 2 {
+			return errors.New("assembled cloud marker has an invalid schema")
+		}
+		for _, file := range marker.Files {
+			info, headErr := store.HeadArtifact(ctx, backend, prefix+"/"+file.File)
+			if headErr != nil || info.Size != file.Size || (info.SHA256 != "" && info.SHA256 != file.SHA256) {
+				return errors.New("assembled cloud marker does not match its immutable image")
+			}
+		}
+	}
+	_, created, err := backend.PutIfAbsent(ctx, prefix+"/complete.json", store.BytesContent(assembled.Data))
+	if err != nil {
+		return fmt.Errorf("commit verified result: %w", err)
+	}
+	if !created {
+		complete, getErr := store.GetArtifact(ctx, backend, prefix+"/complete.json")
+		if getErr != nil || !bytes.Equal(complete.Data, assembled.Data) {
+			return errors.New("verified result already has a conflicting completion marker")
+		}
+	}
+	return nil
+}
+
 type resultMarker struct {
 	SchemaVersion     string          `json:"schema_version"`
 	Stage             string          `json:"stage"`
@@ -462,7 +523,7 @@ func validateResultMarker(stage, id, systemID, packagesID, platformID, freeBSDPi
 	}
 	if stage == "iso" {
 		legacy := marker.SchemaVersion == "freesense.iso/v1" && marker.Inputs.Packages == ""
-		current := marker.SchemaVersion == "freesense.iso/v2" && marker.Inputs.Packages == packagesID
+		current := (marker.SchemaVersion == "freesense.iso/v2" || marker.SchemaVersion == "freesense.installer/v1") && marker.Inputs.Packages == packagesID
 		if (!legacy && !current) || marker.System != systemID ||
 			marker.Inputs.Platform != platformID || !sha256Pattern.MatchString(marker.SHA256) || marker.Size <= 0 ||
 			!regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*\.(iso|img(\.xz)?)$`).MatchString(marker.File) {

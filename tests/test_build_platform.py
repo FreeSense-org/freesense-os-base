@@ -54,6 +54,10 @@ class BuildPlatformTests(unittest.TestCase):
         self.assertEqual(profile["firmware"], ["uefi"])
         self.assertEqual(profile["installer"], "img")
         self.assertFalse(profile["capabilities"]["bios"])
+        self.assertFalse(profile["capabilities"]["cloud_init"])
+        self.assertEqual(profile["filesystems"], [])
+        self.assertEqual(profile["formats"], [])
+        self.assertEqual(profile["variants"], {})
 
     def test_profile_cannot_cross_targets(self):
         policy = build_platform.load_policy(ROOT / "config/build-policy.json")

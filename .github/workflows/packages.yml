@@ -9,7 +9,7 @@ on:
         default: amd64
         required: true
       system_fingerprint:
-        description: Required immutable System result for publish-disabled targets
+        description: Required immutable ARM64 System result
         type: string
         required: false
   workflow_run:
@@ -63,9 +63,37 @@ jobs:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with: {go-version-file: go.mod, cache: false}
+      - id: upstream
+        if: github.event_name == 'workflow_run'
+        name: Identify the published System target
+        env:
+          GH_TOKEN: ${{ github.token }}
+          UPSTREAM_RUN_ID: ${{ github.event.workflow_run.id }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          state=$(gh api "repos/${REPOSITORY}/actions/runs/${UPSTREAM_RUN_ID}/jobs" --paginate \
+            --jq '[.jobs[] | select(.name == "publish") | .conclusion] | if length == 1 then .[0] else "" end')
+          if [[ "${state}" != success ]]; then
+            echo "target=none" >>"${GITHUB_OUTPUT}"
+            exit 0
+          fi
+          mkdir -p "${RUNNER_TEMP}/publication"
+          gh run download "${UPSTREAM_RUN_ID}" --name publication-target \
+            --dir "${RUNNER_TEMP}/publication"
+          target=$(tr -d '\r\n' <"${RUNNER_TEMP}/publication/publication-target")
+          [[ "${target}" == amd64 || "${target}" == arm64 ]] || {
+            echo "upstream publication target is invalid" >&2; exit 1;
+          }
+          echo "target=${target}" >>"${GITHUB_OUTPUT}"
       - id: plan
         run: |
-          target="${{ github.event_name == 'workflow_dispatch' && inputs.target || 'amd64' }}"
+          target="${{ github.event_name == 'workflow_dispatch' && inputs.target || steps.upstream.outputs.target }}"
+          if [[ "${target}" == none || ("${{ github.event_name }}" == workflow_run && "${target}" == arm64) ]]; then
+            echo "needed=false" >>"${GITHUB_OUTPUT}"
+            echo "No automatic Optional Packages build: the upstream run did not publish AMD64. ARM64 remains explicitly manual."
+            exit 0
+          fi
           if [[ "${target}" == arm64 ]]; then
             fingerprint="${{ inputs.system_fingerprint }}"
             [[ "${fingerprint}" =~ ^[0-9a-f]{64}$ ]] || {
@@ -73,8 +101,9 @@ jobs:
               exit 1
             }
             public_base_url=$(jq -er .public_base_url config/build-policy.json)
-            curl --fail --silent --show-error --location \
-              "${public_base_url}/artifacts/system/${fingerprint}/complete.json" \
+            curl --fail --silent --show-error --location --retry 12 --retry-all-errors \
+              --retry-delay 5 --connect-timeout 15 \
+              "${public_base_url}/artifacts/system/${fingerprint}/complete.json?workflow_run=${GITHUB_RUN_ID}" \
               --output "${RUNNER_TEMP}/system-marker.json"
             python3 scripts/staged_system_closure.py --target arm64 \
               --marker "${RUNNER_TEMP}/system-marker.json" --output "${RUNNER_TEMP}/system.json"
@@ -204,7 +233,7 @@ jobs:
             --fingerprint "${{ needs.plan.outputs.packages }}" --private-key "$key"
       - name: Record publication target for release orchestration
         run: printf '%s\n' '${{ needs.plan.outputs.target }}' >"${RUNNER_TEMP}/publication-target"
-      - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+      - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
         with:
           name: publication-target
           path: ${{ runner.temp }}/publication-target
