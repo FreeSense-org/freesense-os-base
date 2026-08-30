@@ -48,6 +48,14 @@ func TestValidateResultMarkerAcceptsCompleteClosures(t *testing.T) {
 			marker:     isoMarker(resultID, systemID, platformID, "FreeSense-16-devel.iso"),
 		},
 		{
+			name:       "arm64 installer img.xz",
+			stage:      "iso",
+			id:         resultID,
+			systemID:   systemID,
+			platformID: platformID,
+			marker:     isoMarker(resultID, systemID, platformID, "FreeSense-1.1.0-arm64-installer.img.xz"),
+		},
+		{
 			name:       "legacy iso",
 			stage:      "iso",
 			id:         resultID,

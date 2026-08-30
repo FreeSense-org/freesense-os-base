@@ -465,7 +465,7 @@ func validateResultMarker(stage, id, systemID, packagesID, platformID, freeBSDPi
 		current := marker.SchemaVersion == "freesense.iso/v2" && marker.Inputs.Packages == packagesID
 		if (!legacy && !current) || marker.System != systemID ||
 			marker.Inputs.Platform != platformID || !sha256Pattern.MatchString(marker.SHA256) || marker.Size <= 0 ||
-			!regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*\.iso$`).MatchString(marker.File) {
+			!regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*\.(iso|img(\.xz)?)$`).MatchString(marker.File) {
 			return resultMarker{}, errors.New("ISO completion marker has an invalid closure")
 		}
 		return marker, nil
