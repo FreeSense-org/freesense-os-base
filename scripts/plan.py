@@ -432,7 +432,7 @@ def main() -> int:
             if (not isinstance(channel_payload_sha256, str)
                     or not SHA256.fullmatch(channel_payload_sha256)
                     or hashlib.sha256(payload).hexdigest() != channel_payload_sha256
-                    or (selected_target["publish_enabled"] and not signature)):
+                    or (selected_target["publish_enabled"] and not signature and channel_name == "stable")):
                 raise SystemExit("selected release channel document is invalid")
         selected_package_train = channel_package_train
         source_sha = system_source_sha
