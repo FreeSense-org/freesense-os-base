@@ -111,7 +111,7 @@ def release(channel="stable", generation=2, fingerprint=BUNDLE_FINGERPRINT, lega
                 "build_fingerprint": CLOUD_FINGERPRINT,
             })
         return {
-            "schema_version": publish.DOWNLOAD_SCHEMA, "version": version,
+            "schema_version": publish.V3_DOWNLOAD_SCHEMA, "version": version,
             "release_id": release_id, "display_name": "test",
             "support_tier": "supported" if channel == "stable" else "development",
             "channel": channel, "generation": generation,
@@ -173,6 +173,42 @@ def publisher_argv(output: Path, channel="stable", generation=2, fingerprint=FIN
 
 
 class PublishDownloadTests(unittest.TestCase):
+    def test_v4_accepts_ordered_installer_and_board_appliances(self):
+        value = release(channel="devel")
+        value.update({
+            "schema_version": publish.DOWNLOAD_SCHEMA,
+            "architecture": "arm64", "package_arch": "aarch64",
+        })
+        installer = value["artifacts"][0]
+        installer.update({
+            "platform": "generic-arm64-uefi", "target_models": [],
+            "format": "img", "compression": "xz", "partition_scheme": "gpt",
+            "firmware": ["uefi"], "capabilities": {"cloud_init": False},
+            "boot_inputs": {}, "artifact_fingerprint": installer["build_fingerprint"],
+            "hardware_verification": "verified",
+            "file": "FreeSense-1.1.0-g2-arm64-installer.img.xz",
+        })
+        installer["url"] = publish.public_artifact_url(
+            value, "devel", installer["file"], DOWNLOAD_BASE_URL
+        )
+        appliances = []
+        for profile, digit in (("arm64-rpi4b", "7"), ("arm64-rpi5-d0", "8")):
+            file = f"FreeSense-1.1.0-g2-{profile}.img.xz"
+            appliances.append({
+                "kind": "appliance", "platform": profile,
+                "target_models": [profile], "filesystem": "ufs", "format": "img",
+                "compression": "xz", "partition_scheme": "mbr", "firmware": ["uefi"],
+                "capabilities": {"appliance": True, "cloud_init": False},
+                "boot_inputs": {"provider": "test"},
+                "artifact_fingerprint": digit * 64, "build_fingerprint": digit * 64,
+                "sha256": digit * 64, "size": 2048, "file": file,
+                "url": publish.public_artifact_url(value, "devel", file, DOWNLOAD_BASE_URL),
+                "marker_url": f"{BASE_URL}/artifacts/appliance/{digit * 64}/complete.json",
+                "hardware_verification": "unverified",
+            })
+        value["artifacts"] = [installer, *appliances]
+        publish.validate_download(value, "devel", BASE_URL, DOWNLOAD_BASE_URL)
+
     def test_arm64_installer_only_document_is_valid(self):
         value = release()
         value.update({
@@ -241,13 +277,15 @@ class PublishDownloadTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory, "stable.json")
             responses = iter((marker(), cloud_marker(), cloud_marker(filesystem="zfs"), None))
-            with mock.patch.object(sys, "argv", publisher_argv(output)), \
+            argv = publisher_argv(output)
+            argv.extend(("--appliance-fingerprint", "", "--appliance-fingerprint", ""))
+            with mock.patch.object(sys, "argv", argv), \
                     mock.patch.object(publish, "fetch_json", side_effect=lambda *_args, **_kwargs: next(responses)), \
                     redirect_stdout(io.StringIO()):
                 self.assertEqual(publish.main(), 0)
             value = json.loads(output.read_text())
 
-        self.assertEqual(value["schema_version"], "freesense.download/v3")
+        self.assertEqual(value["schema_version"], "freesense.download/v4")
         self.assertEqual(value["architecture"], "amd64")
         self.assertEqual(value["package_arch"], "amd64")
         self.assertEqual(value["platform"], "generic-amd64")
@@ -283,6 +321,24 @@ class PublishDownloadTests(unittest.TestCase):
             value = json.loads(output.read_text())
         self.assertEqual(value["published_at"], existing["published_at"])
         self.assertEqual(value["changes"], existing["changes"])
+
+    def test_same_generation_checks_each_cloud_format_with_shared_fingerprint(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory, "stable.json")
+            first_responses = iter((marker(), cloud_marker(), cloud_marker(filesystem="zfs"), None))
+            with mock.patch.object(sys, "argv", publisher_argv(output)), mock.patch.object(
+                publish, "fetch_json", side_effect=lambda *_args, **_kwargs: next(first_responses)
+            ):
+                self.assertEqual(publish.main(), 0)
+            existing = json.loads(output.read_text())
+            changed_cloud = cloud_marker()
+            changed_cloud["files"][0]["sha256"] = "9" * 64
+            second_responses = iter((marker(), changed_cloud, cloud_marker(filesystem="zfs"), existing))
+            with mock.patch.object(sys, "argv", publisher_argv(output)), mock.patch.object(
+                publish, "fetch_json", side_effect=lambda *_args, **_kwargs: next(second_responses)
+            ):
+                with self.assertRaisesRegex(SystemExit, "only hardware-verification promotion"):
+                    publish.main()
 
     def test_development_document_contains_repository_changes(self):
         existing = release("devel", generation=7, fingerprint="e" * 64)

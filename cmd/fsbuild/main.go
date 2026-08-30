@@ -322,7 +322,7 @@ func commandResult(ctx context.Context, args []string) error {
 		return errors.New("usage: fsbuild result <check|promote> [options]")
 	}
 	flags := newFlagSet("result check")
-	stage := flags.String("stage", "", "system, packages, iso, or cloud")
+	stage := flags.String("stage", "", "system, packages, iso, cloud, or appliance")
 	id := flags.String("id", "", "content-derived result ID")
 	systemID := flags.String("system-id", "", "exact required system for packages or ISO")
 	packagesID := flags.String("packages-id", "", "exact Packages artifact required for ISO")
@@ -339,14 +339,14 @@ func commandResult(ctx context.Context, args []string) error {
 	if err := parseFlags(flags, args[1:]); err != nil {
 		return err
 	}
-	if !map[string]bool{"system": true, "packages": true, "iso": true, "cloud": true}[*stage] ||
+	if !map[string]bool{"system": true, "packages": true, "iso": true, "cloud": true, "appliance": true}[*stage] ||
 		!sha256Pattern.MatchString(*id) || !sha256Pattern.MatchString(*platformID) {
 		return errors.New("result stage or ID is invalid")
 	}
-	if (*stage == "packages" || *stage == "iso" || *stage == "cloud") && !sha256Pattern.MatchString(*systemID) {
+	if (*stage == "packages" || *stage == "iso" || *stage == "cloud" || *stage == "appliance") && !sha256Pattern.MatchString(*systemID) {
 		return errors.New("packages and release image result checks require --system-id")
 	}
-	if (*stage == "iso" || *stage == "cloud") && !sha256Pattern.MatchString(*packagesID) {
+	if (*stage == "iso" || *stage == "cloud" || *stage == "appliance") && !sha256Pattern.MatchString(*packagesID) {
 		return errors.New("release image result checks require --packages-id")
 	}
 	if *stage == "packages" && !sha256Pattern.MatchString(*freeBSDPinID) {
@@ -387,6 +387,11 @@ func commandResult(ctx context.Context, args []string) error {
 					return errors.New("cloud completion marker does not match its immutable image")
 				}
 			}
+		} else if *stage == "appliance" {
+			info, headErr := store.HeadArtifact(ctx, backend, fmt.Sprintf("artifacts/appliance/%s/%s", *id, marker.File))
+			if headErr != nil || info.Size != marker.Size || (info.SHA256 != "" && info.SHA256 != marker.SHA256) {
+				return errors.New("appliance completion marker does not match its immutable image")
+			}
 		} else {
 			prefix := fmt.Sprintf("artifacts/%s/%s/%s", *stage, *id, *packageArch)
 			if *stage == "packages" {
@@ -405,7 +410,7 @@ func commandResult(ctx context.Context, args []string) error {
 	complete := false
 	assembled := false
 	if errors.Is(err, store.ErrNotFound) {
-		if *stage == "iso" || *stage == "cloud" {
+		if *stage == "iso" || *stage == "cloud" || *stage == "appliance" {
 			assembledKey := fmt.Sprintf("artifacts/%s/%s/assembled.json", *stage, *id)
 			assembledObject, assembledErr := store.GetArtifact(ctx, backend, assembledKey)
 			if assembledErr == nil {
@@ -424,7 +429,7 @@ func commandResult(ctx context.Context, args []string) error {
 			return err
 		}
 		complete = true
-		assembled = *stage == "iso" || *stage == "cloud"
+		assembled = *stage == "iso" || *stage == "cloud" || *stage == "appliance"
 	}
 	if *githubOutput == "" {
 		return errors.New("--github-output is required")
@@ -443,13 +448,13 @@ func commandResult(ctx context.Context, args []string) error {
 // assembled marker, but that marker is deliberately not reusable or releasable.
 func commandResultPromote(ctx context.Context, args []string) error {
 	flags := newFlagSet("result promote")
-	stage := flags.String("stage", "", "iso or cloud")
+	stage := flags.String("stage", "", "iso, cloud, or appliance")
 	id := flags.String("id", "", "content-derived result ID")
 	if err := parseFlags(flags, args); err != nil {
 		return err
 	}
-	if (*stage != "iso" && *stage != "cloud") || !sha256Pattern.MatchString(*id) {
-		return errors.New("result promotion requires an iso or cloud stage and valid ID")
+	if (*stage != "iso" && *stage != "cloud" && *stage != "appliance") || !sha256Pattern.MatchString(*id) {
+		return errors.New("result promotion requires an iso, cloud, or appliance stage and valid ID")
 	}
 	backend, err := openStore()
 	if err != nil {
@@ -472,7 +477,7 @@ func commandResultPromote(ctx context.Context, args []string) error {
 		if headErr != nil || info.Size != marker.Size || (info.SHA256 != "" && info.SHA256 != marker.SHA256) {
 			return errors.New("assembled installer marker does not match its immutable image")
 		}
-	} else {
+	} else if *stage == "cloud" {
 		if marker.SchemaVersion != "freesense.cloud-image/v1" || len(marker.Files) != 2 {
 			return errors.New("assembled cloud marker has an invalid schema")
 		}
@@ -481,6 +486,14 @@ func commandResultPromote(ctx context.Context, args []string) error {
 			if headErr != nil || info.Size != file.Size || (info.SHA256 != "" && info.SHA256 != file.SHA256) {
 				return errors.New("assembled cloud marker does not match its immutable image")
 			}
+		}
+	} else {
+		if marker.SchemaVersion != "freesense.appliance/v1" || marker.HardwareVerification != "unverified" {
+			return errors.New("assembled appliance marker has an invalid schema")
+		}
+		info, headErr := store.HeadArtifact(ctx, backend, prefix+"/"+marker.File)
+		if headErr != nil || info.Size != marker.Size || (info.SHA256 != "" && info.SHA256 != marker.SHA256) {
+			return errors.New("assembled appliance marker does not match its immutable image")
 		}
 	}
 	_, created, err := backend.PutIfAbsent(ctx, prefix+"/complete.json", store.BytesContent(assembled.Data))
@@ -497,22 +510,28 @@ func commandResultPromote(ctx context.Context, args []string) error {
 }
 
 type resultMarker struct {
-	SchemaVersion     string          `json:"schema_version"`
-	Stage             string          `json:"stage"`
-	Fingerprint       string          `json:"fingerprint"`
-	Generation        uint64          `json:"generation"`
-	System            string          `json:"system"`
-	SHA256            string          `json:"sha256"`
-	Size              int64           `json:"size"`
-	File              string          `json:"file"`
-	BundleFingerprint string          `json:"bundle_fingerprint"`
-	Filesystem        string          `json:"filesystem"`
-	Architecture      string          `json:"architecture"`
-	PackageArch       string          `json:"package_arch"`
-	Platform          string          `json:"platform"`
-	Firmware          []string        `json:"firmware"`
-	Capabilities      map[string]bool `json:"capabilities"`
-	Files             []struct {
+	SchemaVersion        string          `json:"schema_version"`
+	Stage                string          `json:"stage"`
+	Fingerprint          string          `json:"fingerprint"`
+	Generation           uint64          `json:"generation"`
+	System               string          `json:"system"`
+	SHA256               string          `json:"sha256"`
+	Size                 int64           `json:"size"`
+	File                 string          `json:"file"`
+	BundleFingerprint    string          `json:"bundle_fingerprint"`
+	Filesystem           string          `json:"filesystem"`
+	Architecture         string          `json:"architecture"`
+	PackageArch          string          `json:"package_arch"`
+	Platform             string          `json:"platform"`
+	Firmware             []string        `json:"firmware"`
+	Capabilities         map[string]bool `json:"capabilities"`
+	Format               string          `json:"format"`
+	Compression          string          `json:"compression"`
+	PartitionScheme      string          `json:"partition_scheme"`
+	TargetModels         []string        `json:"target_models"`
+	BootInputs           json.RawMessage `json:"boot_inputs"`
+	HardwareVerification string          `json:"hardware_verification"`
+	Files                []struct {
 		Format      string `json:"format"`
 		SHA256      string `json:"sha256"`
 		Size        int64  `json:"size"`
@@ -570,6 +589,21 @@ func validateResultMarker(stage, id, systemID, packagesID, platformID, freeBSDPi
 		}
 		if len(formats) != 2 {
 			return resultMarker{}, errors.New("cloud completion marker is missing a format")
+		}
+		return marker, nil
+	}
+	if stage == "appliance" {
+		var bootInputs map[string]json.RawMessage
+		bootInputsValid := json.Unmarshal(marker.BootInputs, &bootInputs) == nil && len(bootInputs) > 0
+		if marker.SchemaVersion != "freesense.appliance/v1" || marker.Architecture != "arm64" ||
+			marker.PackageArch != "aarch64" || marker.Inputs.System != systemID ||
+			marker.Inputs.Packages != packagesID || marker.Inputs.Platform != platformID || !sha256Pattern.MatchString(marker.BundleFingerprint) ||
+			marker.Filesystem != "ufs" || marker.Format != "img" || marker.Compression != "xz" ||
+			marker.PartitionScheme != "mbr" || marker.HardwareVerification != "unverified" ||
+			len(marker.TargetModels) == 0 || !bootInputsValid ||
+			!sha256Pattern.MatchString(marker.SHA256) || marker.Size <= 0 ||
+			!regexp.MustCompile(`^FreeSense-[A-Za-z0-9._-]+-arm64-rpi(4b|5-d0)\.img\.xz$`).MatchString(marker.File) {
+			return resultMarker{}, errors.New("appliance completion marker has an invalid closure")
 		}
 		return marker, nil
 	}

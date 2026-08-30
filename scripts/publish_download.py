@@ -23,7 +23,8 @@ SHA = re.compile(r"^[0-9a-f]{40}$")
 SHA256 = re.compile(r"^[0-9a-f]{64}$")
 VERSION = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+$")
 ISO_FILE = re.compile(r"^FreeSense-[A-Za-z0-9.-]+-amd64\.iso$")
-DOWNLOAD_SCHEMA = "freesense.download/v3"
+DOWNLOAD_SCHEMA = "freesense.download/v4"
+V3_DOWNLOAD_SCHEMA = "freesense.download/v3"
 V2_DOWNLOAD_SCHEMA = "freesense.download/v2"
 LEGACY_DOWNLOAD_SCHEMA = "freesense.download/v1"
 RELEASE_NOTES_SCHEMA = "freesense.release-notes/v2"
@@ -353,7 +354,10 @@ def validate_download(release, channel: str, base_url: str,
         return
     artifacts = release.get("artifacts")
     schema = release.get("schema_version")
-    if (schema not in {V2_DOWNLOAD_SCHEMA, DOWNLOAD_SCHEMA}
+    if schema == DOWNLOAD_SCHEMA:
+        validate_v4_download(release, channel, base_url, download_base_url)
+        return
+    if (schema not in {V2_DOWNLOAD_SCHEMA, V3_DOWNLOAD_SCHEMA}
             or release.get("channel") != channel
             or not VERSION.fullmatch(release.get("version", ""))
             or not SHA256.fullmatch(release.get("bundle_fingerprint", ""))
@@ -365,7 +369,7 @@ def validate_download(release, channel: str, base_url: str,
             or ("release_notes" in release
                 and not valid_release_notes(release["release_notes"]))):
         raise SystemExit(f"existing {channel} download document is invalid")
-    if schema == DOWNLOAD_SCHEMA:
+    if schema == V3_DOWNLOAD_SCHEMA:
         architecture = release.get("architecture")
         package_arch = release.get("package_arch")
         if ((architecture, package_arch) not in {("amd64", "amd64"), ("arm64", "aarch64")}
@@ -374,7 +378,7 @@ def validate_download(release, channel: str, base_url: str,
                 or not isinstance(release.get("capabilities"), dict)):
             raise SystemExit(f"existing {channel} download architecture is invalid")
     installer_format = "img" if release.get("architecture") == "arm64" else "iso"
-    installer_only = (schema == DOWNLOAD_SCHEMA and len(artifacts) == 1
+    installer_only = (schema == V3_DOWNLOAD_SCHEMA and len(artifacts) == 1
                       and release.get("capabilities", {}).get("cloud_init") is False)
     if len(artifacts) == 1 and not installer_only:
         raise SystemExit(f"existing {channel} download document has invalid artifacts")
@@ -418,6 +422,63 @@ def validate_download(release, channel: str, base_url: str,
         raise SystemExit(f"existing {channel} download document has invalid lifecycle")
 
 
+def validate_v4_download(release: dict, channel: str, base_url: str,
+                         download_base_url: str) -> None:
+    artifacts = release.get("artifacts")
+    if (release.get("channel") != channel
+            or not VERSION.fullmatch(release.get("version", ""))
+            or not SHA256.fullmatch(release.get("bundle_fingerprint", ""))
+            or not SHA256.fullmatch(release.get("system", ""))
+            or (release.get("architecture"), release.get("package_arch")) not in {
+                ("amd64", "amd64"), ("arm64", "aarch64")}
+            or not isinstance(release.get("generation"), int) or release["generation"] <= 0
+            or not isinstance(artifacts, list) or not artifacts
+            or not isinstance(release.get("published_at"), str)
+            or release.get("release_id") != release_identity(release, channel)):
+        raise SystemExit(f"existing {channel} v4 download document is invalid")
+    identities = set()
+    for artifact in artifacts:
+        required = {
+            "kind", "platform", "target_models", "filesystem", "format", "compression",
+            "partition_scheme", "firmware", "capabilities", "boot_inputs",
+            "artifact_fingerprint", "sha256", "size", "file", "url", "marker_url",
+            "hardware_verification",
+        }
+        identity = artifact.get("artifact_fingerprint") if isinstance(artifact, dict) else ""
+        if (not isinstance(artifact, dict) or not required.issubset(artifact)
+                or artifact.get("kind") not in {"installer", "cloud", "appliance"}
+                or not isinstance(artifact.get("platform"), str)
+                or not isinstance(artifact.get("target_models"), list)
+                or artifact.get("filesystem") not in {None, "ufs", "zfs"}
+                or artifact.get("format") not in {"iso", "img", "qcow2", "raw"}
+                or artifact.get("compression") not in {"none", "xz"}
+                or artifact.get("partition_scheme") not in {"gpt", "mbr"}
+                or not isinstance(artifact.get("firmware"), list)
+                or not isinstance(artifact.get("capabilities"), dict)
+                or not isinstance(artifact.get("boot_inputs"), dict)
+                or not SHA256.fullmatch(identity or "")
+                or not SHA256.fullmatch(artifact.get("sha256", ""))
+                or not isinstance(artifact.get("size"), int) or artifact["size"] <= 0
+                or artifact.get("hardware_verification") not in {"unverified", "verified"}
+                or artifact.get("url") != public_artifact_url(
+                    release, channel, artifact.get("file", ""), download_base_url)
+                or not isinstance(artifact.get("marker_url"), str)):
+            raise SystemExit(f"existing {channel} v4 artifact is invalid")
+        identities.add(identity)
+        if artifact["kind"] == "appliance" and (
+                artifact["filesystem"] != "ufs" or artifact["format"] != "img"
+                or artifact["compression"] != "xz" or artifact["partition_scheme"] != "mbr"
+                or not artifact["target_models"]):
+            raise SystemExit(f"existing {channel} appliance artifact is invalid")
+    if artifacts[0]["kind"] != "installer":
+        raise SystemExit(f"existing {channel} v4 artifact order is invalid")
+    provenance = release.get("provenance")
+    if (not isinstance(provenance, dict) or any(
+            not SHA.fullmatch(provenance.get(name, ""))
+            for name in ("source", "ports", "os_definition", "freebsd"))):
+        raise SystemExit(f"existing {channel} v4 provenance is invalid")
+
+
 def validate_legacy_download(release, channel: str, base_url: str,
                              download_base_url: str, allow_legacy_url: bool) -> None:
     if (release.get("channel") != channel
@@ -446,6 +507,8 @@ def main() -> int:
     parser.add_argument("--bundle-fingerprint", required=True)
     parser.add_argument("--cloud-ufs-fingerprint", default="")
     parser.add_argument("--cloud-zfs-fingerprint", default="")
+    parser.add_argument("--appliance-fingerprint", action="append", default=[])
+    parser.add_argument("--hardware-verified-profile", action="append", default=[])
     parser.add_argument("--system", required=True)
     parser.add_argument("--generation", required=True, type=int)
     parser.add_argument("--source", required=True)
@@ -482,6 +545,8 @@ def main() -> int:
     if ((cloud_enabled and any(not SHA256.fullmatch(value) for value in cloud_fingerprints))
             or (not cloud_enabled and any(cloud_fingerprints))):
         raise SystemExit("cloud artifact identities do not match the image profile")
+    if any(value and not SHA256.fullmatch(value) for value in args.appliance_fingerprint):
+        raise SystemExit("invalid appliance artifact identity")
     if args.generation <= 0 or any(not SHA.fullmatch(value) for value in
         (args.source, args.system_ports, args.packages, args.ports,
          args.os_definition, args.freebsd)):
@@ -535,6 +600,38 @@ def main() -> int:
         cloud_results[filesystem] = (
             cloud_fingerprint, cloud_marker_url, cloud_files
         )
+
+    appliance_results = []
+    for appliance_fingerprint in filter(None, args.appliance_fingerprint):
+        appliance_url = f"{args.base_url}/artifacts/appliance/{appliance_fingerprint}"
+        appliance_marker_url = appliance_url + "/complete.json"
+        appliance_marker = fetch_json(appliance_marker_url)
+        if (not isinstance(appliance_marker, dict)
+                or appliance_marker.get("schema_version") != "freesense.appliance/v1"
+                or appliance_marker.get("fingerprint") != appliance_fingerprint
+                or appliance_marker.get("bundle_fingerprint") != args.bundle_fingerprint
+                or appliance_marker.get("generation") != args.generation
+                or appliance_marker.get("channel") != args.channel
+                or appliance_marker.get("architecture") != selected_target["architecture"]
+                or appliance_marker.get("package_arch") != selected_target["package_arch"]
+                or appliance_marker.get("inputs", {}).get("system") != args.system
+                or appliance_marker.get("inputs", {}).get("packages") != args.packages_fingerprint
+                or appliance_marker.get("filesystem") != "ufs"
+                or appliance_marker.get("format") != "img"
+                or appliance_marker.get("compression") != "xz"
+                or appliance_marker.get("partition_scheme") != "mbr"
+                or appliance_marker.get("hardware_verification") not in {"unverified", "verified"}
+                or not SHA256.fullmatch(appliance_marker.get("sha256", ""))
+                or not isinstance(appliance_marker.get("size"), int)
+                or appliance_marker["size"] <= 0):
+            raise SystemExit("structurally verified appliance marker does not match the release bundle")
+        profile = image_profile(policy, appliance_marker.get("platform"), args.target)
+        if profile.get("kind") != "appliance" or profile["boot_inputs"] != appliance_marker.get("boot_inputs"):
+            raise SystemExit("appliance marker boot provenance does not match policy")
+        if profile["boot_inputs"].get("redistribution_review") == "pending":
+            raise SystemExit(f"{profile['name']} redistribution review is incomplete")
+        appliance_results.append((profile, appliance_fingerprint,
+                                  appliance_marker_url, appliance_marker))
 
     release_url = f"{args.base_url}/releases/{args.channel}.{selected_target['architecture']}.json"
     existing = fetch_json(release_url, missing=None)
@@ -596,7 +693,11 @@ def main() -> int:
         "compression": "none" if selected_profile["installer"] == "iso" else "xz", "file": marker["file"],
         "url": public_artifact_url(release, args.channel, marker["file"], args.download_base_url),
         "marker_url": marker_url, "sha256": marker["sha256"], "size": marker["size"],
-        "build_fingerprint": args.fingerprint,
+        "build_fingerprint": args.fingerprint, "artifact_fingerprint": args.fingerprint,
+        "platform": selected_profile["name"], "target_models": [],
+        "partition_scheme": selected_profile["partition_scheme"],
+        "firmware": selected_profile["firmware"], "capabilities": selected_profile["capabilities"],
+        "boot_inputs": {}, "hardware_verification": "verified",
     })
     for filesystem in cloud_results:
         cloud_fingerprint, cloud_marker_url, cloud_files = cloud_results[filesystem]
@@ -607,11 +708,59 @@ def main() -> int:
                 "url": public_artifact_url(release, args.channel, item["file"], args.download_base_url),
                 "marker_url": cloud_marker_url, "sha256": item["sha256"],
                 "size": item["size"], "virtual_size": item["virtual_size"],
-                "build_fingerprint": cloud_fingerprint,
+                "build_fingerprint": cloud_fingerprint, "artifact_fingerprint": cloud_fingerprint,
+                "platform": selected_profile["name"], "target_models": [],
+                "partition_scheme": selected_profile["partition_scheme"],
+                "firmware": selected_profile["firmware"], "capabilities": selected_profile["capabilities"],
+                "boot_inputs": {}, "hardware_verification": "verified",
             })
+    requested_verified = set(args.hardware_verified_profile)
+    known_profiles = {profile["name"] for profile, *_ in appliance_results}
+    if not requested_verified.issubset(known_profiles):
+        raise SystemExit("hardware verification promotion names an unknown appliance profile")
+    existing_status = {
+        artifact.get("platform"): artifact.get("hardware_verification")
+        for artifact in (existing or {}).get("artifacts", [])
+        if isinstance(artifact, dict) and artifact.get("kind") == "appliance"
+    }
+    for profile, appliance_fingerprint, appliance_marker_url, appliance_marker in appliance_results:
+        status = appliance_marker["hardware_verification"]
+        if existing_status.get(profile["name"]) == "verified" or profile["name"] in requested_verified:
+            status = "verified"
+        release["artifacts"].append({
+            "kind": "appliance", "platform": profile["name"],
+            "target_models": profile["target_models"], "filesystem": "ufs",
+            "format": "img", "compression": "xz",
+            "partition_scheme": profile["partition_scheme"],
+            "firmware": profile["firmware"], "capabilities": profile["capabilities"],
+            "boot_inputs": profile["boot_inputs"],
+            "artifact_fingerprint": appliance_fingerprint,
+            "build_fingerprint": appliance_fingerprint,
+            "file": appliance_marker["file"],
+            "url": public_artifact_url(release, args.channel, appliance_marker["file"], args.download_base_url),
+            "marker_url": appliance_marker_url, "sha256": appliance_marker["sha256"],
+            "size": appliance_marker["size"], "hardware_verification": status,
+        })
     if (existing is not None and existing["version"] == args.version
             and existing["generation"] == args.generation
             and existing.get("bundle_fingerprint") == args.bundle_fingerprint):
+        if existing.get("schema_version") == DOWNLOAD_SCHEMA:
+            immutable = lambda item: {key: value for key, value in item.items()
+                                      if key != "hardware_verification"}
+            artifact_key = lambda item: (
+                item["artifact_fingerprint"], item["format"], item["file"])
+            old = {artifact_key(item): immutable(item)
+                   for item in existing["artifacts"]}
+            new = {artifact_key(item): immutable(item)
+                   for item in release["artifacts"]}
+            if old != new:
+                raise SystemExit("an immutable generation permits only hardware-verification promotion")
+            for item in release["artifacts"]:
+                previous = next(old_item for old_item in existing["artifacts"]
+                                if artifact_key(old_item) == artifact_key(item))
+                if (previous["hardware_verification"] == "verified"
+                        and item["hardware_verification"] != "verified"):
+                    raise SystemExit("hardware verification cannot be reversed")
         release["published_at"] = existing["published_at"]
     validate_download(release, args.channel, args.base_url, args.download_base_url)
     args.output.write_text(json.dumps(release, indent=2, sort_keys=True) + "\n", encoding="utf-8")

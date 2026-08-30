@@ -90,6 +90,29 @@ func TestValidateResultMarkerAcceptsCompleteClosures(t *testing.T) {
 	}
 }
 
+func TestValidateResultMarkerAcceptsBoardAppliance(t *testing.T) {
+	marker := resultMarker{
+		SchemaVersion: "freesense.appliance/v1", Fingerprint: resultID,
+		Generation: 1, BundleFingerprint: otherID, Architecture: "arm64",
+		PackageArch: "aarch64", Platform: "arm64-rpi5-d0", Filesystem: "ufs",
+		Firmware: []string{"raspberry-pi", "uefi"}, Capabilities: map[string]bool{"appliance": true},
+		Format: "img", Compression: "xz", PartitionScheme: "mbr",
+		TargetModels:         []string{"Raspberry Pi 5 Model B (BCM2712 D0)"},
+		BootInputs:           json.RawMessage(`{"archive_sha256":"` + isoSHA256 + `"}`),
+		HardwareVerification: "unverified", SHA256: isoSHA256, Size: 1024,
+		File: "FreeSense-1.1.0-g2-arm64-rpi5-d0.img.xz",
+	}
+	marker.Inputs.System = systemID
+	marker.Inputs.Packages = resultID
+	marker.Inputs.Platform = platformID
+	if _, err := validateResultMarker(
+		"appliance", resultID, systemID, resultID, platformID, freeBSDPinID, "",
+		"arm64", "aarch64", "arm64-rpi5-d0", 0, 1, marshalMarker(t, marker),
+	); err != nil {
+		t.Fatalf("validateResultMarker() error = %v", err)
+	}
+}
+
 func TestValidateResultMarkerRejectsBrokenClosures(t *testing.T) {
 	tests := []struct {
 		name       string

@@ -168,7 +168,7 @@ for value in ('"download-writer"', 'bucket: "downloads"', "R2_DOWNLOAD_BUCKET"):
             f"downloads-bucket credential boundary is missing {value!r}")
 publisher = read("scripts/publish_iso.sh")
 for value in ("https://downloads.freesense.org/v1/releases/", "sha256sum --check",
-              "count == 1 || count == 3 || count == 5",
+              "count > 0",
               "refusing to overwrite a conflicting downloads object"):
     require(value in publisher, f"ISO publisher is missing {value!r}")
 require("freebsd_pin_id" in reusable and "product_version" in reusable,
@@ -209,12 +209,13 @@ require("pkg add -f" not in installer,
         "worker-tool installation bypasses package ABI checks")
 
 stage_dir = ROOT / "scripts" / "runner" / "stages"
-require({path.stem for path in stage_dir.glob("*.sh")} == {"system", "packages", "iso", "cloud"},
-        "stage surface differs from system/packages/iso/cloud")
+require({path.stem for path in stage_dir.glob("*.sh")} == {"system", "packages", "iso", "cloud", "appliance"},
+        "stage surface differs from system/packages/iso/cloud/appliance")
 system_stage = read("scripts/runner/stages/system.sh")
 packages_stage = read("scripts/runner/stages/packages.sh")
 iso_stage = read("scripts/runner/stages/iso.sh")
 cloud_stage = read("scripts/runner/stages/cloud.sh")
+appliance_stage = read("scripts/runner/stages/appliance.sh")
 require("-S115200 -Dh" in iso_stage and not re.search(
             r'(?m)^console="comconsole,vidconsole"$', iso_stage),
         "ISO console selection is not firmware-aware dual-console mode")
@@ -257,7 +258,8 @@ cloud_assembled = cloud_stage.rfind('upload_immutable /tmp/assembled.json')
 require(cloud_payload >= 0 and cloud_assembled > cloud_payload,
         "cloud assembled marker is not uploaded last")
 require("result promote --stage iso" in reusable and
-        "result promote --stage cloud" in reusable,
+        "result promote --stage cloud" in reusable and
+        "result promote --stage appliance" in reusable,
         "host boot smoke does not commit verified completion markers")
 require(reusable.count("steps.reuse.outputs.assembled != 'true'") == 2,
         "assembled release images are not reused for smoke-only recovery")
@@ -274,8 +276,14 @@ require('"packages": current_packages_fingerprint' in planner_source and
         '"packages_fingerprint": (' in planner_source and
         '"channel_payload": channel_payload_sha256' in planner_source,
         "ISO identity omits the optional package pair or signed channel payload")
-for value in ('"bundle": bundle', '"kind": "cloud"', '"cloud_policy": selected_profile'):
+for value in ('"kind": "release-bundle"', '"cloud", shared_assembly',
+              '"appliance", shared_assembly', '"artifacts": ordered_artifacts'):
     require(value in planner_source, f"bundle/cloud identity is missing {value!r}")
+for value in ("freesense.appliance/v1", "arm64-rpi4b", "arm64-rpi5-d0",
+              "RPI_EFI.fd", "BOOTAA64.EFI", "bcm2712d0-rpi-5-b.dtb",
+              "u-boot.bin", 'growfs_enable="YES"', "force_growfs",
+              "FreeSense-cloud-init", "qemu-aarch64-static"):
+    require(value in appliance_stage, f"appliance assembly is missing {value!r}")
 for value in ("freesense.cloud-image/v1", "qemu-img convert",
               "CLOUD_VIRTUAL_SIZE_GIB", "CLOUD_FILESYSTEM",
               "FreeSense/ROOT/default", "gptzfsboot", "force_growfs",

@@ -20,6 +20,8 @@ FIELDS = (
     "TARGET", "ARCHITECTURE", "PACKAGE_ARCH", "ABI", "ALTABI", "FREEBSD_TARGET", "FREEBSD_TARGET_ARCH",
     "POUDRIERE_ARCH", "KERNEL", "EXECUTOR", "IMAGE_PROFILE", "FIRMWARE",
     "IMAGE_CAPABILITIES", "INSTALLER_FORMAT", "PUBLISH_ENABLED",
+    "BOOT_INPUTS", "TARGET_MODELS", "PARTITION_SCHEME", "APPLIANCE_FILESYSTEM",
+    "APPLIANCE_FORMAT", "APPLIANCE_COMPRESSION",
 )
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -34,7 +36,7 @@ def main() -> int:
     if missing:
         raise SystemExit("missing worker inputs: " + ", ".join(missing))
     stage = os.environ["STAGE"]
-    if stage not in {"system", "packages", "iso", "cloud"}:
+    if stage not in {"system", "packages", "iso", "cloud", "appliance"}:
         raise SystemExit(f"invalid stage: {stage}")
     parts = [
         ROOT / "scripts/runner/install-worker-tools.sh",

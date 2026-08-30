@@ -44,7 +44,7 @@ def load_policy(path: Path | None = None) -> dict[str, Any]:
                 "variants": cloud["variants"],
             }},
         })
-    if policy.get("schema_version") != "freesense.build-policy/v3":
+    if policy.get("schema_version") not in {"freesense.build-policy/v3", "freesense.build-policy/v4"}:
         raise SystemExit("unsupported build policy schema")
     targets = policy.get("targets")
     profiles = policy.get("image_profiles")
@@ -58,6 +58,18 @@ def load_policy(path: Path | None = None) -> dict[str, Any]:
         _validate_profile(name, value, targets)
     if policy.get("default_target") not in targets:
         raise SystemExit("build policy default target is invalid")
+    profile_sets = policy.get("release_profile_sets", {
+        name: [profile] for name, profile in policy["default_image_profiles"].items()
+    })
+    if set(profile_sets) != set(targets):
+        raise SystemExit("build policy release profile sets do not match targets")
+    for target_name, names in profile_sets.items():
+        if (not isinstance(names, list) or not names or len(names) != len(set(names))
+                or any(name not in profiles or profiles[name]["target"] != target_name
+                       for name in names)):
+            raise SystemExit(f"release profile set for {target_name} is invalid")
+        if names[0] != policy["default_image_profiles"].get(target_name):
+            raise SystemExit(f"release profile set for {target_name} must start with its default profile")
     return policy
 
 
@@ -98,12 +110,20 @@ def _validate_profile(name: str, value: Any, targets: dict[str, Any]) -> None:
         "target", "platform", "partition_scheme", "firmware", "installer",
         "filesystems", "formats", "devices", "capabilities", "variants",
     }
-    if set(value) != required or value["target"] not in targets or value["platform"] != name:
+    appliance_fields = {
+        "kind", "filesystem", "format", "compression", "target_models",
+        "boot_partition", "boot_inputs",
+    }
+    optional_fields = {"minimum_eeprom_date"}
+    is_appliance = value.get("kind") == "appliance"
+    expected_fields = required | (appliance_fields if is_appliance else set())
+    if (set(value) - optional_fields != expected_fields or value["target"] not in targets
+            or value["platform"] != name):
         raise SystemExit(f"image profile {name} has invalid fields")
     if not isinstance(value["capabilities"], dict) or not isinstance(value["variants"], dict):
         raise SystemExit(f"image profile {name} has invalid capabilities")
-    if value["partition_scheme"] != "gpt":
-        raise SystemExit(f"image profile {name} must use GPT")
+    if value["partition_scheme"] not in ({"mbr"} if is_appliance else {"gpt"}):
+        raise SystemExit(f"image profile {name} has an invalid partition scheme")
     cloud_enabled = value["capabilities"].get("cloud_init") is True
     expected_filesystems = ["ufs", "zfs"] if cloud_enabled else []
     expected_formats = ["qcow2", "raw"] if cloud_enabled else []
@@ -112,6 +132,18 @@ def _validate_profile(name: str, value: Any, targets: dict[str, Any]) -> None:
             or value["formats"] != expected_formats
             or set(value["variants"]) != expected_variants):
         raise SystemExit(f"image profile {name} cloud policy is inconsistent")
+    if is_appliance:
+        boot = value["boot_partition"]
+        inputs = value["boot_inputs"]
+        if (value["target"] != "arm64" or value["installer"] != "none"
+                or value["filesystem"] != "ufs" or value["format"] != "img"
+                or value["compression"] != "xz" or not value["target_models"]
+                or boot.get("filesystem") not in {"fat16", "fat32"}
+                or not isinstance(boot.get("size_mib"), int) or boot["size_mib"] <= 0
+                or not isinstance(inputs, dict) or not inputs
+                or value["capabilities"].get("appliance") is not True
+                or value["capabilities"].get("cloud_init") is not False):
+            raise SystemExit(f"image profile {name} appliance policy is inconsistent")
 
 
 def target(policy: dict[str, Any], name: str | None) -> dict[str, Any]:
@@ -134,6 +166,13 @@ def image_profile(policy: dict[str, Any], name: str | None, target_name: str) ->
         raise SystemExit(f"image profile {selected} belongs to target {value['target']}")
     value["name"] = selected
     return value
+
+
+def release_profiles(policy: dict[str, Any], target_name: str) -> list[dict[str, Any]]:
+    names = policy.get("release_profile_sets", {}).get(
+        target_name, [policy["default_image_profiles"].get(target_name)]
+    )
+    return [image_profile(policy, name, target_name) for name in names]
 
 
 def pin_target(lock: dict[str, Any], target_name: str) -> dict[str, Any]:
