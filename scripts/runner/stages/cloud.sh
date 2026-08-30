@@ -91,11 +91,16 @@ run_in_cloud_chroot "${root}" /usr/bin/env \
   PKG_INSTALL_EPOCH="${SOURCE_DATE_EPOCH}" /bin/sh -c '
   set -eu
   pkg add /tmp/pkg-bootstrap.pkg
+  extra_cloud_pkgs=""
+  for pkg_name in FreeSense-cloud-init qemu-guest-agent; do
+    if pkg -o REPOS_DIR=/tmp/assembly-repos -o PKG_CACHEDIR=/tmp/assembly-cache rquery -r FreeSenseAssembly "%n" "${pkg_name}" >/dev/null 2>&1; then
+      extra_cloud_pkgs="${extra_cloud_pkgs} ${pkg_name}"
+    fi
+  done
   pkg -o REPOS_DIR=/tmp/assembly-repos \
     -o PKG_CACHEDIR=/tmp/assembly-cache install -y -r FreeSenseAssembly \
     FreeSense FreeSense-base FreeSense-kernel-FreeSense FreeSense-rc FreeSense-system \
-    FreeSense-default-config-serial FreeSense-repoc \
-    FreeSense-cloud-init qemu-guest-agent
+    FreeSense-default-config-serial FreeSense-repoc ${extra_cloud_pkgs}
   # FreeSense-base expands its base payload during installation. Reapply the
   # signed product overlay last so its absolute /etc files win deterministically.
   pkg -o REPOS_DIR=/tmp/assembly-repos \

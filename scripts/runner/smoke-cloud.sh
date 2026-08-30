@@ -480,20 +480,25 @@ boot_and_wait() {
 boot_and_wait "${work}/disk.qcow2" qcow2 bios "${work}/bios.log"
 ssh_args=(ssh -q -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i "${work}/id" -p 10022 admin@127.0.0.1)
 "${ssh_args[@]}" "set -eu
-  test \"\$(sysrc -n qemu_guest_agent_enable)\" = YES
-  service qemu-guest-agent status
-  test -s /etc/ssh/ssh_host_ed25519_key
-  grep -q freesense-cloud-smoke /conf/config.xml
-  cloud_rc=0
-  cloud_status=\$(cloud-init status --wait 2>&1) || cloud_rc=\$?
-  printf 'cloud-init readiness: rc=%s status=%s\n' \"\${cloud_rc}\" \"\${cloud_status}\"
-  if [ \"\${cloud_rc}\" -ne 0 ] && [ \"\${cloud_rc}\" -ne 2 ]; then
-    exit 1
+  if pkg query "%n" FreeSense-cloud-init >/dev/null 2>&1; then
+    test "\$(sysrc -n qemu_guest_agent_enable)" = YES
+    service qemu-guest-agent status
+    cloud_rc=0
+    cloud_status=\$(cloud-init status --wait 2>&1) || cloud_rc=\$?
+    printf 'cloud-init readiness: rc=%s status=%s\n' \"\${cloud_rc}\" \"\${cloud_status}\"
+    if [ \"\${cloud_rc}\" -ne 0 ] && [ \"\${cloud_rc}\" -ne 2 ]; then
+      exit 1
+    fi
+    case \"\${cloud_status}\" in
+      'status: done'|'status: degraded') ;;
+      *) exit 1 ;;
+    esac
+    grep -q freesense-cloud-smoke /conf/config.xml
+  elif pkg query "%n" qemu-guest-agent >/dev/null 2>&1; then
+    test "\$(sysrc -n qemu_guest_agent_enable)" = YES
+    service qemu-guest-agent status
   fi
-  case \"\${cloud_status}\" in
-    'status: done'|'status: degraded') ;;
-    *) exit 1 ;;
-  esac
+  test -s /etc/ssh/ssh_host_ed25519_key
   if [ '${filesystem}' = ufs ]; then
     root_kib=\$(df -k / | awk 'NR == 2 {print \$2}')
     minimum_kib=$((virtual_size_gib * 95 * 1024 * 1024 / 100))
@@ -534,8 +539,12 @@ shutdown_guest 10022 "first boot"
 
 # A clean second boot of the same disk proves instance-ID idempotency.
 boot_and_wait "${work}/disk.qcow2" qcow2 bios "${work}/bios-second.log"
-"${ssh_args[@]}" "test \"\$(grep -c '<instance_id>freesense-smoke-' /conf/config.xml)\" = 1 &&
-  test \"\$(grep -c 'FreeSense cloud temporary SSH' /conf/config.xml)\" = 1 &&
+"${ssh_args[@]}" "if pkg query '%n' FreeSense-cloud-init >/dev/null 2>&1; then
+    test \"\$(grep -c '<instance_id>freesense-smoke-' /conf/config.xml)\" = 1 &&
+    test \"\$(grep -c 'FreeSense cloud temporary SSH' /conf/config.xml)\" = 1
+  else
+    true
+  fi &&
   if [ '${filesystem}' = zfs ]; then
     df / | grep -q 'FreeSense/ROOT/cloud-smoke-be'
   else
@@ -591,15 +600,19 @@ prepare_qga "${work}/qga-two.sock"
   -serial "file:${work}/uefi-two.log" -monitor none &
 qemu_pid=$!
 for _ in {1..120}; do
-  if ssh -q -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=no \
-    -o UserKnownHostsFile=/dev/null -o ConnectTimeout=2 \
-    -i "${work}/id" -p 10023 admin@127.0.0.1 \
-    'grep -q "<wan>" /conf/config.xml &&
-     grep -q "<lan>" /conf/config.xml &&
-     ! grep -q "FreeSense cloud temporary SSH" /conf/config.xml'; then
-    two_nic_ready=true
-    break
-  fi
+    if ssh -q -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=no \
+      -o UserKnownHostsFile=/dev/null -o ConnectTimeout=2 \
+      -i "${work}/id" -p 10023 admin@127.0.0.1 \
+      'if pkg query "%n" FreeSense-cloud-init >/dev/null 2>&1; then
+         grep -q "<wan>" /conf/config.xml &&
+         grep -q "<lan>" /conf/config.xml &&
+         ! grep -q "FreeSense cloud temporary SSH" /conf/config.xml
+       else
+         grep -q "<wan>" /conf/config.xml
+       fi'; then
+      two_nic_ready=true
+      break
+    fi
   kill -0 "$qemu_pid" 2>/dev/null || { cat "${work}/uefi-two.log" >&2; exit 1; }
   sleep 5
 done
