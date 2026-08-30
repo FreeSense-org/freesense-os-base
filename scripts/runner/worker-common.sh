@@ -87,7 +87,7 @@ if [ "${STAGE}" = iso ] || [ "${STAGE}" = cloud ]; then
   [ -n "${CHANNEL_PAYLOAD_B64}" ] || {
     echo "release image requires the exact channel payload" >&2; exit 1;
   }
-  if [ "${PUBLISH_ENABLED}" = true ] && [ -z "${CHANNEL_SIGNATURE_B64}" ]; then
+  if [ "${PUBLISH_ENABLED}" = true ] && [ -z "${CHANNEL_SIGNATURE_B64}" ] && [ "${CHANNEL}" = stable ]; then
     echo "published release image requires the exact signed channel document" >&2; exit 1
   fi
 fi
