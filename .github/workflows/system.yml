@@ -187,7 +187,7 @@ jobs:
             --fingerprint "${{ needs.plan.outputs.system }}" --private-key "$key"
       - name: Record publication target for release orchestration
         run: printf '%s\n' '${{ needs.plan.outputs.target }}' >"${RUNNER_TEMP}/publication-target"
-      - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+      - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
         with:
           name: publication-target
           path: ${{ runner.temp }}/publication-target

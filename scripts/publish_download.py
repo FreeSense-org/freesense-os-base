@@ -359,7 +359,7 @@ def validate_download(release, channel: str, base_url: str,
             or not SHA256.fullmatch(release.get("bundle_fingerprint", ""))
             or not SHA256.fullmatch(release.get("system", ""))
             or not isinstance(release.get("generation"), int) or release["generation"] <= 0
-            or not isinstance(artifacts, list) or len(artifacts) not in {3, 5}
+            or not isinstance(artifacts, list) or len(artifacts) not in {1, 3, 5}
             or not isinstance(release.get("published_at"), str)
             or ("changes" in release and not valid_changes(release["changes"]))
             or ("release_notes" in release
@@ -374,10 +374,13 @@ def validate_download(release, channel: str, base_url: str,
                 or not isinstance(release.get("capabilities"), dict)):
             raise SystemExit(f"existing {channel} download architecture is invalid")
     installer_format = "img" if release.get("architecture") == "arm64" else "iso"
-    expected = {
-        ("installer", None, installer_format),
-        ("cloud", "ufs", "qcow2"), ("cloud", "ufs", "raw"),
-    }
+    installer_only = (schema == DOWNLOAD_SCHEMA and len(artifacts) == 1
+                      and release.get("capabilities", {}).get("cloud_init") is False)
+    if len(artifacts) == 1 and not installer_only:
+        raise SystemExit(f"existing {channel} download document has invalid artifacts")
+    expected = {("installer", None, installer_format)}
+    if not installer_only:
+        expected.update({("cloud", "ufs", "qcow2"), ("cloud", "ufs", "raw")})
     if len(artifacts) == 5:
         expected.update({("cloud", "zfs", "qcow2"), ("cloud", "zfs", "raw")})
     actual = set()
@@ -441,8 +444,8 @@ def main() -> int:
     parser.add_argument("--version", required=True)
     parser.add_argument("--fingerprint", required=True)
     parser.add_argument("--bundle-fingerprint", required=True)
-    parser.add_argument("--cloud-ufs-fingerprint", required=True)
-    parser.add_argument("--cloud-zfs-fingerprint", required=True)
+    parser.add_argument("--cloud-ufs-fingerprint", default="")
+    parser.add_argument("--cloud-zfs-fingerprint", default="")
     parser.add_argument("--system", required=True)
     parser.add_argument("--generation", required=True, type=int)
     parser.add_argument("--source", required=True)
@@ -463,6 +466,7 @@ def main() -> int:
     policy = load_policy(Path(__file__).resolve().parents[1] / "config/build-policy.json")
     selected_target = target(policy, args.target)
     selected_profile = image_profile(policy, args.image_profile, args.target)
+    cloud_enabled = selected_profile["capabilities"].get("cloud_init") is True
     if not selected_target["publish_enabled"]:
         raise SystemExit(f"publication for target {args.target} is disabled by policy")
     release_policy = policy["release"]
@@ -471,11 +475,13 @@ def main() -> int:
     ]
     if (not SHA256.fullmatch(args.fingerprint)
             or not SHA256.fullmatch(args.bundle_fingerprint)
-            or not SHA256.fullmatch(args.cloud_ufs_fingerprint)
-            or not SHA256.fullmatch(args.cloud_zfs_fingerprint)
             or not SHA256.fullmatch(args.system)
             or not SHA256.fullmatch(args.packages_fingerprint)):
         raise SystemExit("invalid artifact identity")
+    cloud_fingerprints = (args.cloud_ufs_fingerprint, args.cloud_zfs_fingerprint)
+    if ((cloud_enabled and any(not SHA256.fullmatch(value) for value in cloud_fingerprints))
+            or (not cloud_enabled and any(cloud_fingerprints))):
+        raise SystemExit("cloud artifact identities do not match the image profile")
     if args.generation <= 0 or any(not SHA.fullmatch(value) for value in
         (args.source, args.system_ports, args.packages, args.ports,
          args.os_definition, args.freebsd)):
@@ -500,12 +506,12 @@ def main() -> int:
             or not SHA256.fullmatch(marker.get("sha256", ""))
             or not isinstance(marker.get("size"), int) or marker["size"] <= 0
             or not isinstance(marker.get("file"), str)):
-        raise SystemExit("boot-tested ISO marker does not match the release")
+        raise SystemExit("boot-tested installer marker does not match the release")
 
     cloud_results = {}
-    for filesystem, cloud_fingerprint in (
-        ("ufs", args.cloud_ufs_fingerprint), ("zfs", args.cloud_zfs_fingerprint)
-    ):
+    cloud_identities = (("ufs", args.cloud_ufs_fingerprint),
+                        ("zfs", args.cloud_zfs_fingerprint)) if cloud_enabled else ()
+    for filesystem, cloud_fingerprint in cloud_identities:
         cloud_artifact_url = f"{args.base_url}/artifacts/cloud/{cloud_fingerprint}"
         cloud_marker_url = cloud_artifact_url + "/complete.json"
         cloud_marker = fetch_json(cloud_marker_url)
@@ -592,7 +598,7 @@ def main() -> int:
         "marker_url": marker_url, "sha256": marker["sha256"], "size": marker["size"],
         "build_fingerprint": args.fingerprint,
     })
-    for filesystem in ("ufs", "zfs"):
+    for filesystem in cloud_results:
         cloud_fingerprint, cloud_marker_url, cloud_files = cloud_results[filesystem]
         for item in sorted(cloud_files, key=lambda value: value["format"]):
             release["artifacts"].append({

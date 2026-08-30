@@ -2,23 +2,26 @@
 set -euo pipefail
 
 usage() {
-  echo "usage: run-vm.sh --image-sha256 SHA256 --script FILE [--timeout SECONDS]" >&2
+  echo "usage: run-vm.sh --image-sha256 SHA256 --script FILE [--timeout SECONDS] [--failure-dir DIR]" >&2
   exit 2
 }
 
 image_sha=""
 script_path=""
 timeout_seconds=19800
+failure_dir=""
 while (($#)); do
   case "$1" in
     --image-sha256) image_sha=${2:-}; shift 2 ;;
     --script) script_path=${2:-}; shift 2 ;;
     --timeout) timeout_seconds=${2:-}; shift 2 ;;
+    --failure-dir) failure_dir=${2:-}; shift 2 ;;
     *) usage ;;
   esac
 done
 [[ $image_sha =~ ^[0-9a-f]{64}$ ]] || usage
 [[ -f $script_path ]] || usage
+[[ -z $failure_dir || $failure_dir == /* ]] || usage
 : "${FSBUILD:?FSBUILD must point to the fsbuild executable}"
 : "${RUNNER_TEMP:?RUNNER_TEMP is required}"
 
@@ -57,6 +60,21 @@ stop_qemu() {
 }
 
 cleanup() {
+  status=$?
+  if [[ $status -ne 0 && -n $failure_dir ]]; then
+    mkdir -p "$failure_dir"
+    [[ -z $serial || ! -f $serial ]] || cp -f "$serial" "${failure_dir}/serial.log"
+    {
+      echo "FreeSense build VM failure"
+      echo "status=${status}"
+      echo "image_sha256=${image_sha}"
+      echo "timeout_seconds=${timeout_seconds}"
+      echo "github_run_id=${GITHUB_RUN_ID:-local}"
+      echo "github_run_attempt=${GITHUB_RUN_ATTEMPT:-1}"
+      echo "collected_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+      echo "The rendered worker and cidata are intentionally excluded because they contain credentials."
+    } >"${failure_dir}/README.txt"
+  fi
   if [[ -n $pidfile && -f $pidfile ]]; then
     pid=$(cat "$pidfile" 2>/dev/null || true)
     if [[ $pid =~ ^[0-9]+$ ]] && kill -0 "$pid" 2>/dev/null; then
@@ -67,6 +85,7 @@ cleanup() {
   fi
   [[ -z $run_dir ]] || rm -rf -- "$run_dir"
   [[ -z $download ]] || rm -f -- "$download"
+  return "$status"
 }
 trap cleanup EXIT
 trap 'exit 130' INT

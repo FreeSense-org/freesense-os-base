@@ -44,9 +44,11 @@ done
 qemu_tool=qemu-system-x86_64
 [[ $architecture == arm64 ]] && qemu_tool=qemu-system-aarch64
 if [[ $architecture == arm64 ]]; then
-  if ! command -v "$qemu_tool" >/dev/null || ! ls /usr/share/AAVMF/AAVMF_CODE.fd /usr/share/edk2/aarch64/QEMU_EFI.fd /usr/share/qemu-efi-aarch64/QEMU_EFI.fd 2>/dev/null; then
-    sudo apt-get update -y && sudo apt-get install -y qemu-system-arm qemu-efi-aarch64 || true
-  fi
+  firmware_found=false
+  for candidate in /usr/share/AAVMF/AAVMF_CODE.fd /usr/share/edk2/aarch64/QEMU_EFI.fd /usr/share/qemu-efi-aarch64/QEMU_EFI.fd; do
+    [[ ! -f $candidate ]] || { firmware_found=true; break; }
+  done
+  [[ $firmware_found == true ]] || { echo "AAVMF firmware was not found on the pinned runner" >&2; exit 1; }
 fi
 for tool in curl jq "$qemu_tool" setsid sha256sum stat timeout; do
   command -v "$tool" >/dev/null || { echo "missing ISO smoke dependency: $tool" >&2; exit 1; }
@@ -86,7 +88,7 @@ trap 'exit 130' INT
 trap 'exit 143' TERM
 
 run_dir=$(mktemp -d "${RUNNER_TEMP}/freesense-iso-smoke.XXXXXX")
-marker=${run_dir}/complete.json
+marker=${run_dir}/assembled.json
 iso=${run_dir}/installer
 serial_log=${run_dir}/serial.log
 qemu_log=${run_dir}/qemu.log
@@ -95,7 +97,7 @@ artifact_url=${public_base_url}/artifacts/iso/${fingerprint}
 curl --fail --location --silent --show-error --proto '=https' \
   --user-agent 'FreeSense-build/1' --retry 12 --retry-all-errors \
   --retry-delay 5 --connect-timeout 15 --max-time 45 \
-  --output "$marker" "${artifact_url}/complete.json"
+  --output "$marker" "${artifact_url}/assembled.json?workflow_run=${GITHUB_RUN_ID:-local}"
 
 jq -e --arg fingerprint "$fingerprint" --arg system "$system" --arg packages "$packages" \
   --arg channel "$channel" --arg train "$package_train" \
@@ -149,12 +151,14 @@ else
     -boot order=d,strict=on -cdrom "$iso" -nic none -display none -monitor none \
     -serial "file:${serial_log}" -no-reboot)
 fi
-setsid timeout --signal=TERM --kill-after=15s 300s \
+smoke_timeout=300
+[[ $architecture == arm64 ]] && smoke_timeout=900
+setsid timeout --signal=TERM --kill-after=15s "${smoke_timeout}s" \
   "$qemu_tool" "${qemu_args[@]}" >"$qemu_log" 2>&1 &
 smoke_pid=$!
 
 ready=""
-for _ in {1..60}; do
+for ((attempt=0; attempt < smoke_timeout / 5; attempt++)); do
   if grep -aFq "$readiness" "$serial_log"; then
     ready=yes
     break
@@ -178,7 +182,7 @@ if [[ -n $smoke_pid ]]; then
 fi
 
 if [[ -z $ready ]]; then
-  echo "ISO did not reach the FreeSense installer within 300 seconds (QEMU status $qemu_status)" >&2
+  echo "ISO did not reach the FreeSense installer within ${smoke_timeout} seconds (QEMU status $qemu_status)" >&2
   echo "serial output: $(stat -c %s "$serial_log") bytes" >&2
   tail -n 80 "$serial_log" >&2 || true
   echo "QEMU diagnostics:" >&2

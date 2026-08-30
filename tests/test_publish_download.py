@@ -173,6 +173,49 @@ def publisher_argv(output: Path, channel="stable", generation=2, fingerprint=FIN
 
 
 class PublishDownloadTests(unittest.TestCase):
+    def test_arm64_installer_only_document_is_valid(self):
+        value = release()
+        value.update({
+            "architecture": "arm64", "package_arch": "aarch64",
+            "platform": "generic-arm64-uefi", "firmware": ["uefi"],
+            "capabilities": {"bios": False, "uefi": True, "iso": False,
+                             "installer_img": True, "cloud_init": False},
+        })
+        installer = value["artifacts"][0]
+        installer.update({
+            "format": "img", "compression": "xz",
+            "file": "FreeSense-1.0.0-arm64-installer.img.xz",
+        })
+        installer["url"] = (
+            f"{DOWNLOAD_BASE_URL}/releases/stable/1.0.0/{installer['file']}"
+        )
+        value["artifacts"] = [installer]
+        publish.validate_download(value, "stable", BASE_URL, DOWNLOAD_BASE_URL)
+
+    def test_publishes_arm64_installer_without_cloud_requests(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory, "devel.arm64.json")
+            argv = publisher_argv(output, channel="devel")
+            for option in ("--cloud-ufs-fingerprint", "--cloud-zfs-fingerprint"):
+                index = argv.index(option)
+                del argv[index:index + 2]
+            argv.extend(("--target", "arm64", "--image-profile", "generic-arm64-uefi"))
+            arm_marker = marker(channel="devel")
+            arm_marker.update({
+                "schema_version": "freesense.installer/v1",
+                "file": "FreeSense-1.1.0-g2-arm64-installer.img.xz",
+            })
+            responses = iter((arm_marker, None))
+            with mock.patch.object(sys, "argv", argv), mock.patch.object(
+                publish, "fetch_json", side_effect=lambda *_args, **_kwargs: next(responses)
+            ), redirect_stdout(io.StringIO()):
+                self.assertEqual(publish.main(), 0)
+            value = json.loads(output.read_text())
+        self.assertEqual(value["architecture"], "arm64")
+        self.assertFalse(value["capabilities"]["cloud_init"])
+        self.assertEqual(len(value["artifacts"]), 1)
+        self.assertEqual(value["artifacts"][0]["format"], "img")
+
     def test_legacy_v1_document_remains_readable(self):
         publish.validate_download(
             release(legacy=True), "stable", BASE_URL, DOWNLOAD_BASE_URL,

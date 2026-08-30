@@ -239,6 +239,7 @@ jobs:
       image_capabilities: ${{ steps.plan.outputs.image_capabilities }}
       installer_format: ${{ steps.plan.outputs.installer_format }}
       publish_enabled: ${{ steps.plan.outputs.publish_enabled }}
+      cloud_enabled: ${{ steps.plan.outputs.cloud_enabled }}
       cloud_ufs_virtual_size_gib: ${{ steps.plan.outputs.cloud_ufs_virtual_size_gib }}
       cloud_zfs_virtual_size_gib: ${{ steps.plan.outputs.cloud_zfs_virtual_size_gib }}
     steps:
@@ -260,10 +261,12 @@ jobs:
             }
             public_base_url=$(jq -er .public_base_url config/build-policy.json)
             package_train=$(jq -er .package_train config/build-policy.json)
-            curl --fail --silent --show-error --location \
-              "${public_base_url}/artifacts/system/${system}/complete.json" -o "${RUNNER_TEMP}/system-marker.json"
-            curl --fail --silent --show-error --location \
-              "${public_base_url}/artifacts/packages/${package_train}/${packages}/complete.json" -o "${RUNNER_TEMP}/packages-marker.json"
+            curl --fail --silent --show-error --location --retry 12 --retry-all-errors \
+              --retry-delay 5 --connect-timeout 15 \
+              "${public_base_url}/artifacts/system/${system}/complete.json?workflow_run=${GITHUB_RUN_ID}" -o "${RUNNER_TEMP}/system-marker.json"
+            curl --fail --silent --show-error --location --retry 12 --retry-all-errors \
+              --retry-delay 5 --connect-timeout 15 \
+              "${public_base_url}/artifacts/packages/${package_train}/${packages}/complete.json?workflow_run=${GITHUB_RUN_ID}" -o "${RUNNER_TEMP}/packages-marker.json"
             python3 scripts/staged_system_closure.py --target arm64 \
               --marker "${RUNNER_TEMP}/system-marker.json" \
               --packages-marker "${RUNNER_TEMP}/packages-marker.json" \
@@ -362,7 +365,7 @@ jobs:
 
   cloud-ufs:
     needs: [iso-plan, iso]
-    if: always() && needs.iso-plan.result == 'success'
+    if: needs.iso-plan.result == 'success' && needs.iso.result == 'success' && needs.iso-plan.outputs.cloud_enabled == 'true'
     uses: ./.github/workflows/runner-build.yml
     with:
       stage: cloud
@@ -411,7 +414,7 @@ jobs:
 
   cloud-zfs:
     needs: [iso-plan, cloud-ufs]
-    if: always() && needs.iso-plan.result == 'success'
+    if: needs.iso-plan.result == 'success' && needs.cloud-ufs.result == 'success' && needs.iso-plan.outputs.cloud_enabled == 'true'
     uses: ./.github/workflows/runner-build.yml
     with:
       stage: cloud
@@ -462,7 +465,11 @@ jobs:
     needs: [iso-plan, iso, cloud-ufs, cloud-zfs]
     runs-on: ubuntu-24.04
     environment: channel-publisher
-    if: needs.iso-plan.outputs.publish_enabled == 'true'
+    if: >-
+      always() && needs.iso-plan.result == 'success' && needs.iso.result == 'success' &&
+      needs.iso-plan.outputs.publish_enabled == 'true' &&
+      (needs.iso-plan.outputs.cloud_enabled != 'true' ||
+       (needs.cloud-ufs.result == 'success' && needs.cloud-zfs.result == 'success'))
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0

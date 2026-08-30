@@ -109,9 +109,11 @@ for value in ("Reserve immutable release generation", "system_generation",
               "--proposed \"${GITHUB_RUN_NUMBER}\""):
     require(value in release_workflow,
             f"independent ISO release generation is missing {value!r}")
-require(release_workflow.count(
-            "if: always() && needs.iso-plan.result == 'success'") == 3,
-        "manual bundle artifact jobs do not survive the intentionally skipped release gate")
+require("if: always() && needs.iso-plan.result == 'success'" in release_workflow,
+        "manual installer jobs do not survive the intentionally skipped release gate")
+require("needs.iso.result == 'success' && needs.iso-plan.outputs.cloud_enabled == 'true'" in release_workflow and
+        "needs.cloud-ufs.result == 'success' && needs.iso-plan.outputs.cloud_enabled == 'true'" in release_workflow,
+        "cloud jobs are not gated by installer verification and profile capability")
 for value in ("needs: [iso-plan, iso]", "needs: [iso-plan, cloud-ufs]"):
     require(value in release_workflow,
             f"release KVM jobs are not serialized by {value!r}")
@@ -239,13 +241,16 @@ repository_complete = common.rfind('upload_immutable "${directory}/complete.json
 require(repository_payload >= 0 and repository_complete > repository_payload,
         "repository completion marker is not uploaded last")
 iso_payload = iso_stage.rfind('upload_immutable "${image}"')
-iso_complete = iso_stage.rfind('upload_immutable /tmp/complete.json')
-require(iso_payload >= 0 and iso_complete > iso_payload,
-        "ISO completion marker is not uploaded last")
+iso_assembled = iso_stage.rfind('upload_immutable /tmp/assembled.json')
+require(iso_payload >= 0 and iso_assembled > iso_payload,
+        "ISO assembled marker is not uploaded last")
 cloud_payload = cloud_stage.rfind('upload_immutable /root/')
-cloud_complete = cloud_stage.rfind('upload_immutable /tmp/complete.json')
-require(cloud_payload >= 0 and cloud_complete > cloud_payload,
-        "cloud completion marker is not uploaded last")
+cloud_assembled = cloud_stage.rfind('upload_immutable /tmp/assembled.json')
+require(cloud_payload >= 0 and cloud_assembled > cloud_payload,
+        "cloud assembled marker is not uploaded last")
+require("result promote --stage iso" in reusable and
+        "result promote --stage cloud" in reusable,
+        "host boot smoke does not commit verified completion markers")
 assembly_common = read("scripts/runner/assembly-common.sh")
 require("repos.manifest.json" not in iso_stage + assembly_common and
         "CHANNEL_PAYLOAD_B64" in assembly_common and "CHANNEL_SIGNATURE_B64" in assembly_common,

@@ -76,14 +76,11 @@
       "partition_scheme": "gpt",
       "firmware": ["uefi"],
       "installer": "img",
-      "filesystems": ["ufs", "zfs"],
-      "formats": ["qcow2", "raw"],
+      "filesystems": [],
+      "formats": [],
       "devices": ["virtio-blk", "virtio-net"],
-      "capabilities": {"bios": false, "uefi": true, "iso": false, "installer_img": true, "cloud_init": true},
-      "variants": {
-        "ufs": {"virtual_size_gib": 16, "root_growth": true},
-        "zfs": {"virtual_size_gib": 32, "root_growth": true, "pool": "FreeSense", "root_dataset": "FreeSense/ROOT/default", "topology": "stripe", "boot_environments": true, "autotrim": false}
-      }
+      "capabilities": {"bios": false, "uefi": true, "iso": false, "installer_img": true, "cloud_init": false},
+      "variants": {}
     }
   },
   "public_base_url": "https://pkg.freesense.org/v1",

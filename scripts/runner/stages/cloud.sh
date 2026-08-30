@@ -91,16 +91,17 @@ run_in_cloud_chroot "${root}" /usr/bin/env \
   PKG_INSTALL_EPOCH="${SOURCE_DATE_EPOCH}" /bin/sh -c '
   set -eu
   pkg add /tmp/pkg-bootstrap.pkg
-  extra_cloud_pkgs=""
   for pkg_name in FreeSense-cloud-init qemu-guest-agent; do
-    if pkg -o REPOS_DIR=/tmp/assembly-repos -o PKG_CACHEDIR=/tmp/assembly-cache rquery -r FreeSenseAssembly "%n" "${pkg_name}" >/dev/null 2>&1; then
-      extra_cloud_pkgs="${extra_cloud_pkgs} ${pkg_name}"
-    fi
+    pkg -o REPOS_DIR=/tmp/assembly-repos -o PKG_CACHEDIR=/tmp/assembly-cache \
+      rquery -r FreeSenseAssembly "%n" "${pkg_name}" >/dev/null || {
+        echo "required cloud image package is missing: ${pkg_name}" >&2
+        exit 1
+      }
   done
   pkg -o REPOS_DIR=/tmp/assembly-repos \
     -o PKG_CACHEDIR=/tmp/assembly-cache install -y -r FreeSenseAssembly \
     FreeSense FreeSense-base FreeSense-kernel-FreeSense FreeSense-rc FreeSense-system \
-    FreeSense-default-config-serial FreeSense-repoc ${extra_cloud_pkgs}
+    FreeSense-default-config-serial FreeSense-repoc FreeSense-cloud-init qemu-guest-agent
   # FreeSense-base expands its base payload during installation. Reapply the
   # signed product overlay last so its absolute /etc files win deterministically.
   pkg -o REPOS_DIR=/tmp/assembly-repos \
@@ -370,6 +371,6 @@ jq -n \
        sha256:$qcow_sha,size:$qcow_size,virtual_size:$virtual_size},
       {kind:"cloud",format:"raw",compression:"xz",file:$raw_file,
        sha256:$raw_sha,size:$raw_size,virtual_size:$virtual_size}
-    ]}' >/tmp/complete.json
-upload_immutable /tmp/complete.json "${RESULT}/complete.json"
+    ]}' >/tmp/assembled.json
+upload_immutable /tmp/assembled.json "${RESULT}/assembled.json"
 phase cloud-complete
