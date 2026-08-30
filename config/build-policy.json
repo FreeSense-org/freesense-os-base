@@ -1,5 +1,5 @@
 {
-  "schema_version": "freesense.build-policy/v3",
+  "schema_version": "freesense.build-policy/v4",
   "package_train": "1.1",
   "release": {
     "stable_train": "1.0",
@@ -14,6 +14,10 @@
   "default_image_profiles": {
     "amd64": "generic-amd64",
     "arm64": "generic-arm64-uefi"
+  },
+  "release_profile_sets": {
+    "amd64": ["generic-amd64"],
+    "arm64": ["generic-arm64-uefi", "arm64-rpi4b", "arm64-rpi5-d0"]
   },
   "targets": {
     "amd64": {
@@ -80,6 +84,57 @@
       "formats": [],
       "devices": ["virtio-blk", "virtio-net"],
       "capabilities": {"bios": false, "uefi": true, "iso": false, "installer_img": true, "cloud_init": false},
+      "variants": {}
+    },
+    "arm64-rpi4b": {
+      "target": "arm64",
+      "platform": "arm64-rpi4b",
+      "kind": "appliance",
+      "partition_scheme": "mbr",
+      "firmware": ["raspberry-pi-firmware", "u-boot"],
+      "installer": "none",
+      "filesystem": "ufs",
+      "format": "img",
+      "compression": "xz",
+      "filesystems": [],
+      "formats": [],
+      "devices": ["bcm2711", "sd", "usb", "genet", "axge"],
+      "target_models": ["Raspberry Pi 4 Model B"],
+      "boot_partition": {"filesystem": "fat16", "size_mib": 50},
+      "boot_inputs": {
+        "provider": "FreeBSD",
+        "recipe": "release/arm64/RPI.conf",
+        "ports": ["sysutils/u-boot-rpi-arm64", "sysutils/rpi-firmware"]
+      },
+      "capabilities": {"bios": false, "uefi": false, "u_boot": true, "iso": false, "installer_img": false, "appliance": true, "cloud_init": false, "root_growth": true, "serial_console": true, "hdmi_console": true},
+      "variants": {}
+    },
+    "arm64-rpi5-d0": {
+      "target": "arm64",
+      "platform": "arm64-rpi5-d0",
+      "kind": "appliance",
+      "partition_scheme": "mbr",
+      "firmware": ["raspberry-pi", "uefi"],
+      "installer": "none",
+      "filesystem": "ufs",
+      "format": "img",
+      "compression": "xz",
+      "filesystems": [],
+      "formats": [],
+      "devices": ["bcm2712-d0", "sd", "usb", "axge", "ure"],
+      "target_models": ["Raspberry Pi 5 Model B (BCM2712 D0)"],
+      "boot_partition": {"filesystem": "fat32", "size_mib": 260},
+      "minimum_eeprom_date": "2025-06-09",
+      "boot_inputs": {
+        "provider": "NumberOneGit/rpi5-uefi",
+        "version": "v0.1",
+        "commit": "510c68e95515168bb74a4afb1932b63fb437d014",
+        "url": "https://github.com/NumberOneGit/rpi5-uefi/releases/download/v0.1/RPI5_D0.zip",
+        "archive_sha256": "c4fbbec9cd0d1115c9adab884923061b960de42b4ca6d65ba5f08cb6b46c6fad",
+        "dtbs": ["bcm2712-d-rpi-5-b.dtb", "bcm2712-rpi-5-b.dtb", "bcm2712d0-rpi-5-b.dtb"],
+        "redistribution_review": "pending"
+      },
+      "capabilities": {"bios": false, "uefi": true, "u_boot": false, "iso": false, "installer_img": false, "appliance": true, "cloud_init": false, "root_growth": true, "serial_console": true, "hdmi_console": true, "onboard_networking": false},
       "variants": {}
     }
   },

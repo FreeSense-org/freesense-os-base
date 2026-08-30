@@ -217,6 +217,11 @@ jobs:
       fingerprint: ${{ steps.plan.outputs.iso }}
       cloud_ufs_fingerprint: ${{ steps.plan.outputs.cloud_ufs }}
       cloud_zfs_fingerprint: ${{ steps.plan.outputs.cloud_zfs }}
+      appliance_rpi4b_fingerprint: ${{ steps.plan.outputs.appliance_rpi4b }}
+      appliance_rpi5_d0_fingerprint: ${{ steps.plan.outputs.appliance_rpi5_d0 }}
+      appliance_rpi4b_spec: ${{ steps.plan.outputs.appliance_rpi4b_spec }}
+      appliance_rpi5_d0_spec: ${{ steps.plan.outputs.appliance_rpi5_d0_spec }}
+      publication_ready: ${{ steps.plan.outputs.publication_ready }}
       bundle_fingerprint: ${{ steps.plan.outputs.bundle }}
       system: ${{ steps.plan.outputs.system }}
       generation: ${{ steps.reserve.outputs.generation }}
@@ -380,6 +385,112 @@ jobs:
       publish_enabled: ${{ needs.iso-plan.outputs.publish_enabled }}
     secrets: inherit
 
+  appliance-rpi4b:
+    needs: [iso-plan, iso]
+    if: needs.iso-plan.outputs.target == 'arm64' && needs.iso.result == 'success'
+    uses: ./.github/workflows/runner-build.yml
+    with:
+      stage: appliance
+      fingerprint: ${{ needs.iso-plan.outputs.appliance_rpi4b_fingerprint }}
+      platform_id: ${{ needs.iso-plan.outputs.platform }}
+      system_id: ${{ needs.iso-plan.outputs.system }}
+      packages_id: ${{ needs.iso-plan.outputs.packages_fingerprint }}
+      source_sha: ${{ needs.iso-plan.outputs.source_sha }}
+      system_sha: ${{ needs.iso-plan.outputs.system_sha }}
+      packages_sha: ${{ needs.iso-plan.outputs.packages_sha }}
+      os_base_sha: ${{ needs.iso-plan.outputs.os_base_sha }}
+      freebsd_sha: ${{ needs.iso-plan.outputs.freebsd_sha }}
+      ports_sha: ${{ needs.iso-plan.outputs.ports_sha }}
+      image_sha256: ${{ needs.iso-plan.outputs.image_sha256 }}
+      worker_tools_sha256: ${{ needs.iso-plan.outputs.worker_tools_sha256 }}
+      jail_object: ${{ needs.iso-plan.outputs.jail_object }}
+      freebsd_pin_id: ${{ needs.iso-plan.outputs.freebsd_pin_id }}
+      product_version: ${{ needs.iso-plan.outputs.product_version }}
+      package_train: ${{ needs.iso-plan.outputs.package_train }}
+      generation: ${{ needs.iso-plan.outputs.generation }}
+      system_generation: ${{ needs.iso-plan.outputs.system_generation }}
+      public_base_url: ${{ needs.iso-plan.outputs.public_base_url }}
+      channel: ${{ needs.iso-plan.outputs.channel }}
+      channel_payload_sha256: ${{ needs.iso-plan.outputs.channel_payload_sha256 }}
+      channel_payload_base64: ${{ needs.iso-plan.outputs.channel_payload_base64 }}
+      channel_signature_base64: ${{ needs.iso-plan.outputs.channel_signature_base64 }}
+      bundle_id: ${{ needs.iso-plan.outputs.bundle_fingerprint }}
+      target: arm64
+      architecture: arm64
+      package_arch: aarch64
+      abi: FreeBSD:16:aarch64
+      altabi: freebsd:16:aarch64:64
+      freebsd_target: arm64
+      freebsd_target_arch: aarch64
+      poudriere_arch: arm64.aarch64
+      kernel: FreeSense
+      executor: amd64-cross-qemu-user
+      image_profile: arm64-rpi4b
+      firmware: raspberry-pi-firmware,u-boot
+      image_capabilities: ${{ toJSON(fromJSON(needs.iso-plan.outputs.appliance_rpi4b_spec).capabilities) }}
+      installer_format: none
+      publish_enabled: ${{ needs.iso-plan.outputs.publish_enabled }}
+      boot_inputs: ${{ toJSON(fromJSON(needs.iso-plan.outputs.appliance_rpi4b_spec).boot_inputs) }}
+      target_models: ${{ toJSON(fromJSON(needs.iso-plan.outputs.appliance_rpi4b_spec).target_models) }}
+      partition_scheme: mbr
+      appliance_filesystem: ufs
+      appliance_format: img
+      appliance_compression: xz
+    secrets: inherit
+
+  appliance-rpi5-d0:
+    needs: [iso-plan, appliance-rpi4b]
+    if: needs.iso-plan.outputs.target == 'arm64' && needs.appliance-rpi4b.result == 'success'
+    uses: ./.github/workflows/runner-build.yml
+    with:
+      stage: appliance
+      fingerprint: ${{ needs.iso-plan.outputs.appliance_rpi5_d0_fingerprint }}
+      platform_id: ${{ needs.iso-plan.outputs.platform }}
+      system_id: ${{ needs.iso-plan.outputs.system }}
+      packages_id: ${{ needs.iso-plan.outputs.packages_fingerprint }}
+      source_sha: ${{ needs.iso-plan.outputs.source_sha }}
+      system_sha: ${{ needs.iso-plan.outputs.system_sha }}
+      packages_sha: ${{ needs.iso-plan.outputs.packages_sha }}
+      os_base_sha: ${{ needs.iso-plan.outputs.os_base_sha }}
+      freebsd_sha: ${{ needs.iso-plan.outputs.freebsd_sha }}
+      ports_sha: ${{ needs.iso-plan.outputs.ports_sha }}
+      image_sha256: ${{ needs.iso-plan.outputs.image_sha256 }}
+      worker_tools_sha256: ${{ needs.iso-plan.outputs.worker_tools_sha256 }}
+      jail_object: ${{ needs.iso-plan.outputs.jail_object }}
+      freebsd_pin_id: ${{ needs.iso-plan.outputs.freebsd_pin_id }}
+      product_version: ${{ needs.iso-plan.outputs.product_version }}
+      package_train: ${{ needs.iso-plan.outputs.package_train }}
+      generation: ${{ needs.iso-plan.outputs.generation }}
+      system_generation: ${{ needs.iso-plan.outputs.system_generation }}
+      public_base_url: ${{ needs.iso-plan.outputs.public_base_url }}
+      channel: ${{ needs.iso-plan.outputs.channel }}
+      channel_payload_sha256: ${{ needs.iso-plan.outputs.channel_payload_sha256 }}
+      channel_payload_base64: ${{ needs.iso-plan.outputs.channel_payload_base64 }}
+      channel_signature_base64: ${{ needs.iso-plan.outputs.channel_signature_base64 }}
+      bundle_id: ${{ needs.iso-plan.outputs.bundle_fingerprint }}
+      target: arm64
+      architecture: arm64
+      package_arch: aarch64
+      abi: FreeBSD:16:aarch64
+      altabi: freebsd:16:aarch64:64
+      freebsd_target: arm64
+      freebsd_target_arch: aarch64
+      poudriere_arch: arm64.aarch64
+      kernel: FreeSense
+      executor: amd64-cross-qemu-user
+      image_profile: arm64-rpi5-d0
+      firmware: raspberry-pi,uefi
+      image_capabilities: ${{ toJSON(fromJSON(needs.iso-plan.outputs.appliance_rpi5_d0_spec).capabilities) }}
+      installer_format: none
+      publish_enabled: ${{ needs.iso-plan.outputs.publish_enabled }}
+      boot_inputs: ${{ toJSON(fromJSON(needs.iso-plan.outputs.appliance_rpi5_d0_spec).boot_inputs) }}
+      target_models: ${{ toJSON(fromJSON(needs.iso-plan.outputs.appliance_rpi5_d0_spec).target_models) }}
+      partition_scheme: mbr
+      appliance_filesystem: ufs
+      appliance_format: img
+      appliance_compression: xz
+    secrets: inherit
+
   cloud-ufs:
     needs: [iso-plan, iso]
     if: needs.iso-plan.result == 'success' && needs.iso.result == 'success' && needs.iso-plan.outputs.cloud_enabled == 'true'
@@ -479,12 +590,15 @@ jobs:
     secrets: inherit
 
   publish-download:
-    needs: [iso-plan, iso, cloud-ufs, cloud-zfs]
+    needs: [iso-plan, iso, cloud-ufs, cloud-zfs, appliance-rpi4b, appliance-rpi5-d0]
     runs-on: ubuntu-24.04
     environment: channel-publisher
     if: >-
       always() && needs.iso-plan.result == 'success' && needs.iso.result == 'success' &&
       needs.iso-plan.outputs.publish_enabled == 'true' &&
+      (needs.iso-plan.outputs.target != 'arm64' ||
+       (needs.appliance-rpi4b.result == 'success' && needs.appliance-rpi5-d0.result == 'success' &&
+        needs.iso-plan.outputs.publication_ready == 'true')) &&
       (needs.iso-plan.outputs.cloud_enabled != 'true' ||
        (needs.cloud-ufs.result == 'success' && needs.cloud-zfs.result == 'success'))
     steps:
@@ -504,6 +618,8 @@ jobs:
             --bundle-fingerprint "${{ needs.iso-plan.outputs.bundle_fingerprint }}" \
             --cloud-ufs-fingerprint "${{ needs.iso-plan.outputs.cloud_ufs_fingerprint }}" \
             --cloud-zfs-fingerprint "${{ needs.iso-plan.outputs.cloud_zfs_fingerprint }}" \
+            --appliance-fingerprint "${{ needs.iso-plan.outputs.appliance_rpi4b_fingerprint }}" \
+            --appliance-fingerprint "${{ needs.iso-plan.outputs.appliance_rpi5_d0_fingerprint }}" \
             --system "${{ needs.iso-plan.outputs.system }}" \
             --generation "${{ needs.iso-plan.outputs.generation }}" \
             --source "${{ needs.iso-plan.outputs.source_sha }}" \

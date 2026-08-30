@@ -18,7 +18,7 @@ import urllib.request
 from datetime import datetime, timedelta, timezone
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from build_platform import image_profile, load_policy, manifest_name, pin_target, target
+from build_platform import image_profile, load_policy, manifest_name, pin_target, release_profiles, target
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -112,6 +112,15 @@ def fingerprint(value: dict[str, object]) -> str:
     return hashlib.sha256(canonical).hexdigest()
 
 
+def release_artifact_fingerprint(kind: str, repository_closure: dict,
+                                 profile: dict, recipe: str, **specific: object) -> str:
+    """Fingerprint one image without coupling it to sibling release artifacts."""
+    return fingerprint({
+        "schema": 1, "kind": kind, "repository_closure": repository_closure,
+        "profile": profile, "recipe": recipe, **specific,
+    })
+
+
 def validate_bootstrap_snapshot(lock: dict, pinned_osversion: int) -> None:
     bootstrap = lock.get("bootstrap_snapshot")
     if bootstrap is None:
@@ -203,7 +212,7 @@ def current_component(manifest_url: str, component: str) -> str:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("kind", choices=("system", "packages", "iso", "cloud"))
+    parser.add_argument("kind", choices=("system", "packages", "iso", "cloud", "appliance"))
     parser.add_argument("--target", default="amd64")
     parser.add_argument("--image-profile")
     parser.add_argument("--filesystem", choices=("ufs", "zfs"))
@@ -215,10 +224,10 @@ def main() -> int:
         raise SystemExit("cloud planning requires --filesystem ufs or zfs")
     if args.kind != "cloud" and args.filesystem is not None:
         raise SystemExit("--filesystem is valid only for cloud planning")
-    if args.kind not in {"iso", "cloud"} and args.image_profile is not None:
+    if args.kind not in {"iso", "cloud", "appliance"} and args.image_profile is not None:
         raise SystemExit("--image-profile is valid only for image planning")
 
-    if args.kind in {"packages", "iso", "cloud"}:
+    if args.kind in {"packages", "iso", "cloud", "appliance"}:
         if args.system_closure is None:
             raise SystemExit("--system-closure is required")
         try:
@@ -268,7 +277,8 @@ def main() -> int:
     target_pin = pin_target(lock, args.target)
     jail_seed = target_pin["jail_seed"]
     selected_profile = image_profile(policy, args.image_profile, args.target)
-    if args.kind in {"packages", "iso", "cloud"} and (
+    installer_profile = image_profile(policy, None, args.target)
+    if args.kind in {"packages", "iso", "cloud", "appliance"} and (
         channel_architecture != selected_target["architecture"]
         or channel_package_arch != selected_target["package_arch"]
     ):
@@ -379,7 +389,7 @@ def main() -> int:
         })
 
     selected_package_train = policy["package_train"]
-    if args.kind in {"packages", "iso", "cloud"}:
+    if args.kind in {"packages", "iso", "cloud", "appliance"}:
         sha_inputs = {
             "source": system_source_sha,
             "system": system_system_sha,
@@ -387,7 +397,7 @@ def main() -> int:
             "FreeBSD": system_freebsd_sha,
             "ports": system_ports_sha,
         }
-        if args.kind in {"iso", "cloud"}:
+        if args.kind in {"iso", "cloud", "appliance"}:
             sha_inputs["optional packages"] = system_packages_sha
         sha256_inputs = {
             "System": system_id,
@@ -497,13 +507,13 @@ def main() -> int:
     })
     release_version = (
         channel_release_version
-        if args.kind in {"iso", "cloud"}
+        if args.kind in {"iso", "cloud", "appliance"}
         else policy["release"]["development_version"]
     )
-    if args.kind in {"iso", "cloud"}:
+    if args.kind in {"iso", "cloud", "appliance"}:
         release_policy(policy, channel_name, release_version)
     shared_assembly = {
-        "schema": 1,
+        "schema": 2,
         "system": system,
         "packages": current_packages_fingerprint,
         "platform": platform,
@@ -525,28 +535,20 @@ def main() -> int:
             ROOT / "scripts/runner/worker-common.sh",
             ROOT / "scripts/runner/assembly-common.sh",
         ]),
-        "iso_recipe": recipe_digest([
-            ROOT / "scripts/runner/stages/iso.sh",
-            ROOT / "patches/0005-installer.patch",
-        ]),
-        "cloud_recipe": recipe_digest([
-            ROOT / "scripts/runner/stages/cloud.sh",
-        ]),
-        "cloud_policy": selected_profile,
         **({} if args.target == "amd64" else {
             "architecture": selected_target["architecture"],
             "package_arch": selected_target["package_arch"],
-            "image_profile": selected_profile["name"],
         }),
     }
-    bundle = fingerprint(shared_assembly)
-    iso = fingerprint({
-        "schema": 3,
-        "kind": "iso",
-        "bundle": bundle,
-    })
-    cloud_variants = selected_profile.get("variants", {})
-    cloud_enabled = selected_profile["capabilities"].get("cloud_init") is True
+    iso = release_artifact_fingerprint(
+        "installer", shared_assembly, installer_profile,
+        recipe_digest([
+            ROOT / "scripts/runner/stages/iso.sh",
+            ROOT / "patches/0005-installer.patch",
+        ]),
+    )
+    cloud_variants = installer_profile.get("variants", {})
+    cloud_enabled = installer_profile["capabilities"].get("cloud_init") is True
     expected_cloud_variants = {"ufs", "zfs"} if cloud_enabled else set()
     if (not isinstance(cloud_variants, dict)
             or set(cloud_variants) != expected_cloud_variants):
@@ -558,29 +560,53 @@ def main() -> int:
                 or variant.get("root_growth") is not True):
             raise SystemExit(f"cloud {filesystem} variant is invalid")
     cloud_ids = {
-        filesystem: fingerprint({
-            "schema": 2,
-            "kind": "cloud",
-            "filesystem": filesystem,
-            "variant": variant,
-            "bundle": bundle,
-        })
+        filesystem: release_artifact_fingerprint(
+            "cloud", shared_assembly, installer_profile,
+            recipe_digest([ROOT / "scripts/runner/stages/cloud.sh"]),
+            filesystem=filesystem, variant=variant,
+        )
         for filesystem, variant in cloud_variants.items()
     }
     selected_filesystem = args.filesystem or "ufs"
     if args.kind == "cloud" and not cloud_enabled:
         raise SystemExit(f"image profile {selected_profile['name']} does not support cloud images")
     cloud = cloud_ids.get(selected_filesystem, "")
+    appliance_profiles = [
+        profile for profile in release_profiles(policy, args.target)
+        if profile.get("kind") == "appliance"
+    ]
+    appliance_recipe = recipe_digest([ROOT / "scripts/runner/stages/appliance.sh"])
+    appliance_ids = {
+        profile["name"]: release_artifact_fingerprint(
+            "appliance", shared_assembly, profile, appliance_recipe,
+            boot_inputs=profile["boot_inputs"],
+        ) for profile in appliance_profiles
+    }
+    appliance = appliance_ids.get(selected_profile["name"], "")
+    if args.kind == "appliance" and not appliance:
+        raise SystemExit(f"image profile {selected_profile['name']} is not an appliance")
+    ordered_artifacts = [iso]
+    if cloud_enabled:
+        ordered_artifacts.extend(cloud_ids[name] for name in ("ufs", "zfs"))
+    ordered_artifacts.extend(appliance_ids[profile["name"]] for profile in appliance_profiles)
+    bundle = fingerprint({
+        "schema": 2,
+        "kind": "release-bundle",
+        "architecture": selected_target["architecture"],
+        "artifacts": ordered_artifacts,
+    })
     identifiers = {
         "platform": platform, "system": system, "packages": packages,
-        "bundle": bundle, "iso": iso, "cloud": cloud,
+        "bundle": bundle, "iso": iso, "cloud": cloud, "appliance": appliance,
         "cloud_ufs": cloud_ids.get("ufs", ""), "cloud_zfs": cloud_ids.get("zfs", ""),
+        "appliance_rpi4b": appliance_ids.get("arm64-rpi4b", ""),
+        "appliance_rpi5_d0": appliance_ids.get("arm64-rpi5-d0", ""),
     }
     selected = identifiers[args.kind]
     manifest_url = policy["public_base_url"] + "/" + manifest_name(
         selected_target, legacy=args.target == "amd64"
     )
-    if args.kind in {"iso", "cloud"}:
+    if args.kind in {"iso", "cloud", "appliance"}:
         current = ""
     elif args.kind == "packages":
         current = current_packages_fingerprint
@@ -598,7 +624,7 @@ def main() -> int:
         "system_sha": system_sha,
         "packages_sha": packages_sha,
         "packages_fingerprint": (
-            current_packages_fingerprint if args.kind in {"iso", "cloud"} else ""
+            current_packages_fingerprint if args.kind in {"iso", "cloud", "appliance"} else ""
         ),
         "package_build_config_sha256": package_build_config,
         "optional_architecture_policy_sha256": optional_architecture_policy,
@@ -623,6 +649,19 @@ def main() -> int:
         "image_capabilities": json.dumps(selected_profile["capabilities"], sort_keys=True, separators=(",", ":")),
         "installer_format": selected_profile["installer"],
         "cloud_enabled": cloud_enabled,
+        "appliance_enabled": selected_profile.get("kind") == "appliance",
+        "boot_inputs": json.dumps(selected_profile.get("boot_inputs", {}), sort_keys=True, separators=(",", ":")),
+        "target_models": json.dumps(selected_profile.get("target_models", []), separators=(",", ":")),
+        "partition_scheme": selected_profile["partition_scheme"],
+        "filesystem": selected_profile.get("filesystem", ""),
+        "artifact_format": selected_profile.get("format", selected_profile["installer"]),
+        "compression": selected_profile.get("compression", "none" if selected_profile["installer"] == "iso" else "xz"),
+        "publication_ready": all(
+            profile.get("boot_inputs", {}).get("redistribution_review") != "pending"
+            for profile in appliance_profiles
+        ),
+        "appliance_rpi4b_spec": json.dumps(next((profile for profile in appliance_profiles if profile["name"] == "arm64-rpi4b"), {}), sort_keys=True, separators=(",", ":")),
+        "appliance_rpi5_d0_spec": json.dumps(next((profile for profile in appliance_profiles if profile["name"] == "arm64-rpi5-d0"), {}), sort_keys=True, separators=(",", ":")),
         "abi": selected_target["abi"],
         "altabi": selected_target["altabi"],
         "osversion": pinned_osversion if args.kind == "system" else channel_osversion,
@@ -640,7 +679,7 @@ def main() -> int:
         "cloud_ufs_virtual_size_gib": cloud_variants.get("ufs", {}).get("virtual_size_gib", 0),
         "cloud_zfs_virtual_size_gib": cloud_variants.get("zfs", {}).get("virtual_size_gib", 0),
         "product_version": (f"{release_version}-RELEASE"
-                            if args.kind in {"iso", "cloud"} and channel_name == "stable"
+                            if args.kind in {"iso", "cloud", "appliance"} and channel_name == "stable"
                             else f"{release_version}-DEVELOPMENT"),
     }
     print(json.dumps(values, indent=2, sort_keys=True))

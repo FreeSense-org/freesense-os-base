@@ -21,7 +21,8 @@ for name in AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN R2_ENDPOIN
   IMAGE_SHA256 WORKER_TOOLS_SHA256 GENERATION SYSTEM_GENERATION PUBLIC_BASE_URL CHANNEL CHANNEL_PAYLOAD_SHA256 \
   CHANNEL_PAYLOAD_B64 CHANNEL_SIGNATURE_B64 BUNDLE_ID CLOUD_FILESYSTEM CLOUD_VIRTUAL_SIZE_GIB \
   TARGET ARCHITECTURE PACKAGE_ARCH ABI ALTABI FREEBSD_TARGET FREEBSD_TARGET_ARCH POUDRIERE_ARCH KERNEL \
-  EXECUTOR IMAGE_PROFILE FIRMWARE IMAGE_CAPABILITIES INSTALLER_FORMAT PUBLISH_ENABLED; do
+  EXECUTOR IMAGE_PROFILE FIRMWARE IMAGE_CAPABILITIES INSTALLER_FORMAT PUBLISH_ENABLED \
+  BOOT_INPUTS TARGET_MODELS PARTITION_SCHEME APPLIANCE_FILESYSTEM APPLIANCE_FORMAT APPLIANCE_COMPRESSION; do
   eval "$name=\$(decode \"\${${name}_B64}\")"
 done
 unset AWS_ACCESS_KEY_ID_B64 AWS_SECRET_ACCESS_KEY_B64 AWS_SESSION_TOKEN_B64
@@ -29,7 +30,7 @@ unset FREESENSE_REPO_SIGNING_KEY_B64
 export HOME=/root PATH="/usr/local/sbin:/usr/local/bin:${PATH}"
 export ASSUME_ALWAYS_YES=yes LC_ALL=C LANG=C TZ=UTC
 umask 022
-case "${STAGE}" in system|packages|iso|cloud) : ;; *) echo "invalid build stage" >&2; exit 1 ;; esac
+case "${STAGE}" in system|packages|iso|cloud|appliance) : ;; *) echo "invalid build stage" >&2; exit 1 ;; esac
 case "${TARGET}:${ARCHITECTURE}:${PACKAGE_ARCH}:${FREEBSD_TARGET}:${FREEBSD_TARGET_ARCH}:${POUDRIERE_ARCH}" in
   amd64:amd64:amd64:amd64:amd64:amd64.amd64) : ;;
   arm64:arm64:aarch64:arm64:aarch64:arm64.aarch64) : ;;
@@ -52,7 +53,7 @@ for value in "${FINGERPRINT}" "${PLATFORM_ID}" "${SYSTEM_ID}" "${IMAGE_SHA256}" 
   case "${value}" in ''|*[!0-9a-f]*) echo "invalid SHA-256 build input" >&2; exit 1 ;; esac
   [ "${#value}" -eq 64 ] || { echo "invalid SHA-256 build input" >&2; exit 1; }
 done
-if [ "${STAGE}" = iso ] || [ "${STAGE}" = cloud ]; then
+if [ "${STAGE}" = iso ] || [ "${STAGE}" = cloud ] || [ "${STAGE}" = appliance ]; then
   case "${PACKAGES_ID}" in ''|*[!0-9a-f]*) echo "invalid release Packages identity" >&2; exit 1 ;; esac
   [ "${#PACKAGES_ID}" -eq 64 ] || { echo "invalid release Packages identity" >&2; exit 1; }
   case "${BUNDLE_ID}" in ''|*[!0-9a-f]*) echo "invalid release bundle identity" >&2; exit 1 ;; esac
@@ -77,7 +78,7 @@ product_train=$(printf '%s\n' "${PRODUCT_VERSION}" | sed -E 's/^([0-9]+\.[0-9]+)
   echo "product version does not match package train" >&2
   exit 1
 }
-if [ "${STAGE}" = iso ] || [ "${STAGE}" = cloud ]; then
+if [ "${STAGE}" = iso ] || [ "${STAGE}" = cloud ] || [ "${STAGE}" = appliance ]; then
   case "${CHANNEL_PAYLOAD_SHA256}" in ''|*[!0-9a-f]*)
     echo "release image requires the exact signed channel payload" >&2; exit 1 ;;
   esac

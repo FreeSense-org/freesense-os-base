@@ -45,6 +45,12 @@ on:
       image_capabilities: {type: string, required: false, default: '{"bios":true,"cloud_init":true,"installer_img":false,"iso":true,"uefi":true}'}
       installer_format: {type: string, required: false, default: iso}
       publish_enabled: {type: string, required: false, default: 'true'}
+      boot_inputs: {type: string, required: false, default: '{}'}
+      target_models: {type: string, required: false, default: '[]'}
+      partition_scheme: {type: string, required: false, default: gpt}
+      appliance_filesystem: {type: string, required: false, default: ''}
+      appliance_format: {type: string, required: false, default: ''}
+      appliance_compression: {type: string, required: false, default: ''}
 
 jobs:
   build:
@@ -107,6 +113,12 @@ jobs:
       IMAGE_CAPABILITIES: ${{ inputs.image_capabilities }}
       INSTALLER_FORMAT: ${{ inputs.installer_format }}
       PUBLISH_ENABLED: ${{ inputs.publish_enabled }}
+      BOOT_INPUTS: ${{ inputs.boot_inputs }}
+      TARGET_MODELS: ${{ inputs.target_models }}
+      PARTITION_SCHEME: ${{ inputs.partition_scheme }}
+      APPLIANCE_FILESYSTEM: ${{ inputs.appliance_filesystem }}
+      APPLIANCE_FORMAT: ${{ inputs.appliance_format }}
+      APPLIANCE_COMPRESSION: ${{ inputs.appliance_compression }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
@@ -138,8 +150,8 @@ jobs:
             --generation "${GENERATION}" --architecture "${ARCHITECTURE}" \
             --package-arch "${PACKAGE_ARCH}" --image-profile "${IMAGE_PROFILE}" \
             --github-output "${GITHUB_OUTPUT}")
-          if [[ "${STAGE}" == packages || "${STAGE}" == iso || "${STAGE}" == cloud ]]; then args+=(--system-id "${SYSTEM_ID}"); fi
-          if [[ "${STAGE}" == iso || "${STAGE}" == cloud ]]; then args+=(--packages-id "${PACKAGES_ID}"); fi
+          if [[ "${STAGE}" == packages || "${STAGE}" == iso || "${STAGE}" == cloud || "${STAGE}" == appliance ]]; then args+=(--system-id "${SYSTEM_ID}"); fi
+          if [[ "${STAGE}" == iso || "${STAGE}" == cloud || "${STAGE}" == appliance ]]; then args+=(--packages-id "${PACKAGES_ID}"); fi
           if [[ "${STAGE}" == cloud ]]; then
             args+=(--filesystem "${CLOUD_FILESYSTEM}" --virtual-size-gib "${CLOUD_VIRTUAL_SIZE_GIB}")
           fi
@@ -222,6 +234,10 @@ jobs:
         if: inputs.stage == 'cloud'
         run: >-
           "${RUNNER_TEMP}/fsbuild" result promote --stage cloud --id "${FINGERPRINT}"
+      - name: Commit structurally verified appliance result
+        if: inputs.stage == 'appliance'
+        run: >-
+          "${RUNNER_TEMP}/fsbuild" result promote --stage appliance --id "${FINGERPRINT}"
       - name: Upload cloud smoke failure artifacts
         if: failure() && inputs.stage == 'cloud'
         uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0

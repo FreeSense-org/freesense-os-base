@@ -10,11 +10,11 @@ for name in R2_BUCKET R2_ENDPOINT RUNNER_TEMP; do
 done
 
 document=$1
-jq -e '.schema_version == "freesense.download/v2" or .schema_version == "freesense.download/v3"' "$document" >/dev/null
+jq -e '.schema_version == "freesense.download/v2" or .schema_version == "freesense.download/v3" or .schema_version == "freesense.download/v4"' "$document" >/dev/null
 
 count=$(jq '.artifacts | length' "$document")
-((count == 1 || count == 3 || count == 5)) || {
-  echo "release document must contain 1, 3, or 5 artifacts" >&2
+((count > 0)) || {
+  echo "release document must contain at least one artifact" >&2
   exit 1
 }
 for ((index=0; index<count; index++)); do

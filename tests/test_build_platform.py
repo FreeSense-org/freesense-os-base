@@ -58,6 +58,32 @@ class BuildPlatformTests(unittest.TestCase):
         self.assertEqual(profile["filesystems"], [])
         self.assertEqual(profile["formats"], [])
         self.assertEqual(profile["variants"], {})
+        profiles = build_platform.release_profiles(policy, "arm64")
+        self.assertEqual([item["name"] for item in profiles], [
+            "generic-arm64-uefi", "arm64-rpi4b", "arm64-rpi5-d0",
+        ])
+        self.assertEqual(profiles[1]["boot_partition"]["filesystem"], "fat16")
+        self.assertEqual(profiles[2]["boot_partition"]["filesystem"], "fat32")
+        self.assertEqual(profiles[2]["minimum_eeprom_date"], "2025-06-09")
+        self.assertEqual(profiles[2]["boot_inputs"]["archive_sha256"],
+                         "c4fbbec9cd0d1115c9adab884923061b960de42b4ca6d65ba5f08cb6b46c6fad")
+
+    def test_pi_recipe_change_isolated_from_unrelated_artifacts(self):
+        planner = load_script("freesense_plan_fingerprint", "scripts/plan.py")
+        closure = {"system": "a" * 64, "packages": "b" * 64}
+        generic = {"name": "generic-arm64-uefi"}
+        pi4 = {"name": "arm64-rpi4b", "boot_inputs": {"ports": "c" * 40}}
+        installer_before = planner.release_artifact_fingerprint(
+            "installer", closure, generic, "d" * 64)
+        pi_before = planner.release_artifact_fingerprint(
+            "appliance", closure, pi4, "e" * 64, boot_inputs=pi4["boot_inputs"])
+        changed = {**pi4, "boot_inputs": {"ports": "f" * 40}}
+        installer_after = planner.release_artifact_fingerprint(
+            "installer", closure, generic, "d" * 64)
+        pi_after = planner.release_artifact_fingerprint(
+            "appliance", closure, changed, "e" * 64, boot_inputs=changed["boot_inputs"])
+        self.assertEqual(installer_before, installer_after)
+        self.assertNotEqual(pi_before, pi_after)
 
     def test_profile_cannot_cross_targets(self):
         policy = build_platform.load_policy(ROOT / "config/build-policy.json")

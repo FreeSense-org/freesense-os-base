@@ -43,6 +43,9 @@ ISO_KEY = re.compile(
 CLOUD_KEY = re.compile(
     r"^v1/artifacts/cloud/(?P<fingerprint>[0-9a-f]{64})/(?P<relative>.+)$"
 )
+APPLIANCE_KEY = re.compile(
+    r"^v1/artifacts/appliance/(?P<fingerprint>[0-9a-f]{64})/(?P<relative>.+)$"
+)
 DEVEL_DOWNLOAD = re.compile(
     r"^v1/releases/devel/(?P<release>[0-9]+\.[0-9]+\.[0-9]+-g(?P<generation>[1-9][0-9]*))/"
 )
@@ -311,6 +314,14 @@ def classify_artifact_key(key: str) -> tuple[str, str, str | None, str] | None:
             None,
             match["fingerprint"],
         )
+    match = APPLIANCE_KEY.fullmatch(key)
+    if match:
+        return (
+            "appliance",
+            f"v1/artifacts/appliance/{match['fingerprint']}",
+            None,
+            match["fingerprint"],
+        )
     return None
 
 
@@ -351,7 +362,7 @@ def marker_identity(
             or inputs.get("channel") not in {"stable", "devel"}
         ):
             fail(f"ISO completion marker has an invalid closure: {prefix}")
-    else:
+    elif kind == "cloud":
         files = marker.get("files")
         if (
             marker.get("schema_version") != "freesense.cloud-image/v1"
@@ -364,6 +375,19 @@ def marker_identity(
             or not SHA256.fullmatch(str(inputs.get("packages", "")))
         ):
             fail(f"cloud completion marker has an invalid closure: {prefix}")
+    else:
+        if (marker.get("schema_version") != "freesense.appliance/v1"
+                or marker.get("architecture") != "arm64"
+                or marker.get("package_arch") != "aarch64"
+                or marker.get("filesystem") != "ufs"
+                or marker.get("format") != "img"
+                or marker.get("compression") != "xz"
+                or marker.get("partition_scheme") != "mbr"
+                or marker.get("hardware_verification") not in {"unverified", "verified"}
+                or not SHA256.fullmatch(str(marker.get("bundle_fingerprint", "")))
+                or not SHA256.fullmatch(str(inputs.get("system", "")))
+                or not SHA256.fullmatch(str(inputs.get("packages", "")))):
+            fail(f"appliance completion marker has an invalid closure: {prefix}")
     return {
         "prefix": prefix,
         "kind": kind,
@@ -631,19 +655,21 @@ def plan_retention(
             protected_prefixes.add(entry["prefix"])
         elif entry["kind"] == "iso":
             devel["iso"].append(entry)
-        else:
+        elif entry["kind"] == "cloud":
             devel["cloud"].append(entry)
+        else:
+            devel["appliance"].append(entry)
 
     entries = devel["system"]
     entries.sort(key=lambda item: (item["generation"], item["prefix"]), reverse=True)
     protected_prefixes.update(item["prefix"] for item in entries[:keep_devel])
 
-    # ISO and every filesystem-specific cloud result form one release bundle.
+    # Installer, cloud, and board appliance results form one release bundle.
     # Retain complete generations as a unit instead of counting cloud variants
     # independently.
     bundles: dict[str, dict[str, Any]] = {}
     legacy_images = []
-    for entry in devel["iso"] + devel["cloud"]:
+    for entry in devel["iso"] + devel["cloud"] + devel["appliance"]:
         bundle = entry["marker"].get("bundle_fingerprint")
         if not isinstance(bundle, str) or not SHA256.fullmatch(bundle):
             legacy_images.append(entry)
@@ -726,7 +752,7 @@ def plan_retention(
                     value = marker["inputs"].get(name)
                     if isinstance(value, str) and SHA256.fullmatch(value):
                         references.append(f"v1/artifacts/system/{value}")
-            if entry["kind"] in {"iso", "cloud"}:
+            if entry["kind"] in {"iso", "cloud", "appliance"}:
                 image_system = marker.get("system", marker["inputs"].get("system"))
                 if isinstance(image_system, str) and SHA256.fullmatch(image_system):
                     references.append(f"v1/artifacts/system/{image_system}")

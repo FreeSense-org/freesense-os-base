@@ -1,0 +1,21 @@
+{
+  "schema_version": "freesense.boot-input/v1",
+  "profile": "arm64-rpi5-d0",
+  "upstream": "NumberOneGit/rpi5-uefi",
+  "release": "v0.1",
+  "commit": "510c68e95515168bb74a4afb1932b63fb437d014",
+  "archive": "RPI5_D0.zip",
+  "archive_sha256": "c4fbbec9cd0d1115c9adab884923061b960de42b4ca6d65ba5f08cb6b46c6fad",
+  "archive_contents": [
+    "RPI_EFI.fd",
+    "bcm2712-d-rpi-5-b.dtb",
+    "bcm2712-rpi-5-b.dtb",
+    "bcm2712d0-rpi-5-b.dtb"
+  ],
+  "freebsd_source_contains_pi5_dtb": false,
+  "minimum_eeprom_date": "2025-06-09",
+  "redistribution_review": {
+    "status": "pending",
+    "reason": "The upstream release ZIP contains no license or notice files; publication requires a completed provenance and redistribution review."
+  }
+}
