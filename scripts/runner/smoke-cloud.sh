@@ -480,8 +480,8 @@ boot_and_wait() {
 boot_and_wait "${work}/disk.qcow2" qcow2 bios "${work}/bios.log"
 ssh_args=(ssh -q -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i "${work}/id" -p 10022 admin@127.0.0.1)
 "${ssh_args[@]}" "set -eu
-  if pkg query "%n" FreeSense-cloud-init >/dev/null 2>&1; then
-    test "\$(sysrc -n qemu_guest_agent_enable)" = YES
+  if pkg query '%n' FreeSense-cloud-init >/dev/null 2>&1; then
+    test \"\$(sysrc -n qemu_guest_agent_enable)\" = YES
     service qemu-guest-agent status
     cloud_rc=0
     cloud_status=\$(cloud-init status --wait 2>&1) || cloud_rc=\$?
@@ -494,8 +494,8 @@ ssh_args=(ssh -q -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking
       *) exit 1 ;;
     esac
     grep -q freesense-cloud-smoke /conf/config.xml
-  elif pkg query "%n" qemu-guest-agent >/dev/null 2>&1; then
-    test "\$(sysrc -n qemu_guest_agent_enable)" = YES
+  elif pkg query '%n' qemu-guest-agent >/dev/null 2>&1; then
+    test \"\$(sysrc -n qemu_guest_agent_enable)\" = YES
     service qemu-guest-agent status
   fi
   test -s /etc/ssh/ssh_host_ed25519_key
@@ -603,7 +603,7 @@ for _ in {1..120}; do
     if ssh -q -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=no \
       -o UserKnownHostsFile=/dev/null -o ConnectTimeout=2 \
       -i "${work}/id" -p 10023 admin@127.0.0.1 \
-      'if pkg query "%n" FreeSense-cloud-init >/dev/null 2>&1; then
+      'if pkg query '\''%n'\'' FreeSense-cloud-init >/dev/null 2>&1; then
          grep -q "<wan>" /conf/config.xml &&
          grep -q "<lan>" /conf/config.xml &&
          ! grep -q "FreeSense cloud temporary SSH" /conf/config.xml
