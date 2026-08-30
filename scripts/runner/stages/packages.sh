@@ -24,7 +24,9 @@ while IFS= read -r origin; do
   [ -f "/root/freesense-packages/${origin}/Makefile" ] || {
     echo "optional-package exclusion origin does not exist: ${origin}" >&2; exit 1;
   }
-  awk -v excluded="${origin}" '$0 != excluded' tools/conf/pfPorts/poudriere_bulk \
+  template_origin=$(printf '%s\n' "${origin}" | sed 's/FreeSense/%%PRODUCT_NAME%%/g')
+  awk -v excluded="${origin}" -v template="${template_origin}" \
+    '$0 != excluded && $0 != template' tools/conf/pfPorts/poudriere_bulk \
     >tools/conf/pfPorts/poudriere_bulk.next
   mv tools/conf/pfPorts/poudriere_bulk.next tools/conf/pfPorts/poudriere_bulk
 done </tmp/optional-exclusions

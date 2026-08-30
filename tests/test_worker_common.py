@@ -65,6 +65,13 @@ class WorkerVersionValidationTests(unittest.TestCase):
                 self.assertIn(value, common)
                 self.assertNotIn(value, packages)
 
+    def test_optional_package_exclusions_support_product_name_templates(self) -> None:
+        packages = (ROOT / "scripts/runner/stages/packages.sh").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("template_origin=$(printf '%s\\n' \"${origin}\" | sed 's/FreeSense/%%PRODUCT_NAME%%/g')", packages)
+        self.assertIn("$0 != excluded && $0 != template", packages)
+
     def test_arm64_poudriere_jail_builds_native_xtools_from_pinned_source(self) -> None:
         common = (ROOT / "scripts/runner/worker-common.sh").read_text(encoding="utf-8")
         create_jail = common[common.index("create_jail() {") :]
