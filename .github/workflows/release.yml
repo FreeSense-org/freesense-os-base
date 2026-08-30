@@ -1,6 +1,23 @@
 name: Release control and ISO recovery
 
 on:
+  workflow_call:
+    inputs:
+      operation:
+        type: string
+        required: true
+      channel:
+        type: string
+        required: true
+      target:
+        type: string
+        required: true
+      system_fingerprint:
+        type: string
+        required: true
+      packages_fingerprint:
+        type: string
+        required: true
   workflow_dispatch:
     inputs:
       operation:
@@ -190,7 +207,7 @@ jobs:
     needs: release_gate
     if: >-
       always() &&
-      ((github.event_name == 'workflow_dispatch' &&
+      (((github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call') &&
        (inputs.operation == 'bundle' || inputs.operation == 'retry-stable-bundle')) ||
        (github.event_name == 'workflow_run' &&
         needs.release_gate.result == 'success' && needs.release_gate.outputs.ready == 'true'))
@@ -248,10 +265,10 @@ jobs:
         with: {go-version-file: go.mod, cache: false}
       - name: Read signed selected channel
         env:
-          SELECTED_CHANNEL: ${{ inputs.operation == 'retry-stable-bundle' && 'stable' || (github.event_name == 'workflow_dispatch' && inputs.channel || 'devel') }}
+          SELECTED_CHANNEL: ${{ inputs.operation == 'retry-stable-bundle' && 'stable' || (github.event_name != 'workflow_run' && inputs.channel || 'devel') }}
         run: |
-          target="${{ github.event_name == 'workflow_dispatch' && inputs.target || needs.release_gate.outputs.target }}"
-          if [[ "${target}" == arm64 && "${{ github.event_name }}" == workflow_dispatch ]]; then
+          target="${{ github.event_name != 'workflow_run' && inputs.target || needs.release_gate.outputs.target }}"
+          if [[ "${target}" == arm64 && "${{ github.event_name }}" != workflow_run ]]; then
             [[ "${SELECTED_CHANNEL}" == devel ]] || {
               echo "ARM64 is Development-only until a separate Stable promotion" >&2; exit 1;
             }
@@ -278,7 +295,7 @@ jobs:
           fi
       - id: plan
         run: |
-          target="${{ github.event_name == 'workflow_dispatch' && inputs.target || needs.release_gate.outputs.target }}"
+          target="${{ github.event_name != 'workflow_run' && inputs.target || needs.release_gate.outputs.target }}"
           python3 scripts/plan.py iso --target "${target}" --system-closure "${RUNNER_TEMP}/system.json" \
             --github-output "${GITHUB_OUTPUT}"
       - run: go build -trimpath -o "${RUNNER_TEMP}/fsbuild" ./cmd/fsbuild

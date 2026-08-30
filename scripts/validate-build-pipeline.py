@@ -23,7 +23,7 @@ def require(condition: bool, message: str) -> None:
 
 
 expected_workflows = {
-    "broker.yml", "ci.yml", "packages.yml", "pin.yml", "release.yml",
+    "arm64-experimental.yml", "broker.yml", "ci.yml", "packages.yml", "pin.yml", "release.yml",
     "retention.yml", "runner-build.yml", "stable.yml", "system.yml",
 }
 workflow_paths = sorted(WORKFLOWS.glob("*.yml"))
@@ -50,6 +50,13 @@ for name in ("system.yml", "packages.yml", "release.yml", "stable.yml"):
             f"{name} bypasses the reusable KVM executor")
 require("schedule:" in read(".github/workflows/system.yml"),
         "the daily System check is not scheduled")
+arm64_workflow = read(".github/workflows/arm64-experimental.yml")
+for value in ("uses: ./.github/workflows/system.yml",
+              "uses: ./.github/workflows/packages.yml",
+              "uses: ./.github/workflows/release.yml",
+              "target: arm64", "channel: devel", "operation: bundle"):
+    require(value in arm64_workflow,
+            f"one-click ARM64 experimental release is missing {value!r}")
 packages_workflow = read(".github/workflows/packages.yml")
 require("workflow_run:" in packages_workflow and "workflows: [System]" in packages_workflow,
         "optional packages are not chained to System")

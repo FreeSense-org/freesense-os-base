@@ -1,6 +1,18 @@
 name: Optional packages
 
 on:
+  workflow_call:
+    inputs:
+      target:
+        type: string
+        required: true
+      system_fingerprint:
+        type: string
+        required: true
+    outputs:
+      packages_fingerprint:
+        description: Exact immutable Optional Packages result
+        value: ${{ jobs.plan.outputs.packages }}
   workflow_dispatch:
     inputs:
       target:
@@ -21,7 +33,7 @@ concurrency: {group: package-planner, cancel-in-progress: false}
 
 jobs:
   plan:
-    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-24.04
     environment: build-coordinator
     outputs:
@@ -88,7 +100,7 @@ jobs:
           echo "target=${target}" >>"${GITHUB_OUTPUT}"
       - id: plan
         run: |
-          target="${{ github.event_name == 'workflow_dispatch' && inputs.target || steps.upstream.outputs.target }}"
+          target="${{ github.event_name != 'workflow_run' && inputs.target || steps.upstream.outputs.target }}"
           if [[ "${target}" == none || ("${{ github.event_name }}" == workflow_run && "${target}" == arm64) ]]; then
             echo "needed=false" >>"${GITHUB_OUTPUT}"
             echo "No automatic Optional Packages build: the upstream run did not publish AMD64. ARM64 remains explicitly manual."
