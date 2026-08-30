@@ -628,7 +628,7 @@ def main() -> int:
         profile = image_profile(policy, appliance_marker.get("platform"), args.target)
         if profile.get("kind") != "appliance" or profile["boot_inputs"] != appliance_marker.get("boot_inputs"):
             raise SystemExit("appliance marker boot provenance does not match policy")
-        if profile["boot_inputs"].get("redistribution_review") == "pending":
+        if profile["boot_inputs"].get("redistribution_review") not in (None, "complete"):
             raise SystemExit(f"{profile['name']} redistribution review is incomplete")
         appliance_results.append((profile, appliance_fingerprint,
                                   appliance_marker_url, appliance_marker))

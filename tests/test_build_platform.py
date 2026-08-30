@@ -67,6 +67,7 @@ class BuildPlatformTests(unittest.TestCase):
         self.assertEqual(profiles[2]["minimum_eeprom_date"], "2025-06-09")
         self.assertEqual(profiles[2]["boot_inputs"]["archive_sha256"],
                          "c4fbbec9cd0d1115c9adab884923061b960de42b4ca6d65ba5f08cb6b46c6fad")
+        self.assertEqual(profiles[2]["boot_inputs"]["redistribution_review"], "complete")
 
     def test_pi_recipe_change_isolated_from_unrelated_artifacts(self):
         planner = load_script("freesense_plan_fingerprint", "scripts/plan.py")
