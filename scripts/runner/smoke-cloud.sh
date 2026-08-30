@@ -21,6 +21,11 @@ while (($#)); do
   esac
 done
 [[ "$architecture" == amd64 || "$architecture" == arm64 ]]
+if [[ "$architecture" == arm64 ]]; then
+  if ! command -v qemu-system-aarch64 >/dev/null || ! ls /usr/share/AAVMF/AAVMF_CODE.fd /usr/share/edk2/aarch64/QEMU_EFI-pflash.raw /usr/share/qemu-efi-aarch64/QEMU_EFI.fd /usr/share/edk2/aarch64/QEMU_EFI.fd 2>/dev/null; then
+    sudo apt-get update -y && sudo apt-get install -y qemu-system-arm qemu-efi-aarch64 || true
+  fi
+fi
 [[ "$filesystem" == ufs || "$filesystem" == zfs ]]
 [[ "$virtual_size_gib" =~ ^[1-9][0-9]*$ ]]
 virtual_size=$((virtual_size_gib * 1024 * 1024 * 1024))
@@ -141,6 +146,7 @@ curl --fail --silent --show-error --location --retry 5 \
 jq -e --arg fingerprint "$fingerprint" --arg bundle "$bundle" \
   --arg system "$system" --arg packages "$packages" \
   --arg channel "$channel" --arg filesystem "$filesystem" \
+  --arg architecture "$architecture" \
   --argjson generation "$generation" --argjson virtual_size "$virtual_size" '
   .schema_version == "freesense.cloud-image/v1" and
   .fingerprint == $fingerprint and .bundle_fingerprint == $bundle and
@@ -148,7 +154,7 @@ jq -e --arg fingerprint "$fingerprint" --arg bundle "$bundle" \
   .filesystem == $filesystem and .disk.virtual_size == $virtual_size and
   .inputs.system == $system and .inputs.packages == $packages and
   .disk.scheme == "gpt" and .disk.root_growth == true and
-  (.disk.firmware | sort) == ["bios","uefi"] and
+  (if $architecture == "arm64" then (.disk.firmware | sort) == ["uefi"] else (.disk.firmware | sort) == ["bios","uefi"] end) and
   ([.files[].format] | sort) == ["qcow2","raw"]
 ' "${work}/complete.json" >/dev/null
 
@@ -189,12 +195,16 @@ qemu-img resize "${work}/disk.qcow2" "$((virtual_size_gib + 8))G"
 prepare_ovmf() {
   local vars=$1 candidate code= template=
   if [[ "$architecture" == arm64 ]]; then
-    for candidate in /usr/share/AAVMF/AAVMF_CODE.fd /usr/share/edk2/aarch64/QEMU_EFI-pflash.raw; do
+    for candidate in /usr/share/AAVMF/AAVMF_CODE.fd /usr/share/edk2/aarch64/QEMU_EFI-pflash.raw /usr/share/qemu-efi-aarch64/QEMU_EFI.fd /usr/share/edk2/aarch64/QEMU_EFI.fd; do
       [[ ! -f "$candidate" ]] || { code=$candidate; break; }
     done
-    for candidate in /usr/share/AAVMF/AAVMF_VARS.fd /usr/share/edk2/aarch64/vars-template-pflash.raw; do
+    for candidate in /usr/share/AAVMF/AAVMF_VARS.fd /usr/share/edk2/aarch64/vars-template-pflash.raw /usr/share/qemu-efi-aarch64/QEMU_VARS.fd /usr/share/edk2/aarch64/QEMU_VARS.fd; do
       [[ ! -f "$candidate" ]] || { template=$candidate; break; }
     done
+    if [[ -n "$code" && -z "$template" ]]; then
+      ovmf_code=$code
+      return
+    fi
     [[ -n "$code" && -n "$template" ]]
     cp "$template" "$vars"
     ovmf_code=$code

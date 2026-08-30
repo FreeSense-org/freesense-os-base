@@ -43,6 +43,11 @@ done
 
 qemu_tool=qemu-system-x86_64
 [[ $architecture == arm64 ]] && qemu_tool=qemu-system-aarch64
+if [[ $architecture == arm64 ]]; then
+  if ! command -v "$qemu_tool" >/dev/null || ! ls /usr/share/AAVMF/AAVMF_CODE.fd /usr/share/edk2/aarch64/QEMU_EFI.fd /usr/share/qemu-efi-aarch64/QEMU_EFI.fd 2>/dev/null; then
+    sudo apt-get update -y && sudo apt-get install -y qemu-system-arm qemu-efi-aarch64 || true
+  fi
+fi
 for tool in curl jq "$qemu_tool" setsid sha256sum stat timeout; do
   command -v "$tool" >/dev/null || { echo "missing ISO smoke dependency: $tool" >&2; exit 1; }
 done
@@ -132,7 +137,7 @@ if [[ $architecture == arm64 ]]; then
   xz -dc "$iso" >"${run_dir}/installer.img"
   iso=${run_dir}/installer.img
   firmware=""
-  for candidate in /usr/share/AAVMF/AAVMF_CODE.fd /usr/share/edk2/aarch64/QEMU_EFI.fd; do
+  for candidate in /usr/share/AAVMF/AAVMF_CODE.fd /usr/share/edk2/aarch64/QEMU_EFI.fd /usr/share/qemu-efi-aarch64/QEMU_EFI.fd; do
     [[ -f $candidate ]] && { firmware=$candidate; break; }
   done
   [[ -n $firmware ]] || { echo "AAVMF firmware was not found" >&2; exit 1; }
