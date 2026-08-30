@@ -258,6 +258,8 @@ require(cloud_payload >= 0 and cloud_assembled > cloud_payload,
 require("result promote --stage iso" in reusable and
         "result promote --stage cloud" in reusable,
         "host boot smoke does not commit verified completion markers")
+require(reusable.count("steps.reuse.outputs.assembled != 'true'") == 2,
+        "assembled release images are not reused for smoke-only recovery")
 assembly_common = read("scripts/runner/assembly-common.sh")
 require("repos.manifest.json" not in iso_stage + assembly_common and
         "CHANNEL_PAYLOAD_B64" in assembly_common and "CHANNEL_SIGNATURE_B64" in assembly_common,
