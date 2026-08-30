@@ -6,8 +6,10 @@ verify_release_channel
 phase cloud-tools
 cloud_keys=/root/freesense-src/src/usr/local/share/FreeSense/keys/pkg
 test -s "${cloud_keys}/trusted/freesense"
-mkdir -p /tmp/cloud-repos /tmp/cloud-cache
-cat >/tmp/cloud-repos/FreeSenseAssembly.conf <<EOF
+if ! command -v qemu-img >/dev/null; then
+  if [ "${ARCHITECTURE}" = amd64 ]; then
+    mkdir -p /tmp/cloud-repos /tmp/cloud-cache
+    cat >/tmp/cloud-repos/FreeSenseAssembly.conf <<EOF
 FreeSenseAssembly: {
   url: "file:///root/system-repo",
   mirror_type: "none",
@@ -16,10 +18,17 @@ FreeSenseAssembly: {
   fingerprints: "${cloud_keys}"
 }
 EOF
-pkg -o REPOS_DIR=/tmp/cloud-repos -o PKG_CACHEDIR=/tmp/cloud-cache \
-  update -f -r FreeSenseAssembly
-pkg -o REPOS_DIR=/tmp/cloud-repos -o PKG_CACHEDIR=/tmp/cloud-cache \
-  install -y -r FreeSenseAssembly qemu-tools
+    pkg -o REPOS_DIR=/tmp/cloud-repos -o PKG_CACHEDIR=/tmp/cloud-cache \
+      update -f -r FreeSenseAssembly
+    pkg -o REPOS_DIR=/tmp/cloud-repos -o PKG_CACHEDIR=/tmp/cloud-cache \
+      install -y -r FreeSenseAssembly qemu-tools
+  else
+    pkg install -y qemu-tools || {
+      echo "unable to install host qemu-tools for ARM64 cloud assembly" >&2
+      exit 1
+    }
+  fi
+fi
 command -v qemu-img >/dev/null
 
 phase cloud-root
@@ -44,6 +53,10 @@ run_in_cloud_chroot() (
   trap 'exit 143' TERM
   mount -t devfs devfs "${cloud_chroot_root}/dev"
   cloud_devfs_mounted=yes
+  if [ -f /usr/local/bin/qemu-aarch64-static ] && [ ! -f "${cloud_chroot_root}/usr/local/bin/qemu-aarch64-static" ]; then
+    mkdir -p "${cloud_chroot_root}/usr/local/bin"
+    cp /usr/local/bin/qemu-aarch64-static "${cloud_chroot_root}/usr/local/bin/"
+  fi
   chroot "${cloud_chroot_root}" "$@"
 )
 
@@ -128,7 +141,7 @@ ln -sf FreeSense-rc "${root}/etc/pfSense-rc"
 ln -sf FreeSense-rc.shutdown "${root}/etc/pfSense-rc.shutdown"
 rm -rf "${root}/tmp/assembly-repo" "${root}/tmp/assembly-repos" \
   "${root}/tmp/assembly-keys" "${root}/tmp/assembly-cache" \
-  "${root}/tmp/pkg-bootstrap.pkg"
+  "${root}/tmp/pkg-bootstrap.pkg" "${root}/usr/local/bin/qemu-aarch64-static"
 config="${root}/cf/conf/config.xml"
 test -s "${config}"
 xml ed -L \
