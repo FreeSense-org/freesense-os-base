@@ -23,6 +23,8 @@ ROOT_ORIGINS = {
     "jq": "textproc/jq",
     "poudriere-devel": "ports-mgmt/poudriere-devel",
     "xmlstarlet": "textproc/xmlstarlet",
+    "qemu-user-static": "emulators/qemu-user-static",
+    "qemu-tools": "emulators/qemu-tools",
 }
 SHA256 = "1$" + "0" * 64
 PORTS_SHA = "7" * 40

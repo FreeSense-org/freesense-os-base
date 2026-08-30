@@ -125,6 +125,14 @@ comconsole_speed="115200"
 CONSOLE_EOF
 EOF
 awk -v overlay="${overlay}" '
+  /^[[:space:]]*_assembly_devfs_mounted=yes$/ {
+    print
+    print "\tif [ -f /usr/local/bin/qemu-aarch64-static ] && [ ! -f \"${_assembly_root}/usr/local/bin/qemu-aarch64-static\" ]; then"
+    print "\t\tmkdir -p \"${_assembly_root}/usr/local/bin\""
+    print "\t\tcp /usr/local/bin/qemu-aarch64-static \"${_assembly_root}/usr/local/bin/\""
+    print "\tfi"
+    next
+  }
   /^[[:space:]]*install_assembly_channel$/ {
     while ((getline line < overlay) > 0) print line
     close(overlay)

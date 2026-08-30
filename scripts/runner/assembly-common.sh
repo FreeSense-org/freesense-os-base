@@ -4,6 +4,12 @@ prepare_release_inputs() {
   fetch_input "${JAIL_OBJECT}" /root/jail-base.txz
   configure_source
   fetch_repository system "${SYSTEM_ID}" /root/system-repo
+  if [ "${FREEBSD_TARGET_ARCH:-}" = aarch64 ] || [ "${PACKAGE_ARCH:-}" = aarch64 ] || [ "${ARCHITECTURE:-}" = arm64 ]; then
+    if command -v qemu-aarch64-static >/dev/null; then
+      service qemu_user_static forcestart >/dev/null 2>&1 || true
+      binmiscctl lookup aarch64 >/dev/null 2>&1 || true
+    fi
+  fi
 }
 
 verify_release_channel() {

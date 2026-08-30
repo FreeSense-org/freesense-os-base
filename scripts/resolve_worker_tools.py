@@ -23,8 +23,9 @@ ROOT_NAMES = (
     "poudriere-devel",
     "xmlstarlet",
     "qemu-user-static",
+    "qemu-tools",
 )
-COMMANDS = ("gtar", "git", "rclone", "jq", "poudriere", "xml", "indexinfo", "qemu-aarch64-static")
+COMMANDS = ("gtar", "git", "rclone", "jq", "poudriere", "xml", "indexinfo", "qemu-aarch64-static", "qemu-img")
 SCHEMA_VERSION = "freesense.worker-tools/v1"
 SAFE_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9+,.@_~-]*")
 SAFE_VERSION = re.compile(r"[A-Za-z0-9+,.@_~-]+")
