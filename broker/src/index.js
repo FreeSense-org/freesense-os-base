@@ -19,10 +19,13 @@ const RUNNER_BUILD_WORKFLOW =
   `${GITHUB_REPOSITORY}/.github/workflows/runner-build.yml@${MAIN_REF}`;
 const STABLE_WORKFLOW =
   `${GITHUB_REPOSITORY}/.github/workflows/stable.yml@${MAIN_REF}`;
+const ARM64_EXPERIMENTAL_WORKFLOW =
+  `${GITHUB_REPOSITORY}/.github/workflows/arm64-experimental.yml@${MAIN_REF}`;
 const BUILD_ENTRY_WORKFLOWS = Object.freeze([
   SYSTEM_WORKFLOW,
   PACKAGES_WORKFLOW,
   STABLE_WORKFLOW,
+  ARM64_EXPERIMENTAL_WORKFLOW,
   `${GITHUB_REPOSITORY}/.github/workflows/release.yml@${MAIN_REF}`,
 ]);
 const PIN_WORKFLOW =
@@ -541,17 +544,29 @@ function entryWorkflow(claims) {
   );
 }
 
+function arm64ReusableWorkflow(claims, workflows) {
+  return (
+    claims.workflow_ref === ARM64_EXPERIMENTAL_WORKFLOW &&
+    claims.event_name === "workflow_dispatch" &&
+    workflows.includes(claims.job_workflow_ref) &&
+    SHA_PATTERN.test(claims.job_workflow_sha ?? "") &&
+    claims.job_workflow_sha === claims.workflow_sha
+  );
+}
+
 function coordinatorWorkflow(claims) {
   return (
     entryWorkflow(claims) ||
-    directWorkflow(claims, RELEASE_WORKFLOW, ["workflow_run"])
+    directWorkflow(claims, RELEASE_WORKFLOW, ["workflow_run"]) ||
+    arm64ReusableWorkflow(claims, [SYSTEM_WORKFLOW, PACKAGES_WORKFLOW, RELEASE_WORKFLOW])
   );
 }
 
 function channelWorkflow(claims) {
   return (
     entryWorkflow(claims) ||
-    directWorkflow(claims, RELEASE_WORKFLOW, ["workflow_run"])
+    directWorkflow(claims, RELEASE_WORKFLOW, ["workflow_run"]) ||
+    arm64ReusableWorkflow(claims, [SYSTEM_WORKFLOW, PACKAGES_WORKFLOW, RELEASE_WORKFLOW])
   );
 }
 
@@ -561,7 +576,8 @@ function downloadWorkflow(claims) {
       "workflow_dispatch",
       "workflow_run",
     ]) ||
-    directWorkflow(claims, STABLE_WORKFLOW, ["workflow_dispatch"])
+    directWorkflow(claims, STABLE_WORKFLOW, ["workflow_dispatch"]) ||
+    arm64ReusableWorkflow(claims, [RELEASE_WORKFLOW])
   );
 }
 
@@ -938,6 +954,7 @@ export const protocol = Object.freeze({
   region: REGION,
   roles: ROLE_DEFINITIONS,
   workflows: Object.freeze({
+    arm64Experimental: ARM64_EXPERIMENTAL_WORKFLOW,
     system: SYSTEM_WORKFLOW,
     packages: PACKAGES_WORKFLOW,
     runnerBuild: RUNNER_BUILD_WORKFLOW,

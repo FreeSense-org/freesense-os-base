@@ -496,6 +496,66 @@ describe("automatic package-chain identity", () => {
   }
 });
 
+describe("manual ARM64 experimental release identity", () => {
+  const arm64 = {
+    workflow_ref: protocol.workflows.arm64Experimental,
+    event_name: "workflow_dispatch",
+  };
+
+  for (const jobWorkflow of [
+    protocol.workflows.system,
+    protocol.workflows.packages,
+    protocol.workflows.release,
+  ]) {
+    for (const role of ["coordinator", "channel-writer"]) {
+      it(`allows ${role} through ${jobWorkflow}`, async () => {
+        const response = await request(role, claimsFor(role, {
+          ...arm64,
+          job_workflow_ref: jobWorkflow,
+        }));
+        assert.equal(response.status, 200);
+      });
+    }
+  }
+
+  it("allows the ARM64 chain to call the reusable artifact writer", async () => {
+    const response = await request("artifact-writer", claimsFor("artifact-writer", {
+      ...arm64,
+      job_workflow_ref: protocol.workflows.runnerBuild,
+    }));
+    assert.equal(response.status, 200);
+  });
+
+  it("allows only the reusable Release stage to write downloads", async () => {
+    const allowed = await request("download-writer", claimsFor("download-writer", {
+      ...arm64,
+      job_workflow_ref: protocol.workflows.release,
+    }));
+    assert.equal(allowed.status, 200);
+    const rejected = await request("download-writer", claimsFor("download-writer", {
+      ...arm64,
+      job_workflow_ref: protocol.workflows.system,
+    }));
+    assert.equal(rejected.status, 403);
+  });
+
+  it("rejects indirect ARM64 access outside a manual protected-main run", async () => {
+    for (const overrides of [
+      { event_name: "push" },
+      { ref: "refs/heads/feature" },
+      { ref_protected: "false" },
+      { job_workflow_ref: protocol.workflows.stable },
+    ]) {
+      const response = await request("coordinator", claimsFor("coordinator", {
+        ...arm64,
+        job_workflow_ref: protocol.workflows.system,
+        ...overrides,
+      }));
+      assert.equal(response.status, 403);
+    }
+  });
+});
+
 describe("automatic release ISO identity", () => {
   const releaseWorkflowRun = {
     workflow_ref: protocol.workflows.release,

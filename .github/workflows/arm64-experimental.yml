@@ -1,0 +1,36 @@
+name: ARM64 experimental release
+
+on:
+  workflow_dispatch:
+
+permissions: {actions: write, contents: read, id-token: write}
+concurrency: {group: arm64-experimental-release, cancel-in-progress: false}
+
+jobs:
+  system:
+    name: Build and publish ARM64 System
+    uses: ./.github/workflows/system.yml
+    with:
+      target: arm64
+    secrets: inherit
+
+  optional-packages:
+    name: Build and publish ARM64 Optional Packages
+    needs: system
+    uses: ./.github/workflows/packages.yml
+    with:
+      target: arm64
+      system_fingerprint: ${{ needs.system.outputs.system_fingerprint }}
+    secrets: inherit
+
+  publish-experimental-installer:
+    name: Build, verify, and publish ARM64 installer
+    needs: [system, optional-packages]
+    uses: ./.github/workflows/release.yml
+    with:
+      operation: bundle
+      channel: devel
+      target: arm64
+      system_fingerprint: ${{ needs.system.outputs.system_fingerprint }}
+      packages_fingerprint: ${{ needs.optional-packages.outputs.packages_fingerprint }}
+    secrets: inherit

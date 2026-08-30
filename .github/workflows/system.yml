@@ -1,6 +1,15 @@
 name: System
 
 on:
+  workflow_call:
+    inputs:
+      target:
+        type: string
+        required: true
+    outputs:
+      system_fingerprint:
+        description: Exact immutable System result
+        value: ${{ jobs.plan.outputs.system }}
   workflow_dispatch:
     inputs:
       target:
