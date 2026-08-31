@@ -107,7 +107,7 @@ if [ "${IMAGE_PROFILE}" = arm64-rpi4b ]; then
   newfs_msdos -F 16 -L FREESENSE "/dev/${md}s1"
 else
   gpart add -a 1m -s 260m -t fat32lba "${md}"
-  newfs_msdos -F 32 -L FREESENSE "/dev/${md}s1"
+  newfs_msdos -F 32 -c 1 -L FREESENSE "/dev/${md}s1"
 fi
 gpart add -a 1m -t freebsd "${md}"
 gpart create -s bsd "${md}s2"
