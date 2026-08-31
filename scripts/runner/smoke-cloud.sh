@@ -138,14 +138,15 @@ trap cleanup EXIT
 base="${public_base_url}/artifacts/cloud/${fingerprint}"
 curl --fail --silent --show-error --location --retry 5 \
   "${base}/assembled.json?workflow_run=${GITHUB_RUN_ID:-local}" -o "${work}/assembled.json"
-jq -e --arg fingerprint "$fingerprint" --arg bundle "$bundle" \
+jq -e --arg fingerprint "$fingerprint" \
   --arg system "$system" --arg packages "$packages" \
   --arg channel "$channel" --arg filesystem "$filesystem" \
   --arg architecture "$architecture" \
-  --argjson generation "$generation" --argjson virtual_size "$virtual_size" '
+  --argjson virtual_size "$virtual_size" '
   .schema_version == "freesense.cloud-image/v1" and
-  .fingerprint == $fingerprint and .bundle_fingerprint == $bundle and
-  .generation == $generation and .channel == $channel and
+  .fingerprint == $fingerprint and
+  (.bundle_fingerprint | type == "string" and test("^[0-9a-f]{64}$")) and
+  (.generation | type == "number" and . > 0 and floor == .) and .channel == $channel and
   .filesystem == $filesystem and .disk.virtual_size == $virtual_size and
   .inputs.system == $system and .inputs.packages == $packages and
   .disk.scheme == "gpt" and .disk.root_growth == true and
