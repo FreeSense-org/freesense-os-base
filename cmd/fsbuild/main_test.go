@@ -124,14 +124,6 @@ func TestValidateResultMarkerRejectsBrokenClosures(t *testing.T) {
 		wantError  string
 	}{
 		{
-			name:       "generation mismatch",
-			stage:      "system",
-			id:         systemID,
-			platformID: platformID,
-			marker:     repositoryMarker("system", systemID, systemID, platformID),
-			wantError:  "different generation",
-		},
-		{
 			name:       "system platform mismatch",
 			stage:      "system",
 			id:         systemID,
@@ -205,10 +197,6 @@ func TestValidateResultMarkerRejectsBrokenClosures(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			expectedGeneration := uint64(1)
-			if test.name == "generation mismatch" {
-				expectedGeneration = 2
-			}
 			_, err := validateResultMarker(
 				test.stage,
 				test.id,
@@ -219,7 +207,7 @@ func TestValidateResultMarkerRejectsBrokenClosures(t *testing.T) {
 				"",
 				"amd64", "amd64", "generic-amd64",
 				0,
-				expectedGeneration,
+				1,
 				marshalMarker(t, test.marker),
 			)
 			if err == nil {
@@ -229,6 +217,18 @@ func TestValidateResultMarkerRejectsBrokenClosures(t *testing.T) {
 				t.Fatalf("validateResultMarker() error = %q, want substring %q", err, test.wantError)
 			}
 		})
+	}
+}
+
+func TestValidateResultMarkerAllowsReuseAcrossBundleGenerations(t *testing.T) {
+	marker := isoMarker(resultID, systemID, platformID, "FreeSense-1.1.0-g6-amd64.iso")
+	marker.Generation = 6
+	marker.BundleFingerprint = otherID
+	if _, err := validateResultMarker(
+		"iso", resultID, systemID, resultID, platformID, freeBSDPinID, "",
+		"amd64", "amd64", "generic-amd64", 0, 7, marshalMarker(t, marker),
+	); err != nil {
+		t.Fatalf("unchanged artifact rejected in a later bundle generation: %v", err)
 	}
 }
 

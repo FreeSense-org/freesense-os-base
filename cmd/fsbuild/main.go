@@ -551,9 +551,8 @@ func validateResultMarker(stage, id, systemID, packagesID, platformID, freeBSDPi
 	if err := json.Unmarshal(data, &marker); err != nil || marker.Fingerprint != id || marker.Generation == 0 {
 		return resultMarker{}, errors.New("result completion marker conflicts with its content ID")
 	}
-	if generation != 0 && marker.Generation != generation {
-		return resultMarker{}, errors.New("result completion marker belongs to a different generation")
-	}
+	// Generation and bundle identify a publication, not a content-addressed
+	// artifact. A later bundle may reuse an unchanged artifact fingerprint.
 	legacyAMD64 := marker.Architecture == "" && marker.PackageArch == "" && architecture == "amd64"
 	if !legacyAMD64 && (marker.Architecture != architecture || marker.PackageArch != packageArch ||
 		marker.Platform != imageProfile || len(marker.Firmware) == 0 || marker.Capabilities == nil) {
