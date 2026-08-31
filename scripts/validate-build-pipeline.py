@@ -118,6 +118,11 @@ for value in ("Reserve immutable release generation", "system_generation",
             f"independent ISO release generation is missing {value!r}")
 require("if: always() && needs.iso-plan.result == 'success'" in release_workflow,
         "manual installer jobs do not survive the intentionally skipped release gate")
+for value in (
+        "if: always() && needs.iso-plan.outputs.target == 'arm64' && needs.iso.result == 'success'",
+        "if: always() && needs.iso-plan.outputs.target == 'arm64' && needs.appliance-rpi4b.result == 'success'"):
+    require(value in release_workflow,
+            "Raspberry Pi appliance jobs do not survive the intentionally skipped release gate")
 require("needs.iso.result == 'success' && needs.iso-plan.outputs.cloud_enabled == 'true'" in release_workflow and
         "needs.cloud-ufs.result == 'success' && needs.iso-plan.outputs.cloud_enabled == 'true'" in release_workflow,
         "cloud jobs are not gated by installer verification and profile capability")

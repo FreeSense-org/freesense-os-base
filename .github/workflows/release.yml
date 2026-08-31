@@ -387,7 +387,7 @@ jobs:
 
   appliance-rpi4b:
     needs: [iso-plan, iso]
-    if: needs.iso-plan.outputs.target == 'arm64' && needs.iso.result == 'success'
+    if: always() && needs.iso-plan.outputs.target == 'arm64' && needs.iso.result == 'success'
     uses: ./.github/workflows/runner-build.yml
     with:
       stage: appliance
@@ -440,7 +440,7 @@ jobs:
 
   appliance-rpi5-d0:
     needs: [iso-plan, appliance-rpi4b]
-    if: needs.iso-plan.outputs.target == 'arm64' && needs.appliance-rpi4b.result == 'success'
+    if: always() && needs.iso-plan.outputs.target == 'arm64' && needs.appliance-rpi4b.result == 'success'
     uses: ./.github/workflows/runner-build.yml
     with:
       stage: appliance
