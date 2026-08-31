@@ -240,7 +240,8 @@ def package_changes(existing: dict | None, system: str, base_url: str, package_a
 
 
 def build_release_notes(existing: dict | None, provenance: dict[str, str],
-                        system: str, base_url: str) -> dict:
+                        system: str, base_url: str,
+                        package_arch: str = "amd64") -> dict:
     if (existing is not None
             and existing.get("bundle_fingerprint") == provenance.get("fingerprint")
             and valid_release_notes(existing.get("release_notes"))):
@@ -261,7 +262,7 @@ def build_release_notes(existing: dict | None, provenance: dict[str, str],
                 "from_ports_commit": from_ports,
                 "to_ports_commit": provenance["ports"],
             },
-            "packages": package_changes(existing, system, base_url),
+            "packages": package_changes(existing, system, base_url, package_arch),
         },
     }
 
@@ -667,7 +668,10 @@ def main() -> int:
         "freebsd": args.freebsd,
         "fingerprint": args.bundle_fingerprint,
     }
-    release_notes = build_release_notes(existing, provenance, args.system, args.base_url)
+    release_notes = build_release_notes(
+        existing, provenance, args.system, args.base_url,
+        selected_target["package_arch"],
+    )
     release = {
         "schema_version": DOWNLOAD_SCHEMA,
         "architecture": selected_target["architecture"],
