@@ -426,6 +426,7 @@ jobs:
       kernel: FreeSense
       executor: amd64-cross-qemu-user
       image_profile: arm64-rpi4b
+      system_image_profile: generic-arm64-uefi
       firmware: raspberry-pi-firmware,u-boot
       image_capabilities: ${{ toJSON(fromJSON(needs.iso-plan.outputs.appliance_rpi4b_spec).capabilities) }}
       installer_format: none
@@ -479,6 +480,7 @@ jobs:
       kernel: FreeSense
       executor: amd64-cross-qemu-user
       image_profile: arm64-rpi5-d0
+      system_image_profile: generic-arm64-uefi
       firmware: raspberry-pi,uefi
       image_capabilities: ${{ toJSON(fromJSON(needs.iso-plan.outputs.appliance_rpi5_d0_spec).capabilities) }}
       installer_format: none
