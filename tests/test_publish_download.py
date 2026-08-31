@@ -411,13 +411,37 @@ class PublishDownloadTests(unittest.TestCase):
         with mock.patch.object(
             publish, "system_package_inventory", side_effect=(before, after)
         ) as inventory:
-            changes = publish.package_changes(existing, SYSTEM, BASE_URL)
+            changes = publish.package_changes(existing, SYSTEM, BASE_URL, "aarch64")
         self.assertEqual(inventory.call_count, 2)
+        inventory.assert_has_calls([
+            mock.call(BASE_URL, "9" * 64, "aarch64"),
+            mock.call(BASE_URL, SYSTEM, "aarch64"),
+        ])
         self.assertEqual(changes["counts"], {"updated": 1, "added": 1, "removed": 1})
         self.assertEqual(changes["updated"][0]["name"], "openssl")
         self.assertEqual(changes["added"][0]["name"], "new-tool")
         self.assertEqual(changes["removed"][0]["name"], "old-tool")
         self.assertFalse(changes["truncated"])
+
+    def test_arm64_release_notes_use_aarch64_system_catalogs(self):
+        existing = release("devel", generation=7, fingerprint="e" * 64)
+        existing["system"] = "9" * 64
+        provenance = {
+            **existing["provenance"],
+            "fingerprint": BUNDLE_FINGERPRINT,
+        }
+        package_delta = {
+            "available": True, "updated": [], "added": [], "removed": [],
+            "counts": {"updated": 0, "added": 0, "removed": 0},
+            "truncated": False,
+        }
+        with mock.patch.object(
+            publish, "package_changes", return_value=package_delta
+        ) as changes:
+            publish.build_release_notes(
+                existing, provenance, SYSTEM, BASE_URL, "aarch64"
+            )
+        changes.assert_called_once_with(existing, SYSTEM, BASE_URL, "aarch64")
 
     def test_signed_system_catalog_is_parsed_as_package_inventory(self):
         catalog = "\n".join((
