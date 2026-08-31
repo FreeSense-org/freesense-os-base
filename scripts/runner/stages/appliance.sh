@@ -104,10 +104,10 @@ if [ "${IMAGE_PROFILE}" = arm64-rpi4b ]; then
   grep -q 'FAT_TYPE="16"' /root/RPI.conf
   grep -q 'PART_SCHEME="MBR"' /root/RPI.conf
   gpart add -a 1m -s 50m -t fat16 "${md}"
-  newfs_msdos -F 16 -L FREESENSE_BOOT "/dev/${md}s1"
+  newfs_msdos -F 16 -L FREESENSE "/dev/${md}s1"
 else
   gpart add -a 1m -s 260m -t fat32lba "${md}"
-  newfs_msdos -F 32 -L FREESENSE_BOOT "/dev/${md}s1"
+  newfs_msdos -F 32 -L FREESENSE "/dev/${md}s1"
 fi
 gpart add -a 1m -t freebsd "${md}"
 gpart create -s bsd "${md}s2"
@@ -117,7 +117,7 @@ mount_msdosfs "/dev/${md}s1" /mnt/appliance-boot
 mount "/dev/${md}s2a" /mnt/appliance-root
 cat >"${root}/etc/fstab" <<'EOF'
 /dev/ufs/FreeSense / ufs rw,noatime 1 1
-/dev/msdosfs/FREESENSE_BOOT /boot/efi msdosfs rw 2 2
+/dev/msdosfs/FREESENSE /boot/efi msdosfs rw 2 2
 EOF
 tar -C "${root}" -cpf - . | tar -C /mnt/appliance-root -xpf -
 mkdir -p /mnt/appliance-root/boot/efi

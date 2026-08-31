@@ -287,7 +287,10 @@ for value in ('"kind": "release-bundle"', '"cloud", shared_assembly',
 for value in ("freesense.appliance/v1", "arm64-rpi4b", "arm64-rpi5-d0",
               "RPI_EFI.fd", "BOOTAA64.EFI", "bcm2712d0-rpi-5-b.dtb",
               "u-boot.bin", 'growfs_enable="YES"', "force_growfs",
-              "FreeSense-cloud-init", "qemu-aarch64-static"):
+              "FreeSense-cloud-init", "qemu-aarch64-static",
+              "newfs_msdos -F 16 -L FREESENSE",
+              "newfs_msdos -F 32 -L FREESENSE",
+              "/dev/msdosfs/FREESENSE"):
     require(value in appliance_stage, f"appliance assembly is missing {value!r}")
 for value in ("freesense.cloud-image/v1", "qemu-img convert",
               "CLOUD_VIRTUAL_SIZE_GIB", "CLOUD_FILESYSTEM",
