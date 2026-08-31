@@ -122,6 +122,51 @@ EOF
 tar -C "${root}" -cpf - . | tar -C /mnt/appliance-root -xpf -
 mkdir -p /mnt/appliance-root/boot/efi
 
+phase appliance-verify-root
+partition_table=$(gpart show -p "${md}") || {
+  echo "appliance partition table cannot be read" >&2; exit 1;
+}
+printf '%s\n' "${partition_table}"
+printf '%s\n' "${partition_table}" | grep -Eq '[[:space:]]MBR([[:space:]]|$)' || {
+  echo "appliance disk does not use MBR" >&2; exit 1;
+}
+printf '%s\n' "${partition_table}" | grep -Eq '[[:space:]]freebsd([[:space:]]|$)' || {
+  echo "appliance disk is missing its FreeBSD partition" >&2; exit 1;
+}
+root_type=$(fstyp "/dev/${md}s2a") || {
+  echo "appliance root filesystem cannot be identified" >&2; exit 1;
+}
+[ "${root_type}" = ufs ] || {
+  echo "appliance root filesystem is not UFS: ${root_type}" >&2; exit 1;
+}
+test -s "/mnt/appliance-root/boot/kernel/kernel" -o \
+  -s "/mnt/appliance-root/boot/kernel/kernel.gz" || {
+  echo "appliance root is missing the ARM64 kernel" >&2; exit 1;
+}
+test -s "/mnt/appliance-root/usr/local/share/FreeSense/appliance-${IMAGE_PROFILE}.complete" || {
+  echo "appliance root is missing its board completion marker" >&2; exit 1;
+}
+grep -q '/dev/ufs/FreeSense' /mnt/appliance-root/etc/fstab || {
+  echo "appliance fstab is missing its UFS root label" >&2; exit 1;
+}
+grep -q '/dev/msdosfs/FREESENSE' /mnt/appliance-root/etc/fstab || {
+  echo "appliance fstab is missing its FAT boot label" >&2; exit 1;
+}
+grep -q 'growfs_enable="YES"' /mnt/appliance-root/etc/rc.conf || {
+  echo "appliance root-growth service is not enabled" >&2; exit 1;
+}
+test ! -e /mnt/appliance-root/var/lib/cloud || {
+  echo "appliance root contains cloud-init state" >&2; exit 1;
+}
+test ! -e /mnt/appliance-root/usr/local/bin/qemu-aarch64-static || {
+  echo "appliance root contains its build emulator" >&2; exit 1;
+}
+pkg -r /mnt/appliance-root info -e FreeSense >/dev/null || {
+  echo "appliance package database is missing FreeSense" >&2
+  pkg -r /mnt/appliance-root info >&2 || true
+  exit 1
+}
+
 phase appliance-boot-inputs
 if [ "${IMAGE_PROFILE}" = arm64-rpi4b ]; then
   clone_exact https://github.com/freebsd/freebsd-ports.git /root/freebsd-ports "${PORTS_SHA}"
@@ -148,24 +193,24 @@ else
 fi
 sync
 
-phase appliance-verify
-gpart show -p "${md}" | grep -q 'MBR'
-gpart show -p "${md}" | grep -q 'freebsd'
-fstyp "/dev/${md}s2a" | grep -q '^ufs$'
-test -s "/mnt/appliance-root/boot/kernel/kernel" -o -s "/mnt/appliance-root/boot/kernel/kernel.gz"
-test -s "/mnt/appliance-root/usr/local/share/FreeSense/appliance-${IMAGE_PROFILE}.complete"
-grep -q '/dev/ufs/FreeSense' /mnt/appliance-root/etc/fstab
-grep -q 'growfs_enable="YES"' /mnt/appliance-root/etc/rc.conf
-test ! -e /mnt/appliance-root/var/lib/cloud
-test ! -e /mnt/appliance-root/usr/local/bin/qemu-aarch64-static
-pkg -r /mnt/appliance-root info -e FreeSense
+phase appliance-verify-boot
 if [ "${IMAGE_PROFILE}" = arm64-rpi4b ]; then
-  test -s /mnt/appliance-boot/u-boot.bin
-  test -s /mnt/appliance-boot/bcm2711-rpi-4-b.dtb
+  test -s /mnt/appliance-boot/u-boot.bin || {
+    echo "Pi 4 appliance is missing U-Boot" >&2; exit 1;
+  }
+  test -s /mnt/appliance-boot/bcm2711-rpi-4-b.dtb || {
+    echo "Pi 4 appliance is missing its board DTB" >&2; exit 1;
+  }
 else
-  test -s /mnt/appliance-boot/RPI_EFI.fd
-  test -s /mnt/appliance-boot/EFI/BOOT/BOOTAA64.EFI
-  test -s /mnt/appliance-boot/bcm2712d0-rpi-5-b.dtb
+  test -s /mnt/appliance-boot/RPI_EFI.fd || {
+    echo "Pi 5 appliance is missing RPI_EFI.fd" >&2; exit 1;
+  }
+  test -s /mnt/appliance-boot/EFI/BOOT/BOOTAA64.EFI || {
+    echo "Pi 5 appliance is missing BOOTAA64.EFI" >&2; exit 1;
+  }
+  test -s /mnt/appliance-boot/bcm2712d0-rpi-5-b.dtb || {
+    echo "Pi 5 appliance is missing its D0 board DTB" >&2; exit 1;
+  }
 fi
 umount /mnt/appliance-boot
 umount /mnt/appliance-root
