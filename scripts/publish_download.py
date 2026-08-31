@@ -561,12 +561,12 @@ def main() -> int:
     marker_schema = "freesense.iso/v2" if selected_profile["installer"] == "iso" else "freesense.installer/v1"
     current_marker = (marker.get("schema_version") == marker_schema
                       and marker_inputs.get("packages") == args.packages_fingerprint
-                      and marker.get("bundle_fingerprint") == args.bundle_fingerprint
                       ) if isinstance(marker, dict) else False
     if (not isinstance(marker, dict) or not current_marker
             or marker.get("fingerprint") != args.fingerprint
             or marker.get("system") != args.system
-            or marker.get("generation") != args.generation
+            or not isinstance(marker.get("generation"), int) or marker["generation"] <= 0
+            or not SHA256.fullmatch(marker.get("bundle_fingerprint", ""))
             or marker_inputs.get("channel") != args.channel
             or not SHA256.fullmatch(marker.get("sha256", ""))
             or not isinstance(marker.get("size"), int) or marker["size"] <= 0
@@ -586,8 +586,9 @@ def main() -> int:
                 or cloud_marker.get("schema_version") != "freesense.cloud-image/v1"
                 or cloud_marker.get("fingerprint") != cloud_fingerprint
                 or cloud_marker.get("filesystem") != filesystem
-                or cloud_marker.get("bundle_fingerprint") != args.bundle_fingerprint
-                or cloud_marker.get("generation") != args.generation
+                or not SHA256.fullmatch(cloud_marker.get("bundle_fingerprint", ""))
+                or not isinstance(cloud_marker.get("generation"), int)
+                or cloud_marker["generation"] <= 0
                 or cloud_marker.get("system") not in {None, args.system}
                 or cloud_marker.get("inputs", {}).get("system") != args.system
                 or cloud_marker.get("inputs", {}).get("packages") != args.packages_fingerprint
@@ -609,8 +610,9 @@ def main() -> int:
         if (not isinstance(appliance_marker, dict)
                 or appliance_marker.get("schema_version") != "freesense.appliance/v1"
                 or appliance_marker.get("fingerprint") != appliance_fingerprint
-                or appliance_marker.get("bundle_fingerprint") != args.bundle_fingerprint
-                or appliance_marker.get("generation") != args.generation
+                or not SHA256.fullmatch(appliance_marker.get("bundle_fingerprint", ""))
+                or not isinstance(appliance_marker.get("generation"), int)
+                or appliance_marker["generation"] <= 0
                 or appliance_marker.get("channel") != args.channel
                 or appliance_marker.get("architecture") != selected_target["architecture"]
                 or appliance_marker.get("package_arch") != selected_target["package_arch"]

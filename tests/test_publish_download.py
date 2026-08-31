@@ -322,6 +322,22 @@ class PublishDownloadTests(unittest.TestCase):
         self.assertEqual(value["published_at"], existing["published_at"])
         self.assertEqual(value["changes"], existing["changes"])
 
+    def test_reuses_artifact_markers_from_an_earlier_bundle_generation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory, "stable.json")
+            installer = marker(generation=1)
+            installer["bundle_fingerprint"] = "9" * 64
+            ufs = cloud_marker(generation=1, bundle="9" * 64)
+            zfs = cloud_marker(generation=1, filesystem="zfs", bundle="9" * 64)
+            responses = iter((installer, ufs, zfs, None))
+            with mock.patch.object(sys, "argv", publisher_argv(output)), mock.patch.object(
+                publish, "fetch_json", side_effect=lambda *_args, **_kwargs: next(responses)
+            ):
+                self.assertEqual(publish.main(), 0)
+            value = json.loads(output.read_text())
+        self.assertEqual(value["generation"], 2)
+        self.assertEqual(value["bundle_fingerprint"], BUNDLE_FINGERPRINT)
+
     def test_same_generation_checks_each_cloud_format_with_shared_fingerprint(self):
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory, "stable.json")
