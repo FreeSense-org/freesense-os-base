@@ -171,6 +171,7 @@ for required_package in FreeSense-base FreeSense-kernel-FreeSense \
 done
 
 phase appliance-boot-inputs
+mkdir -p /mnt/appliance-boot/EFI/BOOT
 if [ "${IMAGE_PROFILE}" = arm64-rpi4b ]; then
   clone_exact https://github.com/freebsd/freebsd-ports.git /root/freebsd-ports "${PORTS_SHA}"
   env BATCH=yes WRKDIRPREFIX=/root/ports-work make -C /root/freebsd-ports/sysutils/u-boot-rpi-arm64 install clean
@@ -186,17 +187,20 @@ else
   fetch -o "${archive}" "$(printf '%s' "${BOOT_INPUTS}" | jq -er .url)"
   test "$(sha256 -q "${archive}")" = "$(printf '%s' "${BOOT_INPUTS}" | jq -er .archive_sha256)"
   upload_immutable "${archive}" "R2:${R2_BUCKET}/${PREFIX}/inputs/sha256/$(sha256 -q "${archive}")"
-  mkdir -p /root/rpi5-uefi /mnt/appliance-boot/EFI/BOOT
+  mkdir -p /root/rpi5-uefi
   unzip -q "${archive}" -d /root/rpi5-uefi
   cp /root/rpi5-uefi/RPI_EFI.fd /root/rpi5-uefi/config.txt \
     /root/rpi5-uefi/bcm2712-d-rpi-5-b.dtb \
     /root/rpi5-uefi/bcm2712-rpi-5-b.dtb \
     /root/rpi5-uefi/bcm2712d0-rpi-5-b.dtb /mnt/appliance-boot/
-  cp "${root}/boot/loader.efi" /mnt/appliance-boot/EFI/BOOT/BOOTAA64.EFI
 fi
+cp "${root}/boot/loader.efi" /mnt/appliance-boot/EFI/BOOT/BOOTAA64.EFI
 sync
 
 phase appliance-verify-boot
+test -s /mnt/appliance-boot/EFI/BOOT/BOOTAA64.EFI || {
+  echo "${IMAGE_PROFILE} appliance is missing BOOTAA64.EFI" >&2; exit 1;
+}
 if [ "${IMAGE_PROFILE}" = arm64-rpi4b ]; then
   test -s /mnt/appliance-boot/u-boot.bin || {
     echo "Pi 4 appliance is missing U-Boot" >&2; exit 1;
@@ -207,9 +211,6 @@ if [ "${IMAGE_PROFILE}" = arm64-rpi4b ]; then
 else
   test -s /mnt/appliance-boot/RPI_EFI.fd || {
     echo "Pi 5 appliance is missing RPI_EFI.fd" >&2; exit 1;
-  }
-  test -s /mnt/appliance-boot/EFI/BOOT/BOOTAA64.EFI || {
-    echo "Pi 5 appliance is missing BOOTAA64.EFI" >&2; exit 1;
   }
   test -s /mnt/appliance-boot/bcm2712d0-rpi-5-b.dtb || {
     echo "Pi 5 appliance is missing its D0 board DTB" >&2; exit 1;
