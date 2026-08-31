@@ -221,6 +221,13 @@ packages_stage = read("scripts/runner/stages/packages.sh")
 iso_stage = read("scripts/runner/stages/iso.sh")
 cloud_stage = read("scripts/runner/stages/cloud.sh")
 appliance_stage = read("scripts/runner/stages/appliance.sh")
+iso_smoke = read("scripts/runner/smoke-iso.sh")
+cloud_smoke = read("scripts/runner/smoke-cloud.sh")
+require(".generation == $generation" not in iso_smoke + cloud_smoke and
+        ".bundle_fingerprint == $bundle" not in cloud_smoke and
+        '(.generation | type == "number" and . > 0 and floor == .)' in iso_smoke and
+        '(.generation | type == "number" and . > 0 and floor == .)' in cloud_smoke,
+        "boot smoke still binds reusable artifacts to one bundle generation")
 require("-S115200 -Dh" in iso_stage and not re.search(
             r'(?m)^console="comconsole,vidconsole"$', iso_stage),
         "ISO console selection is not firmware-aware dual-console mode")

@@ -101,13 +101,13 @@ curl --fail --location --silent --show-error --proto '=https' \
 
 jq -e --arg fingerprint "$fingerprint" --arg system "$system" --arg packages "$packages" \
   --arg channel "$channel" --arg train "$package_train" \
-  --arg payload "$channel_payload" --arg architecture "$architecture" --argjson generation "$generation" '
+  --arg payload "$channel_payload" --arg architecture "$architecture" '
   ((.schema_version == "freesense.iso/v1" and (.inputs | has("packages") | not)) or
    (.schema_version == "freesense.iso/v2" and .inputs.packages == $packages) or
    (.schema_version == "freesense.installer/v1" and .inputs.packages == $packages)) and
   .fingerprint == $fingerprint and
   .system == $system and
-  .generation == $generation and
+  (.generation | type == "number" and . > 0 and floor == .) and
   .inputs.channel == $channel and
   .inputs.package_train == $train and
   .inputs.channel_payload == $payload and
