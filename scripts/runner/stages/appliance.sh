@@ -161,11 +161,14 @@ test ! -e /mnt/appliance-root/var/lib/cloud || {
 test ! -e /mnt/appliance-root/usr/local/bin/qemu-aarch64-static || {
   echo "appliance root contains its build emulator" >&2; exit 1;
 }
-pkg -r /mnt/appliance-root info -e FreeSense >/dev/null || {
-  echo "appliance package database is missing FreeSense" >&2
-  pkg -r /mnt/appliance-root info >&2 || true
-  exit 1
-}
+for required_package in FreeSense-base FreeSense-kernel-FreeSense \
+  FreeSense-system FreeSense-default-config-serial FreeSense-repoc; do
+  pkg -r /mnt/appliance-root info -e "${required_package}" >/dev/null || {
+    echo "appliance package database is missing ${required_package}" >&2
+    pkg -r /mnt/appliance-root info >&2 || true
+    exit 1
+  }
+done
 
 phase appliance-boot-inputs
 if [ "${IMAGE_PROFILE}" = arm64-rpi4b ]; then
