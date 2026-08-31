@@ -41,6 +41,7 @@ on:
       kernel: {type: string, required: false, default: FreeSense}
       executor: {type: string, required: false, default: native-amd64}
       image_profile: {type: string, required: false, default: generic-amd64}
+      system_image_profile: {type: string, required: false, default: generic-amd64}
       firmware: {type: string, required: false, default: 'bios,uefi'}
       image_capabilities: {type: string, required: false, default: '{"bios":true,"cloud_init":true,"installer_img":false,"iso":true,"uefi":true}'}
       installer_format: {type: string, required: false, default: iso}
@@ -109,6 +110,7 @@ jobs:
       KERNEL: ${{ inputs.kernel }}
       EXECUTOR: ${{ inputs.executor }}
       IMAGE_PROFILE: ${{ inputs.image_profile }}
+      SYSTEM_IMAGE_PROFILE: ${{ inputs.system_image_profile }}
       FIRMWARE: ${{ inputs.firmware }}
       IMAGE_CAPABILITIES: ${{ inputs.image_capabilities }}
       INSTALLER_FORMAT: ${{ inputs.installer_format }}
@@ -166,7 +168,7 @@ jobs:
           "${RUNNER_TEMP}/fsbuild" result check --stage system \
             --id "${SYSTEM_ID}" --platform-id "${PLATFORM_ID}" \
             --architecture "${ARCHITECTURE}" --package-arch "${PACKAGE_ARCH}" \
-            --image-profile "${IMAGE_PROFILE}" \
+            --image-profile "${SYSTEM_IMAGE_PROFILE}" \
             --github-output "${output}"
           grep -qx 'complete=true' "${output}"
       - name: Render checked FreeBSD worker

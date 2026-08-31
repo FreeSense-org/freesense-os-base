@@ -374,7 +374,9 @@ require('printf \'%s\\n\' "${PRODUCT_VERSION}" >src/etc/version' in common and
         '"${_repoc_root}/etc/version"' in iso_stage,
         "checked release versions are not stamped into source and ISO roots")
 require("name: Reuse completed immutable result" in reusable and
-        "name: Verify required System result" in reusable,
+        "name: Verify required System result" in reusable and
+        '--image-profile "${SYSTEM_IMAGE_PROFILE}"' in reusable and
+        release_workflow.count("system_image_profile: generic-arm64-uefi") == 2,
         "host-side immutable reuse or prerequisite check is missing")
 require("create_source_archive" in system_stage and "create_source_archive" in packages_stage,
         "package builds do not create their deterministic source distfile")
