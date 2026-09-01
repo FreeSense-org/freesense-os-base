@@ -80,6 +80,7 @@ cat >>"${root}/boot/loader.conf" <<'EOF'
 autoboot_delay="3"
 boot_multicons="YES"
 boot_serial="YES"
+console="efi,comconsole"
 comconsole_speed="115200"
 EOF
 touch "${root}/root/force_growfs" "${root}/firstboot"
@@ -181,6 +182,9 @@ if [ "${IMAGE_PROFILE}" = arm64-rpi4b ]; then
     start.elf start4.elf bcm2711-rpi-4-b.dtb LICENCE.broadcom; do
     cp "/usr/local/share/rpi-firmware/${boot_file}" /mnt/appliance-boot/
   done
+  if [ -d /usr/local/share/rpi-firmware/overlays ]; then
+    cp -a /usr/local/share/rpi-firmware/overlays /mnt/appliance-boot/
+  fi
   cp /usr/local/share/rpi-firmware/config_arm64.txt /mnt/appliance-boot/config.txt
 else
   archive=/root/RPI5_D0.zip
@@ -189,10 +193,21 @@ else
   upload_immutable "${archive}" "R2:${R2_BUCKET}/${PREFIX}/inputs/sha256/$(sha256 -q "${archive}")"
   mkdir -p /root/rpi5-uefi
   unzip -q "${archive}" -d /root/rpi5-uefi
-  cp /root/rpi5-uefi/RPI_EFI.fd /root/rpi5-uefi/config.txt \
+  cp /root/rpi5-uefi/RPI_EFI.fd \
     /root/rpi5-uefi/bcm2712-d-rpi-5-b.dtb \
     /root/rpi5-uefi/bcm2712-rpi-5-b.dtb \
     /root/rpi5-uefi/bcm2712d0-rpi-5-b.dtb /mnt/appliance-boot/
+  if [ -f /root/rpi5-uefi/config.txt ]; then
+    cp /root/rpi5-uefi/config.txt /mnt/appliance-boot/config.txt
+  else
+    cat >/mnt/appliance-boot/config.txt <<'EOF'
+armstub=RPI_EFI.fd
+enable_uart=1
+uart_2ndstage=1
+device_tree_address=0x1f0000
+device_tree_end=0x210000
+EOF
+  fi
 fi
 cp "${root}/boot/loader.efi" /mnt/appliance-boot/EFI/BOOT/BOOTAA64.EFI
 sync
@@ -201,12 +216,18 @@ phase appliance-verify-boot
 test -s /mnt/appliance-boot/EFI/BOOT/BOOTAA64.EFI || {
   echo "${IMAGE_PROFILE} appliance is missing BOOTAA64.EFI" >&2; exit 1;
 }
+test -s /mnt/appliance-boot/config.txt || {
+  echo "${IMAGE_PROFILE} appliance is missing config.txt" >&2; exit 1;
+}
 if [ "${IMAGE_PROFILE}" = arm64-rpi4b ]; then
   test -s /mnt/appliance-boot/u-boot.bin || {
     echo "Pi 4 appliance is missing U-Boot" >&2; exit 1;
   }
   test -s /mnt/appliance-boot/bcm2711-rpi-4-b.dtb || {
     echo "Pi 4 appliance is missing its board DTB" >&2; exit 1;
+  }
+  test -d /mnt/appliance-boot/overlays || {
+    echo "Pi 4 appliance is missing overlays directory" >&2; exit 1;
   }
 else
   test -s /mnt/appliance-boot/RPI_EFI.fd || {
