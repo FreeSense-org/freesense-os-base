@@ -91,6 +91,8 @@ run_in_cloud_chroot "${root}" /usr/bin/env \
   PKG_INSTALL_EPOCH="${SOURCE_DATE_EPOCH}" /bin/sh -c '
   set -eu
   pkg add /tmp/pkg-bootstrap.pkg
+  pkg -o REPOS_DIR=/tmp/assembly-repos -o PKG_CACHEDIR=/tmp/assembly-cache \
+    update -f -r FreeSenseAssembly
   for pkg_name in FreeSense-cloud-init qemu-guest-agent; do
     pkg -o REPOS_DIR=/tmp/assembly-repos -o PKG_CACHEDIR=/tmp/assembly-cache \
       rquery -r FreeSenseAssembly "%n" "${pkg_name}" >/dev/null || {
