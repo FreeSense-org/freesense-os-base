@@ -249,7 +249,7 @@ new file mode 100644
 index 00000000000..4080df2dee2
 --- /dev/null
 +++ b/sys/arm64/conf/pfSense
-@@ -0,0 +1,186 @@
+@@ -0,0 +1,187 @@
 +include		GENERIC
 +
 +nooptions	KDB_TRACE
@@ -306,6 +306,7 @@ index 00000000000..4080df2dee2
 +device		udav		# Davicom DM9601 USB Ethernet driver
 +device		axe
 +device		axge
++device		ure
 +device		aue
 +device		cue
 +device		kue
