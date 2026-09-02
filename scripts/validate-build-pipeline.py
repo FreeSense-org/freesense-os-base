@@ -113,7 +113,8 @@ for value in ("Require an upstream publication and complete release pair",
             f"automatic ISO publication gating is missing {value!r}")
 for value in ("Reserve immutable release generation", "system_generation",
               "--fingerprint \"${{ steps.plan.outputs.bundle }}\"",
-              "--proposed \"${GITHUB_RUN_NUMBER}\""):
+              'proposed="${GITHUB_RUN_NUMBER}"',
+              "--proposed \"${proposed}\""):
     require(value in release_workflow,
             f"independent ISO release generation is missing {value!r}")
 require("if: always() && needs.iso-plan.result == 'success'" in release_workflow,
