@@ -214,12 +214,22 @@ jobs:
           SIGNING_KEY: ${{ secrets.FREESENSE_PKG_SIGNING_KEY }}
         run: |
           key=$(mktemp); trap 'rm -f "$key"' EXIT; chmod 600 "$key"; printf '%s' "${SIGNING_KEY}" >"$key"
+          packages_marker="${RUNNER_TEMP}/packages-complete.json"
+          curl --fail --silent --show-error --location \
+            "${{ needs.plan.outputs.public_base_url }}/artifacts/packages/${{ needs.plan.outputs.package_train }}/${{ needs.plan.outputs.packages }}/complete.json" \
+            --output "${packages_marker}"
+          packages_built_against=$(jq -er \
+            '(.inputs.built_against_system // .inputs.system) as $system |
+             select(.schema_version == "freesense.artifact/v1" and .stage == "packages" and
+             .fingerprint == "${{ needs.plan.outputs.packages }}" and
+             ($system | test("^[0-9a-f]{64}$"))) | $system' \
+            "${packages_marker}")
           if [[ "${{ needs.plan.outputs.package_arch }}" == amd64 ]]; then
           "${RUNNER_TEMP}/fsbuild" channel update --component packages \
             --version "${{ needs.plan.outputs.release_version }}" \
             --fingerprint "${{ needs.plan.outputs.packages }}" \
             --system-fingerprint "${{ needs.plan.outputs.system }}" \
-            --built-against-system "${{ needs.plan.outputs.system }}" \
+            --built-against-system "${packages_built_against}" \
             --freebsd-pin-id "${{ needs.plan.outputs.freebsd_pin_id }}" \
             --url "${{ needs.plan.outputs.public_base_url }}/artifacts/packages/${{ needs.plan.outputs.package_train }}/${{ needs.plan.outputs.packages }}/${{ needs.plan.outputs.package_arch }}" \
             --architecture "${{ needs.plan.outputs.architecture }}" --package-arch "${{ needs.plan.outputs.package_arch }}" \
@@ -233,7 +243,7 @@ jobs:
             --version "${{ needs.plan.outputs.release_version }}" \
             --fingerprint "${{ needs.plan.outputs.packages }}" \
             --system-fingerprint "${{ needs.plan.outputs.system }}" \
-            --built-against-system "${{ needs.plan.outputs.system }}" \
+            --built-against-system "${packages_built_against}" \
             --freebsd-pin-id "${{ needs.plan.outputs.freebsd_pin_id }}" \
             --url "${{ needs.plan.outputs.public_base_url }}/artifacts/packages/${{ needs.plan.outputs.package_train }}/${{ needs.plan.outputs.packages }}/${{ needs.plan.outputs.package_arch }}" \
             --architecture "${{ needs.plan.outputs.architecture }}" --package-arch "${{ needs.plan.outputs.package_arch }}" \

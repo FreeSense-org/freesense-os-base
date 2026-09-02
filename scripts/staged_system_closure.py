@@ -82,6 +82,7 @@ def main() -> int:
         "packages_verified": "false",
         "packages_fingerprint": "",
         "packages_generation": 0,
+        "packages_built_against_system": "",
         "architecture": target["architecture"],
         "package_arch": target["package_arch"],
         "artifact_packages_sha": "",
@@ -112,6 +113,10 @@ def main() -> int:
             fail(f"staged Packages marker is unreadable: {error}")
         package_inputs = packages_marker.get("inputs")
         package_fingerprint = packages_marker.get("fingerprint", "")
+        packages_built_against = (
+            package_inputs.get("built_against_system")
+            or package_inputs.get("system", "")
+        ) if isinstance(package_inputs, dict) else ""
         if (
             packages_marker.get("schema_version") != "freesense.artifact/v1"
             or packages_marker.get("stage") != "packages"
@@ -122,8 +127,9 @@ def main() -> int:
             or packages_marker.get("package_arch") != target["package_arch"]
             or packages_marker.get("platform") != profile["name"]
             or not isinstance(package_inputs, dict)
-            or package_inputs.get("system") != marker["fingerprint"]
-            or package_inputs.get("built_against_system") != marker["fingerprint"]
+            or not SHA256.fullmatch(packages_built_against)
+            or package_inputs.get("system") != packages_built_against
+            or package_inputs.get("built_against_system", package_inputs.get("system")) != packages_built_against
             or package_inputs.get("freebsd_pin_id") != inputs.get("freebsd_pin_id")
             or package_inputs.get("package_train") != inputs.get("package_train")
             or not SHA.fullmatch(str(package_inputs.get("packages", "")))
@@ -153,7 +159,7 @@ def main() -> int:
                 "packages": {
                     "fingerprint": package_fingerprint,
                     "system_fingerprint": marker["fingerprint"],
-                    "built_against_system": marker["fingerprint"],
+                    "built_against_system": packages_built_against,
                     "url": f"https://pkg.freesense.org/v1/artifacts/packages/{inputs['package_train']}/{package_fingerprint}/{target['package_arch']}",
                     "generation": packages_marker["generation"],
                     "published_at": "1970-01-01T00:00:00Z",
@@ -170,6 +176,7 @@ def main() -> int:
             "packages_fingerprint": package_fingerprint,
             "packages_generation": packages_marker["generation"],
             "packages_verified": "true",
+            "packages_built_against_system": packages_built_against,
             "payload_sha256": hashlib.sha256(staged_payload_bytes).hexdigest(),
             "payload_base64": base64.b64encode(staged_payload_bytes).decode(),
             "signature_base64": "",

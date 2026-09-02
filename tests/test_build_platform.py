@@ -102,6 +102,7 @@ class BuildPlatformTests(unittest.TestCase):
 
     def test_staged_arm_pair_produces_a_valid_unsigned_channel_payload(self):
         system_id, packages_id = "a" * 64, "b" * 64
+        built_system_id = "9" * 64
         jail_sha = "c" * 64
         signing_key = hashlib.sha256(
             (ROOT / "config/channel-signing-public.pem").read_bytes()
@@ -127,7 +128,7 @@ class BuildPlatformTests(unittest.TestCase):
             **common, "schema_version": "freesense.artifact/v1",
             "stage": "packages", "fingerprint": packages_id, "generation": 8,
             "inputs": {
-                "system": system_id, "built_against_system": system_id,
+                "system": built_system_id, "built_against_system": built_system_id,
                 "freebsd_pin_id": "8" * 64, "package_train": "1.1",
                 "packages": "6" * 40,
             },
@@ -154,8 +155,12 @@ class BuildPlatformTests(unittest.TestCase):
                          ("arm64", "aarch64"))
         self.assertEqual(channel["system"]["fingerprint"], system_id)
         self.assertEqual(channel["packages"]["fingerprint"], packages_id)
+        self.assertEqual(channel["packages"]["system_fingerprint"], system_id)
+        self.assertEqual(channel["packages"]["built_against_system"], built_system_id)
+        self.assertEqual(closure["packages_built_against_system"], built_system_id)
         self.assertEqual(closure["signature_base64"], "")
 
 
 if __name__ == "__main__":
     unittest.main()
+
