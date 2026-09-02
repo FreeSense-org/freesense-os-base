@@ -322,8 +322,17 @@ jobs:
           R2_BUCKET: ${{ vars.R2_BUILD_BUCKET }}
           FSBUILD_STORE_PREFIX: v1
         run: |
+          proposed="${GITHUB_RUN_NUMBER}"
+          public_base_url=$(jq -er .public_base_url config/build-policy.json)
+          channel="${{ steps.plan.outputs.channel }}"
+          architecture="${{ steps.plan.outputs.architecture }}"
+          existing_json=$(curl --fail --silent --location "${public_base_url}/releases/${channel}.${architecture}.json" 2>/dev/null || true)
+          existing_gen=$(printf '%s' "${existing_json}" | jq -r '.generation // 0' 2>/dev/null || echo 0)
+          if [[ "${existing_gen}" =~ ^[0-9]+$ ]] && (( existing_gen >= proposed )); then
+            proposed=$(( existing_gen + 1 ))
+          fi
           "${RUNNER_TEMP}/fsbuild" state reserve-generation \
-            --fingerprint "${{ steps.plan.outputs.bundle }}" --proposed "${GITHUB_RUN_NUMBER}" \
+            --fingerprint "${{ steps.plan.outputs.bundle }}" --proposed "${proposed}" \
             --output "${RUNNER_TEMP}/generation.json"
           echo "generation=$(jq -r .generation "${RUNNER_TEMP}/generation.json")" >>"${GITHUB_OUTPUT}"
       - name: Restrict recovery operation to configured sealed Stable train
