@@ -41,7 +41,7 @@ on:
       kernel: {type: string, required: false, default: FreeSense}
       executor: {type: string, required: false, default: native-amd64}
       image_profile: {type: string, required: false, default: generic-amd64}
-      system_image_profile: {type: string, required: false, default: generic-amd64}
+      system_image_profile: {type: string, required: false, default: ''}
       firmware: {type: string, required: false, default: 'bios,uefi'}
       image_capabilities: {type: string, required: false, default: '{"bios":true,"cloud_init":true,"installer_img":false,"iso":true,"uefi":true}'}
       installer_format: {type: string, required: false, default: iso}
@@ -110,7 +110,7 @@ jobs:
       KERNEL: ${{ inputs.kernel }}
       EXECUTOR: ${{ inputs.executor }}
       IMAGE_PROFILE: ${{ inputs.image_profile }}
-      SYSTEM_IMAGE_PROFILE: ${{ inputs.system_image_profile }}
+      SYSTEM_IMAGE_PROFILE: ${{ inputs.system_image_profile != '' && inputs.system_image_profile || (inputs.architecture == 'arm64' && 'generic-arm64-uefi' || 'generic-amd64') }}
       FIRMWARE: ${{ inputs.firmware }}
       IMAGE_CAPABILITIES: ${{ inputs.image_capabilities }}
       INSTALLER_FORMAT: ${{ inputs.installer_format }}
