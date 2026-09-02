@@ -66,6 +66,10 @@ FreeBSD-kmods: { enabled: no }
 FreeSense-system: { url: "${PUBLIC_BASE_URL}/artifacts/system/${SYSTEM_ID}/${PACKAGE_ARCH}", mirror_type: "none", enabled: yes, signature_type: "fingerprints", fingerprints: "/usr/local/share/FreeSense/keys/pkg" }
 FreeSense-packages: { url: "${PUBLIC_BASE_URL}/artifacts/packages/${PACKAGE_TRAIN}/${PACKAGES_ID}/${PACKAGE_ARCH}", mirror_type: "none", enabled: yes, signature_type: "fingerprints", fingerprints: "/usr/local/share/FreeSense/keys/pkg" }
 EOF
+if [ -f "${root}/conf.default/config.xml" ]; then
+  sed -i '' -e 's|<primaryconsole>video</primaryconsole>|<primaryconsole>serial</primaryconsole>|' \
+    "${root}/conf.default/config.xml"
+fi
 install -m 0444 /tmp/channel-payload.json "${root}/usr/local/etc/freesense-channel.json"
 install -m 0444 /tmp/channel-signature.bin "${root}/usr/local/etc/freesense-channel.sig"
 printf '%s\n' "${PRODUCT_VERSION}" >"${root}/etc/version"
@@ -118,7 +122,7 @@ mount_msdosfs "/dev/${md}s1" /mnt/appliance-boot
 mount "/dev/${md}s2a" /mnt/appliance-root
 cat >"${root}/etc/fstab" <<'EOF'
 /dev/ufs/FreeSense / ufs rw,noatime 1 1
-/dev/msdosfs/FREESENSE /boot/efi msdosfs rw 2 2
+/dev/msdosfs/FREESENSE /boot/efi msdosfs rw,noatime 0 0
 EOF
 tar -C "${root}" -cpf - . | tar -C /mnt/appliance-root -xpf -
 mkdir -p /mnt/appliance-root/boot/efi
@@ -156,6 +160,9 @@ grep -q '/dev/msdosfs/FREESENSE' /mnt/appliance-root/etc/fstab || {
 grep -q 'growfs_enable="YES"' /mnt/appliance-root/etc/rc.conf || {
   echo "appliance root-growth service is not enabled" >&2; exit 1;
 }
+grep -q '<primaryconsole>serial</primaryconsole>' /mnt/appliance-root/conf.default/config.xml || {
+  echo "appliance default configuration is missing primaryconsole=serial" >&2; exit 1;
+}
 test ! -e /mnt/appliance-root/var/lib/cloud || {
   echo "appliance root contains cloud-init state" >&2; exit 1;
 }
@@ -186,6 +193,11 @@ if [ "${IMAGE_PROFILE}" = arm64-rpi4b ]; then
     cp -a /usr/local/share/rpi-firmware/overlays /mnt/appliance-boot/
   fi
   cp /usr/local/share/rpi-firmware/config_arm64.txt /mnt/appliance-boot/config.txt
+  cat >>/mnt/appliance-boot/config.txt <<'EOF'
+enable_uart=1
+uart_2ndstage=1
+usb_max_current_enable=1
+EOF
 else
   archive=/root/RPI5_D0.zip
   fetch -o "${archive}" "$(printf '%s' "${BOOT_INPUTS}" | jq -er .url)"
@@ -197,17 +209,16 @@ else
     /root/rpi5-uefi/bcm2712-d-rpi-5-b.dtb \
     /root/rpi5-uefi/bcm2712-rpi-5-b.dtb \
     /root/rpi5-uefi/bcm2712d0-rpi-5-b.dtb /mnt/appliance-boot/
-  if [ -f /root/rpi5-uefi/config.txt ]; then
-    cp /root/rpi5-uefi/config.txt /mnt/appliance-boot/config.txt
-  else
-    cat >/mnt/appliance-boot/config.txt <<'EOF'
+  cat >/mnt/appliance-boot/config.txt <<'EOF'
 armstub=RPI_EFI.fd
 enable_uart=1
 uart_2ndstage=1
 device_tree_address=0x1f0000
 device_tree_end=0x210000
+framebuffer_depth=32
+disable_overscan=1
+usb_max_current_enable=1
 EOF
-  fi
 fi
 cp "${root}/boot/loader.efi" /mnt/appliance-boot/EFI/BOOT/BOOTAA64.EFI
 sync
@@ -218,6 +229,12 @@ test -s /mnt/appliance-boot/EFI/BOOT/BOOTAA64.EFI || {
 }
 test -s /mnt/appliance-boot/config.txt || {
   echo "${IMAGE_PROFILE} appliance is missing config.txt" >&2; exit 1;
+}
+grep -q 'enable_uart=1' /mnt/appliance-boot/config.txt || {
+  echo "${IMAGE_PROFILE} appliance config.txt is missing enable_uart=1" >&2; exit 1;
+}
+grep -q 'usb_max_current_enable=1' /mnt/appliance-boot/config.txt || {
+  echo "${IMAGE_PROFILE} appliance config.txt is missing usb_max_current_enable=1" >&2; exit 1;
 }
 if [ "${IMAGE_PROFILE}" = arm64-rpi4b ]; then
   test -s /mnt/appliance-boot/u-boot.bin || {
@@ -235,6 +252,9 @@ else
   }
   test -s /mnt/appliance-boot/bcm2712d0-rpi-5-b.dtb || {
     echo "Pi 5 appliance is missing its D0 board DTB" >&2; exit 1;
+  }
+  grep -q 'framebuffer_depth=32' /mnt/appliance-boot/config.txt || {
+    echo "Pi 5 appliance config.txt is missing framebuffer_depth=32" >&2; exit 1;
   }
 fi
 umount /mnt/appliance-boot
