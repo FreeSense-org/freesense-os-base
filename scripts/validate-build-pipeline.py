@@ -124,6 +124,11 @@ for value in (
         "if: always() && needs.iso-plan.outputs.target == 'arm64' && needs.appliance-rpi4b.result == 'success'"):
     require(value in release_workflow,
             "Raspberry Pi appliance jobs do not survive the intentionally skipped release gate")
+for value in (
+        "if: always() && needs.iso-plan.result == 'success' && needs.iso.result == 'success' && needs.iso-plan.outputs.cloud_enabled == 'true'",
+        "if: always() && needs.iso-plan.result == 'success' && needs.cloud-ufs.result == 'success' && needs.iso-plan.outputs.cloud_enabled == 'true'"):
+    require(value in release_workflow,
+            "cloud jobs do not survive the intentionally skipped release gate")
 require("needs.iso.result == 'success' && needs.iso-plan.outputs.cloud_enabled == 'true'" in release_workflow and
         "needs.cloud-ufs.result == 'success' && needs.iso-plan.outputs.cloud_enabled == 'true'" in release_workflow,
         "cloud jobs are not gated by installer verification and profile capability")
