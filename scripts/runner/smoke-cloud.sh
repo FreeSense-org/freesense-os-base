@@ -232,6 +232,7 @@ fi
 prepare_qga() {
   local socket=$1
   rm -f "$socket"
+  current_qga_sock="$socket"
   qga_args=(
     -device virtio-serial-pci
     -chardev "socket,path=${socket},server=on,wait=off,id=qga0"
@@ -239,33 +240,119 @@ prepare_qga() {
   )
 }
 
+qga_shutdown() {
+  local socket=${1:-${current_qga_sock:-${work}/qga.sock}}
+  [[ -S "$socket" ]] || return 1
+  echo "cloud smoke: requesting guest shutdown via guest agent (${socket})" >&2
+  python3 - "$socket" <<'PY' >&2 || true
+import json
+import socket
+import sys
+import time
+
+socket_path = sys.argv[1]
+try:
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+        client.settimeout(15)
+        deadline = time.time() + 30
+        while True:
+            try:
+                client.connect(socket_path)
+                break
+            except (FileNotFoundError, ConnectionRefusedError, OSError):
+                if time.time() >= deadline:
+                    raise
+                time.sleep(0.5)
+        stream = client.makefile("rwb", buffering=0)
+        sequence = 0
+
+        def request(execute, arguments=None):
+            global sequence
+            sequence += 1
+            identifier = f"freesense-smoke-shutdown-{sequence}"
+            payload = {"execute": execute, "id": identifier}
+            if arguments is not None:
+                payload["arguments"] = arguments
+            stream.write(json.dumps(payload).encode() + b"\n")
+            while True:
+                line = stream.readline()
+                if not line:
+                    raise RuntimeError("guest agent closed socket during shutdown request")
+                line = line.lstrip(b"\xff").strip()
+                if not line:
+                    continue
+                response = json.loads(line)
+                if response.get("id") != identifier:
+                    continue
+                if "error" in response:
+                    raise RuntimeError(json.dumps(response["error"], sort_keys=True))
+                return response.get("return")
+
+        request("guest-ping")
+        try:
+            request("guest-shutdown", {"mode": "powerdown"})
+            print("guest-agent guest-shutdown accepted")
+        except Exception as err:
+            print(f"guest-shutdown fallback to guest-exec: {err}")
+            request("guest-exec", {
+                "path": "/bin/sh",
+                "arg": ["-c", "/sbin/shutdown -f -p now || /sbin/poweroff"],
+            })
+            print("guest-agent guest-exec shutdown initiated")
+except Exception as error:
+    print(f"guest-agent shutdown unavailable: {error}")
+PY
+}
+
 shutdown_guest() {
   local port=$1 label=$2 pid=${qemu_pid:?}
+  local socket=${current_qga_sock:-${work}/qga.sock}
   echo "cloud smoke: requesting graceful shutdown after ${label}" >&2
-  # admin is the uid-0 appliance account.  The SSH session can disappear as
-  # shutdown closes services, so wait on QEMU rather than its SSH exit status.
-  timeout 15 ssh -q -o BatchMode=yes -o IdentitiesOnly=yes \
-    -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-    -o ConnectTimeout=5 -i "${work}/id" -p "$port" admin@127.0.0.1 \
-    '/sbin/shutdown -p now' </dev/null >/dev/null 2>&1 || true
-  for _ in {1..90}; do
+  # admin is the uid-0 appliance account.
+  local ssh_sent=false
+  for attempt in 1 2 3; do
+    if timeout 15 ssh -o BatchMode=yes -o IdentitiesOnly=yes \
+      -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+      -o ConnectTimeout=5 -i "${work}/id" -p "$port" admin@127.0.0.1 \
+      '/sbin/shutdown -p now || /sbin/shutdown -f -p now || /sbin/poweroff' </dev/null; then
+      ssh_sent=true
+      break
+    else
+      echo "cloud smoke: SSH shutdown attempt ${attempt} on port ${port} failed" >&2
+      sleep 2
+    fi
+  done
+  if [[ "$ssh_sent" != true && -S "$socket" ]]; then
+    echo "cloud smoke: SSH shutdown failed; falling back immediately to guest agent" >&2
+    qga_shutdown "$socket" || true
+  fi
+  for iter in {1..90}; do
     if ! kill -0 "$pid" 2>/dev/null; then
       wait "$pid" 2>/dev/null || true
       unset qemu_pid
       return 0
     fi
+    if [[ "$iter" -eq 8 && -S "$socket" ]]; then
+      echo "cloud smoke: guest still alive after 16s; triggering guest agent shutdown" >&2
+      qga_shutdown "$socket" || true
+    fi
     sleep 2
   done
   echo "cloud smoke: ${label} did not power off cleanly" >&2
+  if [[ -S "$socket" ]]; then
+    echo "cloud smoke diagnostic: collecting guest state after failed shutdown" >&2
+    diagnose_guest_ssh
+  fi
   return 1
 }
 
 qga_exec() {
   local label=$1 command=$2
+  local socket=${current_qga_sock:-${work}/qga.sock}
   echo "cloud smoke guest-agent diagnostic: ${label}" >&2
   # Longer per-request timeouts: a single giant guest-exec previously hit the
   # 10s socket timeout and dropped every diagnostic section at once.
-  python3 - "${work}/qga.sock" "$command" <<'PY' >&2 || true
+  python3 - "$socket" "$command" <<'PY' >&2 || true
 import base64
 import json
 import socket
