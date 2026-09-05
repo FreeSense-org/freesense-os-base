@@ -59,7 +59,7 @@ qemu-system-x86_64 -name github-iso-experiment -machine q35,accel=kvm -cpu host 
   -drive "if=virtio,format=qcow2,cache=none,discard=unmap,file=$work/worker.qcow2" \
   -drive "if=ide,media=cdrom,format=raw,readonly=on,file=$work/seed.img" \
   -device virtio-net-pci,netdev=net0 \
-  -netdev user,id=net0,hostfwd=tcp:127.0.0.1:2222-:22 \
+  -netdev user,id=net0,ipv6=off,hostfwd=tcp:127.0.0.1:2222-:22 \
   -no-reboot >"$work/qemu.log" 2>&1 &
 vm_pid=$!
 ssh_args=(-i "$work/key" -o StrictHostKeyChecking=accept-new -o "UserKnownHostsFile=$work/known_hosts"

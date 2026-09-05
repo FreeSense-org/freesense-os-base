@@ -21,6 +21,9 @@ evidence for the next stage split rather than assuming spare disk capacity.
 The first run confirmed KVM and booted FreeBSD but reached its five-minute SSH
 deadline during network initialization. The experiment now allows 15 minutes
 for nested-VM startup and reports serial progress once per minute.
+The follow-up remained in the same `vtnet` IPv6 router-advertisement path for
+ten minutes. QEMU user networking is therefore IPv4-only for this isolated
+builder; public input downloads and the host-forwarded SSH channel use IPv4.
 
 `prepare-iso.py` verifies the live signed Development channel through the existing
 channel verifier. It reuses the production source configuration, repository
