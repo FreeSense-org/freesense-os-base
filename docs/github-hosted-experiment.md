@@ -32,6 +32,8 @@ That path launched successfully and exposed a package-manager ABI override that
 guessed OSVERSION 1600000 for signed 1600020 worker tools. The experimental
 renderer now passes the manifest's already-validated OSVERSION explicitly to
 `pkg add`; the one-revision userland compatibility check remains in force.
+The signed channel's verified System OSVERSION is exported for all package
+operations because dependency verification uses the same ABI contract.
 
 `prepare-iso.py` verifies the live signed Development channel through the existing
 channel verifier. It reuses the production source configuration, repository

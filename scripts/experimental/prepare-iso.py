@@ -46,6 +46,7 @@ def render(values):
         "FREEBSD_TARGET": "amd64", "FREEBSD_TARGET_ARCH": "amd64",
         "POUDRIERE_ARCH": "amd64.amd64", "KERNEL": "FreeSense",
         "ABI": values["abi"], "ALTABI": values["altabi"],
+        "OSVERSION": str(values["osversion"]),
         "PUBLIC_BASE_URL": "https://pkg.freesense.org/v1",
         "SYSTEM_ID": values["fingerprint"], "PACKAGES_ID": values["packages_fingerprint"],
         "SOURCE_SHA": values["artifact_source_sha"],

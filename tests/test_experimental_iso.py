@@ -17,7 +17,7 @@ class ExperimentalIsoTests(unittest.TestCase):
         values.update({key: "b" * 40 for key in ("artifact_source_sha", "artifact_freebsd_sha", "artifact_ports_sha")})
         values.update(verified="true", packages_verified="true", abi="FreeBSD:16:amd64",
                       altabi="freebsd:16:x86:64", package_train="1.1", release_version="1.1.0",
-                      generation=1, payload_base64="e30=", signature_base64="c2ln",
+                      generation=1, osversion=1600020, payload_base64="e30=", signature_base64="c2ln",
                       artifact_jail_object="inputs/sha256/" + "a" * 64)
         return values
 
@@ -38,6 +38,7 @@ class ExperimentalIsoTests(unittest.TestCase):
         self.assertIn("verify_release_channel", worker)
         self.assertIn("pkg checksum -q -c", worker)
         self.assertIn('OSVERSION="${required_osversion}"', worker)
+        self.assertIn("export OSVERSION=1600020", worker)
         self.assertIn("/root/experiment-output", worker)
 
 
