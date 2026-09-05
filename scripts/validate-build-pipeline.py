@@ -208,7 +208,7 @@ require(policy.get("runner") == {"vcpus": 12, "memory_mib": 32768, "disk_gib": 1
 runner = read("scripts/runner/run-vm.sh")
 for value in ('-smp "$vcpus"', '-m "$memory_mib"',
               'qemu-img resize -q "$overlay" "${disk_gib}G"',
-              "minimum_free_gib=80", "/dev/kvm", "cleanup_orphans",
+              "minimum_free_gib=80", "vcpus=$(nproc)", "/dev/kvm", "cleanup_orphans",
               "trap cleanup EXIT", "qemu_owns_overlay"):
     require(value in runner, f"KVM runner contract is missing {value!r}")
 require('sha256sum "$base_image"' in runner and 'sha256sum "$download"' in runner,
