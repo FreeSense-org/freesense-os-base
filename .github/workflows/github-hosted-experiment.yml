@@ -1,0 +1,83 @@
+name: GitHub-hosted ISO experiment
+
+on:
+  push:
+    branches: [experiment/github-hosted-builds]
+    paths: ['scripts/experimental/**', '.github/workflows/github-hosted-experiment.yml']
+  workflow_dispatch:
+
+permissions: {contents: read}
+concurrency:
+  group: github-hosted-iso-experiment
+  cancel-in-progress: false
+
+jobs:
+  assemble:
+    if: github.ref == 'refs/heads/experiment/github-hosted-builds'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 345
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with: {persist-credentials: false}
+      - name: Prepare disposable GitHub host
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends qemu-system-x86 qemu-utils ovmf cloud-image-utils
+          sudo chmod a+rw /dev/kvm
+          nproc
+          free -h
+          df -h
+      - name: Verify public pair and render experimental assembler
+        run: |
+          python3 scripts/experimental/prepare-iso.py --output "$RUNNER_TEMP/experiment-input"
+          sh -n "$RUNNER_TEMP/experiment-input/worker.sh"
+      - name: Assemble in a 4-vCPU 10-GiB FreeBSD VM
+        run: bash scripts/experimental/run-iso.sh "$RUNNER_TEMP/experiment-input" "$RUNNER_TEMP/experiment-output"
+      - name: Upload experimental ISO for separate smoke job
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: experimental-iso
+          path: |
+            ${{ runner.temp }}/experiment-output/*.iso
+            ${{ runner.temp }}/experiment-output/assembled.json
+            ${{ runner.temp }}/experiment-input/channel.json
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 3
+      - name: Upload assembly diagnostics
+        if: always()
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: experimental-assembly-logs
+          path: |
+            ${{ runner.temp }}/experiment-output/*.log
+            ${{ runner.temp }}/experiment-output/*.txt
+          if-no-files-found: ignore
+          retention-days: 7
+
+  smoke:
+    needs: assemble
+    permissions: {contents: read, actions: read}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with: {persist-credentials: false}
+      - name: Download this run's experimental ISO
+        env: {GH_TOKEN: '${{ github.token }}'}
+        run: gh run download "$GITHUB_RUN_ID" --name experimental-iso --dir "$RUNNER_TEMP/iso"
+      - name: Prepare smoke host
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends qemu-system-x86
+          sudo chmod a+rw /dev/kvm
+      - name: Verify checksum and boot to installer
+        run: bash scripts/experimental/smoke-iso.sh "$RUNNER_TEMP/iso/experiment-output"
+      - name: Upload smoke diagnostics
+        if: always()
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: experimental-smoke-logs
+          path: ${{ runner.temp }}/iso/experiment-output/*.log
+          if-no-files-found: ignore
+          retention-days: 7
