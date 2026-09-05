@@ -2,8 +2,9 @@
 
 This repository pins FreeBSD 16 and defines the complete FreeSense build. GitHub
 Actions plans and publishes while FreeBSD work runs in a fresh KVM guest.
-Rolling amd64 Development builds prefer GitHub-hosted runners with a four-vCPU,
-10-GiB guest; Stable and ARM64 retain the dedicated 16-thread, 32-GiB builder.
+Rolling amd64 Development builds prefer GitHub-hosted runners with all host CPU
+threads assigned to a 10-GiB guest; Stable and ARM64 retain the dedicated
+16-thread, 32-GiB builder.
 The reusable executor preserves the dedicated host as the fallback profile.
 
 There are two independently invalidated package repositories for the

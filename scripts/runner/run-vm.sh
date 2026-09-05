@@ -30,9 +30,10 @@ done
 [[ $image_sha =~ ^[0-9a-f]{64}$ ]] || usage
 [[ -f $script_path ]] || usage
 [[ -z $failure_dir || $failure_dir == /* ]] || usage
-for value in "$timeout_seconds" "$vcpus" "$memory_mib" "$disk_gib" "$minimum_free_gib"; do
+for value in "$timeout_seconds" "$memory_mib" "$disk_gib" "$minimum_free_gib"; do
   [[ $value =~ ^[1-9][0-9]*$ ]] || usage
 done
+[[ $vcpus == auto || $vcpus =~ ^[1-9][0-9]*$ ]] || usage
 : "${FSBUILD:?FSBUILD must point to the fsbuild executable}"
 : "${RUNNER_TEMP:?RUNNER_TEMP is required}"
 
@@ -40,7 +41,11 @@ for tool in qemu-system-x86_64 qemu-img cloud-localds curl sha256sum base64 awk;
   command -v "$tool" >/dev/null || { echo "missing host dependency: $tool" >&2; exit 1; }
 done
 [[ -r /dev/kvm && -w /dev/kvm ]] || { echo "/dev/kvm is not available to the runner" >&2; exit 1; }
+if [[ $vcpus == auto ]]; then
+  vcpus=$(nproc)
+fi
 (( $(nproc) >= vcpus )) || { echo "the build runner exposes fewer than ${vcpus} CPU threads" >&2; exit 1; }
+echo "Configuring FreeBSD build VM with -smp ${vcpus} from host nproc=$(nproc)"
 
 cache_dir=${HOME}/.cache/freesense-build/images
 base_image=${cache_dir}/${image_sha}.qcow2

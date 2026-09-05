@@ -122,7 +122,7 @@ jobs:
       APPLIANCE_FILESYSTEM: ${{ inputs.appliance_filesystem }}
       APPLIANCE_FORMAT: ${{ inputs.appliance_format }}
       APPLIANCE_COMPRESSION: ${{ inputs.appliance_compression }}
-      BUILD_VCPUS: ${{ inputs.build_host == 'github-hosted' && '4' || '12' }}
+      BUILD_VCPUS: ${{ inputs.build_host == 'github-hosted' && 'auto' || '12' }}
       BUILD_MEMORY_MIB: ${{ inputs.build_host == 'github-hosted' && '10240' || '32768' }}
       BUILD_DISK_GIB: ${{ inputs.build_host == 'github-hosted' && '110' || '160' }}
       BUILD_MINIMUM_FREE_GIB: ${{ inputs.build_host == 'github-hosted' && '70' || '80' }}
@@ -194,7 +194,7 @@ jobs:
           python3 scripts/render-worker.py --common scripts/runner/worker-common.sh \
             --stages scripts/runner/stages --output "${RUNNER_TEMP}/worker.sh"
           sh -n "${RUNNER_TEMP}/worker.sh"
-      - name: Build in a fresh 12-vCPU, 32-GiB FreeBSD VM
+      - name: Build in a fresh capacity-matched FreeBSD VM
         if: steps.reuse.outputs.complete != 'true' && steps.reuse.outputs.assembled != 'true'
         env:
           FSBUILD: ${{ runner.temp }}/fsbuild
