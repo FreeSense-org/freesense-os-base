@@ -123,7 +123,7 @@ jobs:
       APPLIANCE_FORMAT: ${{ inputs.appliance_format }}
       APPLIANCE_COMPRESSION: ${{ inputs.appliance_compression }}
       BUILD_VCPUS: ${{ inputs.build_host == 'github-hosted' && 'auto' || '12' }}
-      BUILD_MEMORY_MIB: ${{ inputs.build_host == 'github-hosted' && '10240' || '32768' }}
+      BUILD_MEMORY_MIB: ${{ inputs.build_host == 'github-hosted' && 'auto' || '32768' }}
       BUILD_DISK_GIB: ${{ inputs.build_host == 'github-hosted' && '110' || '160' }}
       BUILD_MINIMUM_FREE_GIB: ${{ inputs.build_host == 'github-hosted' && '70' || '80' }}
       BUILD_TIMEOUT_SECONDS: ${{ inputs.build_host == 'github-hosted' && '19800' || '18000' }}
