@@ -58,7 +58,7 @@ jobs:
   build:
     runs-on: ${{ inputs.build_host == 'github-hosted' && 'ubuntu-24.04' || 'build-runner' }}
     concurrency:
-      group: freesense-kvm-host
+      group: ${{ inputs.build_host == 'github-hosted' && 'freesense-github-hosted-build' || 'freesense-kvm-host' }}
       cancel-in-progress: false
     timeout-minutes: 360
     environment: build

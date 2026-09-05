@@ -47,7 +47,8 @@ pin_workflow = read(".github/workflows/pin.yml")
 require("apt-get" not in pin_workflow,
         "the dedicated pin runner must be provisioned outside workflows")
 for value in ("build_host", "ubuntu-24.04", "Prepare disposable GitHub build host",
-              "if: inputs.build_host == 'github-hosted'", "BUILD_VCPUS", "BUILD_MEMORY_MIB"):
+              "if: inputs.build_host == 'github-hosted'", "BUILD_VCPUS", "BUILD_MEMORY_MIB",
+              "freesense-github-hosted-build", "freesense-kvm-host"):
     require(value in reusable, f"reusable runner routing is missing {value!r}")
 for name in ("system.yml", "packages.yml", "release.yml", "stable.yml"):
     require("uses: ./.github/workflows/runner-build.yml" in read(f".github/workflows/{name}"),
