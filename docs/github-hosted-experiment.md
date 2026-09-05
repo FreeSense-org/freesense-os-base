@@ -2,6 +2,20 @@
 
 Branch: `experiment/github-hosted-builds`.
 
+## Milestone 1 result
+
+Run [33956235595](https://github.com/FreeSense-org/freesense-os-base/actions/runs/33956235595)
+passed on 2026-09-05. Assembly completed in 13m48s and the independent smoke
+job completed in 2m1s. The checksum-verified ISO reached
+`FREESENSE_INSTALLER_READY_V1` under KVM.
+
+The standard runner exposed a 145 GiB root filesystem with 86 GiB free before
+the trial and 63 GiB free afterward. The sparse FreeBSD overlay occupied 17 GiB.
+The guest grew from about 4.5 GiB used before assembly to about 14.2 GiB after
+assembly. The uncompressed GitHub artifact containing the ISO and descriptors
+was 2,737,804,556 bytes. These measurements leave useful headroom for isolated
+assembly but do not establish that a complete monolithic System build fits.
+
 The first milestone assembles an amd64 Development ISO from the existing signed
 System/Optional Packages pair on `ubuntu-24.04`, then boots that artifact in a
 separate job. This does not build new System or Optional Packages repositories.
