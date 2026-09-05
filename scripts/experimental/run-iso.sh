@@ -65,12 +65,18 @@ vm_pid=$!
 ssh_args=(-i "$work/key" -o StrictHostKeyChecking=accept-new -o "UserKnownHostsFile=$work/known_hosts"
   -o BatchMode=yes -o ConnectTimeout=5 -o ServerAliveInterval=30 -o ServerAliveCountMax=3)
 ready=false
-for attempt in {1..60}; do
+for attempt in {1..180}; do
   kill -0 "$vm_pid"
   if ssh "${ssh_args[@]}" -p 2222 root@127.0.0.1 true 2>/dev/null; then ready=true; break; fi
+  if (( attempt % 12 == 0 )); then
+    serial_bytes=$(stat -c %s "$work/serial.log" 2>/dev/null || echo 0)
+    serial_phase=$(tr '\r' '\n' <"$work/serial.log" 2>/dev/null | tail -n 1 || true)
+    printf 'Waiting for FreeBSD SSH: elapsed=%ss serial_bytes=%s last_line=%s\n' \
+      "$((attempt * 5))" "$serial_bytes" "$serial_phase"
+  fi
   sleep 5
 done
-[[ $ready == true ]] || { echo 'FreeBSD SSH startup timed out' >&2; exit 1; }
+[[ $ready == true ]] || { echo 'FreeBSD SSH startup timed out after 15 minutes' >&2; exit 1; }
 scp "${ssh_args[@]}" -P 2222 "$input/worker.sh" root@127.0.0.1:/root/worker.sh
 timeout --signal=TERM --kill-after=30s 18000 \
   ssh "${ssh_args[@]}" -p 2222 root@127.0.0.1 'sh /root/worker.sh' \

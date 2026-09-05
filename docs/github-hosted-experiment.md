@@ -18,6 +18,9 @@ The VM uses four CPUs, 10 GiB RAM and a sparse 64 GiB disk. The host records dis
 usage and the guest records usage at phase boundaries. No preinstalled runner
 software is removed. If actual storage is insufficient, the failed run supplies
 evidence for the next stage split rather than assuming spare disk capacity.
+The first run confirmed KVM and booted FreeBSD but reached its five-minute SSH
+deadline during network initialization. The experiment now allows 15 minutes
+for nested-VM startup and reports serial progress once per minute.
 
 `prepare-iso.py` verifies the live signed Development channel through the existing
 channel verifier. It reuses the production source configuration, repository
