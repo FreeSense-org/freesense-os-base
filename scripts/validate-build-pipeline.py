@@ -23,6 +23,8 @@ def require(condition: bool, message: str) -> None:
 
 
 expected_workflows = {
+    "github-hosted-experiment.yml",
+    "github-hosted-system.yml",
     "arm64-experimental.yml", "broker.yml", "ci.yml", "packages.yml", "pin.yml", "release.yml",
     "retention.yml", "runner-build.yml", "stable.yml", "system.yml",
 }
@@ -42,12 +44,19 @@ for workflow in workflow_paths:
 
 reusable = read(".github/workflows/runner-build.yml")
 pin_workflow = read(".github/workflows/pin.yml")
-for workflow in (reusable, pin_workflow):
-    require("apt-get" not in workflow,
-            "dedicated runners must be provisioned outside build workflows")
+require("apt-get" not in pin_workflow,
+        "the dedicated pin runner must be provisioned outside workflows")
+for value in ("build_host", "ubuntu-24.04", "Prepare disposable GitHub build host",
+              "if: inputs.build_host == 'github-hosted'", "BUILD_VCPUS", "BUILD_MEMORY_MIB"):
+    require(value in reusable, f"reusable runner routing is missing {value!r}")
 for name in ("system.yml", "packages.yml", "release.yml", "stable.yml"):
     require("uses: ./.github/workflows/runner-build.yml" in read(f".github/workflows/{name}"),
             f"{name} bypasses the reusable KVM executor")
+for name in ("system.yml", "packages.yml", "release.yml"):
+    require("build_host:" in read(f".github/workflows/{name}"),
+            f"Development workflow {name} does not select a build host")
+require("build_host:" not in read(".github/workflows/stable.yml"),
+        "Stable must retain the reusable runner's dedicated-host default")
 require("schedule:" in read(".github/workflows/system.yml"),
         "the daily System check is not scheduled")
 arm64_workflow = read(".github/workflows/arm64-experimental.yml")
@@ -196,8 +205,10 @@ policy = json.loads(read("config/build-policy.json"))
 require(policy.get("runner") == {"vcpus": 12, "memory_mib": 32768, "disk_gib": 160},
         "runner policy differs from the dedicated host contract")
 runner = read("scripts/runner/run-vm.sh")
-for value in ("-smp 12", "-m 32768", 'qemu-img resize -q "$overlay" 160G',
-              "/dev/kvm", "cleanup_orphans", "trap cleanup EXIT", "qemu_owns_overlay"):
+for value in ('-smp "$vcpus"', '-m "$memory_mib"',
+              'qemu-img resize -q "$overlay" "${disk_gib}G"',
+              "minimum_free_gib=80", "/dev/kvm", "cleanup_orphans",
+              "trap cleanup EXIT", "qemu_owns_overlay"):
     require(value in runner, f"KVM runner contract is missing {value!r}")
 require('sha256sum "$base_image"' in runner and 'sha256sum "$download"' in runner,
         "cached and downloaded worker images are not SHA-256 checked")

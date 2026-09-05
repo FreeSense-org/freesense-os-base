@@ -496,6 +496,18 @@ describe("automatic package-chain identity", () => {
   }
 });
 
+describe("build runner routing", () => {
+  for (const runnerEnvironment of ["github-hosted", "self-hosted"]) {
+    it(`allows the reusable artifact writer on ${runnerEnvironment}`, async () => {
+      const response = await request(
+        "artifact-writer",
+        claimsFor("artifact-writer", { runner_environment: runnerEnvironment }),
+      );
+      assert.equal(response.status, 200);
+    });
+  }
+});
+
 describe("manual ARM64 experimental release identity", () => {
   const arm64 = {
     workflow_ref: protocol.workflows.arm64Experimental,

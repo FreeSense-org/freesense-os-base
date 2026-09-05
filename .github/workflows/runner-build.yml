@@ -52,10 +52,11 @@ on:
       appliance_filesystem: {type: string, required: false, default: ''}
       appliance_format: {type: string, required: false, default: ''}
       appliance_compression: {type: string, required: false, default: ''}
+      build_host: {type: string, required: false, default: dedicated}
 
 jobs:
   build:
-    runs-on: [self-hosted, build-runner]
+    runs-on: ${{ inputs.build_host == 'github-hosted' && 'ubuntu-24.04' || 'build-runner' }}
     concurrency:
       group: freesense-kvm-host
       cancel-in-progress: false
@@ -121,12 +122,26 @@ jobs:
       APPLIANCE_FILESYSTEM: ${{ inputs.appliance_filesystem }}
       APPLIANCE_FORMAT: ${{ inputs.appliance_format }}
       APPLIANCE_COMPRESSION: ${{ inputs.appliance_compression }}
+      BUILD_VCPUS: ${{ inputs.build_host == 'github-hosted' && '4' || '12' }}
+      BUILD_MEMORY_MIB: ${{ inputs.build_host == 'github-hosted' && '10240' || '32768' }}
+      BUILD_DISK_GIB: ${{ inputs.build_host == 'github-hosted' && '110' || '160' }}
+      BUILD_MINIMUM_FREE_GIB: ${{ inputs.build_host == 'github-hosted' && '70' || '80' }}
+      BUILD_TIMEOUT_SECONDS: ${{ inputs.build_host == 'github-hosted' && '19800' || '18000' }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
           cache: false
+      - name: Prepare disposable GitHub build host
+        if: inputs.build_host == 'github-hosted'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends qemu-system-x86 qemu-utils ovmf cloud-image-utils
+          sudo chmod a+rw /dev/kvm
+          nproc
+          free -h
+          df -h
       - run: go build -trimpath -o "${RUNNER_TEMP}/fsbuild" ./cmd/fsbuild
       - name: Verify repository signing trust root
         env: {SIGNING_KEY: "${{ secrets.FREESENSE_PKG_SIGNING_KEY }}"}
@@ -185,7 +200,9 @@ jobs:
           FSBUILD: ${{ runner.temp }}/fsbuild
         run: >-
           scripts/runner/run-vm.sh --image-sha256 "${IMAGE_SHA256}"
-          --script "${RUNNER_TEMP}/worker.sh" --timeout 18000
+          --script "${RUNNER_TEMP}/worker.sh" --timeout "${BUILD_TIMEOUT_SECONDS}"
+          --vcpus "${BUILD_VCPUS}" --memory-mib "${BUILD_MEMORY_MIB}"
+          --disk-gib "${BUILD_DISK_GIB}" --minimum-free-gib "${BUILD_MINIMUM_FREE_GIB}"
           --failure-dir "${RUNNER_TEMP}/build-vm-failure"
       - name: Upload build VM failure diagnostics
         if: failure()

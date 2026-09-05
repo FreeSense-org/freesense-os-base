@@ -18,7 +18,9 @@ Environments:
 
 - `broker`: Worker deployment and one smoke object
 - `build-coordinator`: immutable generation reservations
-- `build`: immutable inputs/artifacts from the reusable build-runner workflow
+- `build`: immutable inputs/artifacts from the reusable build-runner workflow;
+  protected-main jobs may use either the GitHub-hosted Development route or the
+  dedicated fallback
 - `pin`: weekly input mirroring on the build runner
 - `channel-publisher`: signed repository/release metadata and immutable public ISOs
 - `retention`: daily inventories, exact-key retention, and one small observation record
