@@ -634,9 +634,11 @@ function authorizedWorkflow(claims, kind) {
 
 function authorizeRole(claims, role) {
   const definition = ROLE_DEFINITIONS[role];
-  const expectedRunner = ["artifact-writer", "pin-writer"].includes(role)
-    ? "self-hosted"
-    : "github-hosted";
+  const expectedRunners = role === "artifact-writer"
+    ? ["github-hosted", "self-hosted"]
+    : role === "pin-writer"
+      ? ["self-hosted"]
+      : ["github-hosted"];
   if (
     claims.repository !== GITHUB_REPOSITORY ||
     claims.repository_id !== GITHUB_REPOSITORY_ID ||
@@ -645,7 +647,7 @@ function authorizeRole(claims, role) {
     claims.ref !== MAIN_REF ||
     claims.ref_type !== "branch" ||
     claims.ref_protected !== "true" ||
-    claims.runner_environment !== expectedRunner ||
+    !expectedRunners.includes(claims.runner_environment) ||
     !RUN_ID_PATTERN.test(claims.run_id ?? "") ||
     !SHA_PATTERN.test(claims.sha ?? "") ||
     !SHA_PATTERN.test(claims.workflow_sha ?? "") ||

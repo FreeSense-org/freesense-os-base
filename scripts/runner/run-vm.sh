@@ -2,7 +2,7 @@
 set -euo pipefail
 
 usage() {
-  echo "usage: run-vm.sh --image-sha256 SHA256 --script FILE [--timeout SECONDS] [--failure-dir DIR]" >&2
+  echo "usage: run-vm.sh --image-sha256 SHA256 --script FILE [--timeout SECONDS] [--vcpus N] [--memory-mib N] [--disk-gib N] [--minimum-free-gib N] [--failure-dir DIR]" >&2
   exit 2
 }
 
@@ -10,11 +10,19 @@ image_sha=""
 script_path=""
 timeout_seconds=19800
 failure_dir=""
+vcpus=12
+memory_mib=32768
+disk_gib=160
+minimum_free_gib=80
 while (($#)); do
   case "$1" in
     --image-sha256) image_sha=${2:-}; shift 2 ;;
     --script) script_path=${2:-}; shift 2 ;;
     --timeout) timeout_seconds=${2:-}; shift 2 ;;
+    --vcpus) vcpus=${2:-}; shift 2 ;;
+    --memory-mib) memory_mib=${2:-}; shift 2 ;;
+    --disk-gib) disk_gib=${2:-}; shift 2 ;;
+    --minimum-free-gib) minimum_free_gib=${2:-}; shift 2 ;;
     --failure-dir) failure_dir=${2:-}; shift 2 ;;
     *) usage ;;
   esac
@@ -22,6 +30,9 @@ done
 [[ $image_sha =~ ^[0-9a-f]{64}$ ]] || usage
 [[ -f $script_path ]] || usage
 [[ -z $failure_dir || $failure_dir == /* ]] || usage
+for value in "$timeout_seconds" "$vcpus" "$memory_mib" "$disk_gib" "$minimum_free_gib"; do
+  [[ $value =~ ^[1-9][0-9]*$ ]] || usage
+done
 : "${FSBUILD:?FSBUILD must point to the fsbuild executable}"
 : "${RUNNER_TEMP:?RUNNER_TEMP is required}"
 
@@ -29,7 +40,7 @@ for tool in qemu-system-x86_64 qemu-img cloud-localds curl sha256sum base64 awk;
   command -v "$tool" >/dev/null || { echo "missing host dependency: $tool" >&2; exit 1; }
 done
 [[ -r /dev/kvm && -w /dev/kvm ]] || { echo "/dev/kvm is not available to the runner" >&2; exit 1; }
-(( $(nproc) >= 12 )) || { echo "the build runner exposes fewer than 12 CPU threads" >&2; exit 1; }
+(( $(nproc) >= vcpus )) || { echo "the build runner exposes fewer than ${vcpus} CPU threads" >&2; exit 1; }
 
 cache_dir=${HOME}/.cache/freesense-build/images
 base_image=${cache_dir}/${image_sha}.qcow2
@@ -159,11 +170,11 @@ done
 cp "$vars_template" "$vars"
 
 qemu-img create -q -f qcow2 -F qcow2 -b "$base_image" "$overlay"
-qemu-img resize -q "$overlay" 160G
+qemu-img resize -q "$overlay" "${disk_gib}G"
 available_kib=$(df -Pk "$RUNNER_TEMP" | awk 'END {print $4}')
-required_kib=$((80 * 1024 * 1024))
+required_kib=$((minimum_free_gib * 1024 * 1024))
 (( available_kib >= required_kib )) || {
-  echo "build runner has less than 80 GiB free for the VM overlay" >&2
+  echo "build runner has less than ${minimum_free_gib} GiB free for the VM overlay" >&2
   exit 1
 }
 
@@ -211,8 +222,8 @@ qemu-system-x86_64 \
   -name freesense-${nonce} \
   -machine q35,accel=kvm \
   -cpu host \
-  -smp 12 \
-  -m 32768 \
+  -smp "$vcpus" \
+  -m "$memory_mib" \
   -drive if=pflash,format=raw,readonly=on,file="$code" \
   -drive if=pflash,format=raw,file="$vars" \
   -drive if=virtio,format=qcow2,cache=none,discard=unmap,file="$overlay" \

@@ -185,6 +185,7 @@ jobs:
       image_capabilities: ${{ needs.plan.outputs.image_capabilities }}
       installer_format: ${{ needs.plan.outputs.installer_format }}
       publish_enabled: ${{ needs.plan.outputs.publish_enabled }}
+      build_host: ${{ needs.plan.outputs.target == 'amd64' && 'github-hosted' || 'dedicated' }}
     secrets: inherit
 
   publish:
