@@ -30,10 +30,11 @@ done
 [[ $image_sha =~ ^[0-9a-f]{64}$ ]] || usage
 [[ -f $script_path ]] || usage
 [[ -z $failure_dir || $failure_dir == /* ]] || usage
-for value in "$timeout_seconds" "$memory_mib" "$disk_gib" "$minimum_free_gib"; do
+for value in "$timeout_seconds" "$disk_gib" "$minimum_free_gib"; do
   [[ $value =~ ^[1-9][0-9]*$ ]] || usage
 done
 [[ $vcpus == auto || $vcpus =~ ^[1-9][0-9]*$ ]] || usage
+[[ $memory_mib == auto || $memory_mib =~ ^[1-9][0-9]*$ ]] || usage
 : "${FSBUILD:?FSBUILD must point to the fsbuild executable}"
 : "${RUNNER_TEMP:?RUNNER_TEMP is required}"
 
@@ -44,8 +45,19 @@ done
 if [[ $vcpus == auto ]]; then
   vcpus=$(nproc)
 fi
+host_memory_available_kib=$(awk '/MemAvailable:/ {print $2}' /proc/meminfo)
+[[ $host_memory_available_kib =~ ^[1-9][0-9]*$ ]] || {
+  echo "host MemAvailable could not be determined" >&2
+  exit 1
+}
+if [[ $memory_mib == auto ]]; then
+  memory_mib=$((host_memory_available_kib * 80 / 100 / 1024))
+  memory_mib=$((memory_mib / 256 * 256))
+fi
 (( $(nproc) >= vcpus )) || { echo "the build runner exposes fewer than ${vcpus} CPU threads" >&2; exit 1; }
+(( memory_mib >= 4096 )) || { echo "less than 4 GiB is available for the FreeBSD VM" >&2; exit 1; }
 echo "Configuring FreeBSD build VM with -smp ${vcpus} from host nproc=$(nproc)"
+echo "Configuring FreeBSD build VM with -m ${memory_mib} MiB from host MemAvailable=$((host_memory_available_kib / 1024)) MiB (20% reserved)"
 
 cache_dir=${HOME}/.cache/freesense-build/images
 base_image=${cache_dir}/${image_sha}.qcow2
