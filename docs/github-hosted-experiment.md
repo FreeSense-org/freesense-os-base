@@ -34,6 +34,9 @@ renderer now passes the manifest's already-validated OSVERSION explicitly to
 `pkg add`; the one-revision userland compatibility check remains in force.
 The signed channel's verified System OSVERSION is exported for all package
 operations because dependency verification uses the same ABI contract.
+`ALTABI` is unset only inside the worker-tool installer subshell because pkg
+2.x emits a deprecation diagnostic for that legacy override; the parent worker
+retains it for the FreeSense build descriptor.
 
 `prepare-iso.py` verifies the live signed Development channel through the existing
 channel verifier. It reuses the production source configuration, repository

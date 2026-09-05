@@ -39,6 +39,7 @@ class ExperimentalIsoTests(unittest.TestCase):
         self.assertIn("pkg checksum -q -c", worker)
         self.assertIn('OSVERSION="${required_osversion}"', worker)
         self.assertIn("export OSVERSION=1600020", worker)
+        self.assertIn("set -eu\n  unset ALTABI", worker)
         self.assertIn("/root/experiment-output", worker)
 
 

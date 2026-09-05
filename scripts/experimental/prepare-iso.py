@@ -31,6 +31,13 @@ def render(values):
     end = configure.index("  trusted_fingerprint=", start)
     configure = configure[:start] + "  cp /root/sign/repo.pub /root/sign/channel-public.pem\n" + configure[end:]
     installer = (ROOT / "scripts/runner/install-worker-tools.sh").read_text()
+    installer_entry = "install_worker_tools() (\n  set -eu\n"
+    if installer.count(installer_entry) != 1:
+        raise ValueError("worker-tool installer entry contract changed")
+    installer = installer.replace(
+        installer_entry,
+        installer_entry + "  unset ALTABI\n",
+    )
     package_env = 'env ASSUME_ALWAYS_YES=no DEFAULT_ALWAYS_YES=no IGNORE_OSVERSION="${ignore_osversion}" \\\n'
     if installer.count(package_env) != 1:
         raise ValueError("worker-tool package environment contract changed")
