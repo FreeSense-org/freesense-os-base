@@ -30,6 +30,15 @@ def render(values):
     start = configure.index("  printf '%s' \"${FREESENSE_REPO_SIGNING_KEY}\"")
     end = configure.index("  trusted_fingerprint=", start)
     configure = configure[:start] + "  cp /root/sign/repo.pub /root/sign/channel-public.pem\n" + configure[end:]
+    installer = (ROOT / "scripts/runner/install-worker-tools.sh").read_text()
+    package_env = 'env ASSUME_ALWAYS_YES=no DEFAULT_ALWAYS_YES=no IGNORE_OSVERSION="${ignore_osversion}" \\\n'
+    if installer.count(package_env) != 1:
+        raise ValueError("worker-tool package environment contract changed")
+    installer = installer.replace(
+        package_env,
+        'env ASSUME_ALWAYS_YES=no DEFAULT_ALWAYS_YES=no IGNORE_OSVERSION="${ignore_osversion}" '
+        'OSVERSION="${required_osversion}" \\\n',
+    )
     identity = hashlib.sha256((values["payload_sha256"] + "github-iso-experiment").encode()).hexdigest()
     env = {
         "STAGE": "iso", "CHANNEL": "devel", "TARGET": "amd64",
@@ -64,7 +73,7 @@ def render(values):
     lines += ["mkdir -p /root/sign /root/work /root/experiment-output",
               "printf '%s' " + shlex.quote(base64.b64encode((ROOT / "config/channel-signing-public.pem").read_bytes()).decode()) + " | openssl base64 -d -A >/root/sign/repo.pub",
               'phase() { printf "FreeSense phase: %s\\n" "$1"; df -k /; }',
-              (ROOT / "scripts/runner/install-worker-tools.sh").read_text(),
+              installer,
               "install_worker_tools",
               function(common, "clone_exact", "configure_source"), configure]
     # Preserve the production catalogue signature, ABI and every-package checksum checks.

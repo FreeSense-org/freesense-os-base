@@ -28,6 +28,10 @@ The SSH approach was removed after the IPv4-only guest also failed to finish
 service startup. The worker now uses the same direct `nuageinit` execution
 pattern as production. A separate FAT output disk returns the ISO and marker to
 the host after the guest shuts down, so assembly does not depend on SSH.
+That path launched successfully and exposed a package-manager ABI override that
+guessed OSVERSION 1600000 for signed 1600020 worker tools. The experimental
+renderer now passes the manifest's already-validated OSVERSION explicitly to
+`pkg add`; the one-revision userland compatibility check remains in force.
 
 `prepare-iso.py` verifies the live signed Development channel through the existing
 channel verifier. It reuses the production source configuration, repository

@@ -37,6 +37,7 @@ class ExperimentalIsoTests(unittest.TestCase):
         self.assertIn("verify_repository()", worker)
         self.assertIn("verify_release_channel", worker)
         self.assertIn("pkg checksum -q -c", worker)
+        self.assertIn('OSVERSION="${required_osversion}"', worker)
         self.assertIn("/root/experiment-output", worker)
 
 
