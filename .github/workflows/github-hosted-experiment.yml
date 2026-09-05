@@ -22,7 +22,7 @@ jobs:
       - name: Prepare disposable GitHub host
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends qemu-system-x86 qemu-utils ovmf cloud-image-utils
+          sudo apt-get install -y --no-install-recommends qemu-system-x86 qemu-utils ovmf cloud-image-utils dosfstools mtools
           sudo chmod a+rw /dev/kvm
           nproc
           free -h

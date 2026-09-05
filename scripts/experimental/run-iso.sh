@@ -35,19 +35,29 @@ curl --fail --location --retry 5 --output "$work/base.qcow2" \
 printf '%s  %s\n' "$image_sha" "$work/base.qcow2" | sha256sum --check
 qemu-img create -f qcow2 -F qcow2 -b "$work/base.qcow2" "$work/worker.qcow2"
 qemu-img resize "$work/worker.qcow2" 64G
-ssh-keygen -q -t ed25519 -N '' -f "$work/key"
-public_key=$(cat "$work/key.pub")
+truncate -s 4G "$work/output.img"
+mkfs.vfat -F 32 -n FSOUTPUT "$work/output.img"
+worker_b64=$(base64 -w 0 "$input/worker.sh")
 cat >"$work/user-data" <<EOF
 #!/bin/sh
 set -eu
-mkdir -p /root/.ssh
-chmod 700 /root/.ssh
-printf '%s\n' '${public_key}' >/root/.ssh/authorized_keys
-chmod 600 /root/.ssh/authorized_keys
-sed -i '' -E 's/^[#[:space:]]*PermitRootLogin .*/PermitRootLogin prohibit-password/' /etc/ssh/sshd_config
-printf '\nPermitRootLogin prohibit-password\nPasswordAuthentication no\n' >>/etc/ssh/sshd_config
-sysrc sshd_enable=YES
-service sshd restart
+exec </dev/ttyu0 >/dev/ttyu0 2>&1
+echo FREESENSE_EXPERIMENT_BEGIN
+printf '%s' '${worker_b64}' | /usr/bin/base64 -d >/root/worker.sh
+chmod 700 /root/worker.sh
+status=0
+/bin/sh /root/worker.sh || status=\$?
+mkdir -p /mnt/output
+mount -t msdosfs /dev/vtbd1 /mnt/output || status=90
+if [ \$status -eq 0 ]; then
+  cp /root/experiment-output/* /mnt/output/ || status=91
+fi
+printf '%s\n' "\$status" >/mnt/output/status 2>/dev/null || true
+sync
+umount /mnt/output 2>/dev/null || true
+echo "FREESENSE_EXPERIMENT_END status=\$status"
+shutdown -p now
+exit "\$status"
 EOF
 printf 'instance-id: github-iso-%s\nlocal-hostname: github-iso\n' "${GITHUB_RUN_ID:-local}" >"$work/meta-data"
 cloud-localds "$work/seed.img" "$work/user-data" "$work/meta-data"
@@ -57,31 +67,26 @@ qemu-system-x86_64 -name github-iso-experiment -machine q35,accel=kvm -cpu host 
   -drive if=pflash,format=raw,readonly=on,file=/usr/share/OVMF/OVMF_CODE_4M.fd \
   -drive "if=pflash,format=raw,file=$work/vars.fd" \
   -drive "if=virtio,format=qcow2,cache=none,discard=unmap,file=$work/worker.qcow2" \
+  -drive "if=virtio,format=raw,cache=none,file=$work/output.img" \
   -drive "if=ide,media=cdrom,format=raw,readonly=on,file=$work/seed.img" \
   -device virtio-net-pci,netdev=net0 \
-  -netdev user,id=net0,ipv6=off,hostfwd=tcp:127.0.0.1:2222-:22 \
+  -netdev user,id=net0,ipv6=off \
   -no-reboot >"$work/qemu.log" 2>&1 &
 vm_pid=$!
-ssh_args=(-i "$work/key" -o StrictHostKeyChecking=accept-new -o "UserKnownHostsFile=$work/known_hosts"
-  -o BatchMode=yes -o ConnectTimeout=5 -o ServerAliveInterval=30 -o ServerAliveCountMax=3)
-ready=false
-for attempt in {1..180}; do
-  kill -0 "$vm_pid"
-  if ssh "${ssh_args[@]}" -p 2222 root@127.0.0.1 true 2>/dev/null; then ready=true; break; fi
-  if (( attempt % 12 == 0 )); then
-    serial_bytes=$(stat -c %s "$work/serial.log" 2>/dev/null || echo 0)
-    serial_phase=$(tr '\r' '\n' <"$work/serial.log" 2>/dev/null | tail -n 1 || true)
-    printf 'Waiting for FreeBSD SSH: elapsed=%ss serial_bytes=%s last_line=%s\n' \
-      "$((attempt * 5))" "$serial_bytes" "$serial_phase"
+start=$(date +%s)
+while kill -0 "$vm_pid" 2>/dev/null; do
+  now=$(date +%s)
+  (( now - start < 19800 )) || { echo 'FreeBSD experiment exceeded 5.5 hours' >&2; exit 1; }
+  if (( (now - start) % 60 < 5 )); then
+    phase=$(tr '\r' '\n' <"$work/serial.log" 2>/dev/null | grep -E '^(FreeSense phase|FREESENSE_)' | tail -n 1 || true)
+    printf 'FreeBSD experiment heartbeat: elapsed=%ss phase=%s\n' "$((now - start))" "${phase:-booting}"
   fi
   sleep 5
 done
-[[ $ready == true ]] || { echo 'FreeBSD SSH startup timed out after 15 minutes' >&2; exit 1; }
-scp "${ssh_args[@]}" -P 2222 "$input/worker.sh" root@127.0.0.1:/root/worker.sh
-timeout --signal=TERM --kill-after=30s 18000 \
-  ssh "${ssh_args[@]}" -p 2222 root@127.0.0.1 'sh /root/worker.sh' \
-  2>&1 | tee "$output/assembly.log"
-scp "${ssh_args[@]}" -P 2222 'root@127.0.0.1:/root/experiment-output/*' "$output/"
+wait "$vm_pid"
+vm_pid=""
+mcopy -i "$work/output.img" '::/*' "$output/"
+[[ $(tr -d '\r\n' <"$output/status") == 0 ]] || { echo 'FreeBSD experimental worker failed' >&2; exit 1; }
+tr '\r' '\n' <"$work/serial.log" >"$output/assembly.log"
 df -h "$work" | tee "$output/disk-after.txt"
 du -h "$work/worker.qcow2" | tee "$output/overlay-size.txt"
-ssh "${ssh_args[@]}" -p 2222 root@127.0.0.1 'shutdown -p now' || true

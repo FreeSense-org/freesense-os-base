@@ -24,6 +24,10 @@ for nested-VM startup and reports serial progress once per minute.
 The follow-up remained in the same `vtnet` IPv6 router-advertisement path for
 ten minutes. QEMU user networking is therefore IPv4-only for this isolated
 builder; public input downloads and the host-forwarded SSH channel use IPv4.
+The SSH approach was removed after the IPv4-only guest also failed to finish
+service startup. The worker now uses the same direct `nuageinit` execution
+pattern as production. A separate FAT output disk returns the ISO and marker to
+the host after the guest shuts down, so assembly does not depend on SSH.
 
 `prepare-iso.py` verifies the live signed Development channel through the existing
 channel verifier. It reuses the production source configuration, repository
