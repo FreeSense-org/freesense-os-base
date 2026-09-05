@@ -24,6 +24,7 @@ def require(condition: bool, message: str) -> None:
 
 expected_workflows = {
     "github-hosted-experiment.yml",
+    "github-hosted-system.yml",
     "arm64-experimental.yml", "broker.yml", "ci.yml", "packages.yml", "pin.yml", "release.yml",
     "retention.yml", "runner-build.yml", "stable.yml", "system.yml",
 }

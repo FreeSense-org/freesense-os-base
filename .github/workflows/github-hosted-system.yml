@@ -1,0 +1,53 @@
+name: GitHub-hosted System core experiment
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [experiment/github-hosted-builds]
+    paths: ['scripts/github-hosted-system/**', '.github/workflows/github-hosted-system.yml']
+
+permissions: {contents: read}
+concurrency: {group: github-hosted-system-experiment, cancel-in-progress: false}
+
+jobs:
+  system-core:
+    if: github.ref == 'refs/heads/experiment/github-hosted-builds'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 345
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with: {persist-credentials: false}
+      - name: Prepare disposable GitHub host
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends qemu-system-x86 qemu-utils ovmf cloud-image-utils dosfstools mtools
+          sudo chmod a+rw /dev/kvm
+          nproc
+          free -h
+          df -h
+      - name: Verify inputs and render System core worker
+        run: |
+          python3 scripts/github-hosted-system/prepare.py --os-base-sha "$GITHUB_SHA" --output "$RUNNER_TEMP/system-input"
+          sh -n "$RUNNER_TEMP/system-input/worker.sh"
+      - name: Build System core in a 4-vCPU 10-GiB FreeBSD VM
+        run: bash scripts/github-hosted-system/run.sh "$RUNNER_TEMP/system-input" "$RUNNER_TEMP/system-output"
+      - name: Upload temporary System core
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: experimental-system-core
+          path: |
+            ${{ runner.temp }}/system-output/system-core.json
+            ${{ runner.temp }}/system-output/system-core.tar.zst.part-*
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 3
+      - name: Upload System core diagnostics
+        if: always()
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: experimental-system-core-logs
+          path: |
+            ${{ runner.temp }}/system-output/*.log
+            ${{ runner.temp }}/system-output/*.txt
+          if-no-files-found: ignore
+          retention-days: 7

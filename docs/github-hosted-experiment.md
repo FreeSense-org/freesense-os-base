@@ -77,3 +77,9 @@ preserved. Production scripts and credential policy are unchanged.
 Target each batch below three hours to leave margin under GitHub's six-hour job
 limit. Intermediate artifacts must not be mistaken for published complete
 repositories. A single oversized port may require the dedicated runner.
+
+Milestone 2 starts with a credential-free System core experiment. It runs the
+real `--build-core` path using the branch's exact OS-base commit and the verified
+Development source, FreeBSD, ports, jail and worker-tool pins. Its temporary
+GitHub artifact contains compressed core packages split below FAT32's per-file
+limit. It has no R2 or signing credentials and cannot publish a System result.
