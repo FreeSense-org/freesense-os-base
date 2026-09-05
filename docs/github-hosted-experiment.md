@@ -83,3 +83,15 @@ real `--build-core` path using the branch's exact OS-base commit and the verifie
 Development source, FreeBSD, ports, jail and worker-tool pins. Its temporary
 GitHub artifact contains compressed core packages split below FAT32's per-file
 limit. It has no R2 or signing credentials and cannot publish a System result.
+
+Run 33963863607 completed that core milestone in 2h19m50s. The kernel toolchain
+accounted for about 2h5m and the four-core kernel build for about eight minutes;
+the compressed five-package core artifact was approximately 252 MiB and the VM
+overlay reached 12 GiB.
+
+Milestone 3 extends that same isolated worker through the production System
+ports stage. It builds the complete System Poudriere closure, merges it with the
+core packages, generates a temporary unsigned package catalogue, and returns
+the repository as a checksum-bound GitHub artifact. The artifact is a real
+package repository for capacity and integrity testing, but it is deliberately
+not signed with the production key and cannot update the Development channel.

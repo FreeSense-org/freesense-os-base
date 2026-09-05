@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Render a credential-free System core worker for the hosted-runner trial."""
+"""Render a credential-free complete System worker for the hosted-runner trial."""
 import argparse
 import base64
 import hashlib
@@ -22,12 +22,14 @@ def function(source, name, following):
 
 def render(values, os_base_sha):
     if values["verified"] != "true" or not re.fullmatch(r"[0-9a-f]{40}", os_base_sha):
-        raise ValueError("System core experiment requires verified inputs and an exact branch commit")
+        raise ValueError("Complete System experiment requires verified inputs and an exact branch commit")
     common = (ROOT / "scripts/runner/worker-common.sh").read_text()
-    configure = function(common, "configure_source", "configure_poudriere")
-    start = configure.index("  printf '%s' \"${FREESENSE_REPO_SIGNING_KEY}\"")
-    end = configure.index("  trusted_fingerprint=", start)
-    configure = configure[:start] + "  cp /root/sign/repo.pub /root/sign/channel-public.pem\n" + configure[end:]
+    runtime_start = common.index("clone_exact() {")
+    runtime_end = common.index("\nfetch_input()", runtime_start)
+    runtime = common[runtime_start:runtime_end]
+    start = runtime.index("  printf '%s' \"${FREESENSE_REPO_SIGNING_KEY}\"")
+    end = runtime.index("  trusted_fingerprint=", start)
+    runtime = runtime[:start] + "  cp /root/sign/repo.pub /root/sign/channel-public.pem\n" + runtime[end:]
 
     installer = (ROOT / "scripts/runner/install-worker-tools.sh").read_text()
     entry = "install_worker_tools() (\n  set -eu\n"
@@ -42,7 +44,7 @@ def render(values, os_base_sha):
         raise ValueError("worker-tool installer contract changed")
 
     identity = hashlib.sha256(
-        (values["fingerprint"] + os_base_sha + "github-system-core-v1").encode()
+        (values["fingerprint"] + os_base_sha + "github-system-full-v1").encode()
     ).hexdigest()
     env = {
         "STAGE": "system", "FINGERPRINT": identity, "SYSTEM_ID": identity,
@@ -65,34 +67,39 @@ def render(values, os_base_sha):
         "FREEBSD_TARGET_ARCH": "amd64", "POUDRIERE_ARCH": "amd64.amd64",
         "KERNEL": "FreeSense",
     }
-    stage = r'''
+    fetch = r'''
 fetch_input() {
   object=$1 destination=$2
   fetch -qo "${destination}" "${PUBLIC_BASE_URL}/${object}"
   test "$(sha256 -q "${destination}")" = "${object##*/}"
 }
-fetch_input "${JAIL_OBJECT}" /root/jail-base.txz
-configure_source
-cd /root/freesense-src
-phase system-core-build
-./build.sh --build-core
-phase system-core-package
-core=$(find tmp -type d -path '*-core/.real_*/All' -print -quit)
-test -n "${core}" && test -d "${core}"
-package_count=$(find "${core}" -type f -name '*.pkg' | wc -l | tr -d ' ')
-test "${package_count}" -gt 0
-tar -cf - -C "${core}" . | zstd -T2 -6 -o /tmp/system-core.tar.zst
-archive_sha=$(sha256 -q /tmp/system-core.tar.zst)
-archive_size=$(stat -f %z /tmp/system-core.tar.zst)
-split -b 1900m -a 2 /tmp/system-core.tar.zst /root/experiment-output/system-core.tar.zst.part-
-jq -n --arg schema freesense.github-system-core/v1 --arg fingerprint "${FINGERPRINT}" \
+'''
+    stage = (ROOT / "scripts/runner/stages/system.sh").read_text()
+    terminal = "sign_repository /root/work/system\npublish_repository /root/work/system\n"
+    if terminal not in stage:
+        raise ValueError("System stage publication contract changed")
+    package = r'''
+phase experimental-system-catalog
+pkg repo /root/work/system
+test -s /root/work/system/packagesite.pkg
+package_count=$(find /root/work/system/All -type f -name '*.pkg' | wc -l | tr -d ' ')
+test "${package_count}" -gt 5
+phase experimental-system-package
+tar -cf - -C /root/work/system . | zstd -T2 -3 -o /tmp/system-full.tar.zst
+archive_sha=$(sha256 -q /tmp/system-full.tar.zst)
+archive_size=$(stat -f %z /tmp/system-full.tar.zst)
+split -b 1900m -a 2 /tmp/system-full.tar.zst /root/experiment-output/system-full.tar.zst.part-
+jq -n --arg schema freesense.github-system-full/v1 --arg fingerprint "${FINGERPRINT}" \
   --arg os_base_sha "${OS_BASE_SHA}" --arg source_sha "${SOURCE_SHA}" \
+  --arg system_ports_sha "${SYSTEM_SHA}" --arg freebsd_sha "${FREEBSD_SHA}" \
+  --arg ports_sha "${PORTS_SHA}" \
   --arg sha256 "${archive_sha}" --argjson size "${archive_size}" \
   --argjson package_count "${package_count}" \
-  '{schema_version:$schema,fingerprint:$fingerprint,os_base_sha:$os_base_sha,source_sha:$source_sha,sha256:$sha256,size:$size,package_count:$package_count}' \
-  >/root/experiment-output/system-core.json
-phase system-core-ready
+  '{schema_version:$schema,fingerprint:$fingerprint,os_base_sha:$os_base_sha,source_sha:$source_sha,system_ports_sha:$system_ports_sha,freebsd_sha:$freebsd_sha,ports_sha:$ports_sha,sha256:$sha256,size:$size,package_count:$package_count}' \
+  >/root/experiment-output/system-full.json
+phase experimental-system-ready
 '''
+    stage = stage.replace(terminal, package, 1)
     lines = ["#!/bin/sh", "set -eu",
              "export HOME=/root PATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin",
              "export ASSUME_ALWAYS_YES=yes LC_ALL=C LANG=C TZ=UTC", "umask 022"]
@@ -101,8 +108,8 @@ phase system-core-ready
     lines += ["mkdir -p /root/sign /root/work /root/experiment-output",
               "printf '%s' " + shlex.quote(public_key) + " | openssl base64 -d -A >/root/sign/repo.pub",
               'phase() { printf "FreeSense phase: %s\\n" "$1"; df -k /; }',
-              installer, "install_worker_tools", function(common, "clone_exact", "configure_source"),
-              configure, stage]
+              installer, "install_worker_tools", runtime,
+              fetch, function(common, "create_source_archive", "sign_repository"), stage]
     return "\n".join(lines) + "\n"
 
 

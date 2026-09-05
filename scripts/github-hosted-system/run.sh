@@ -26,8 +26,8 @@ curl --fail --location --retry 5 --output "$work/base.qcow2" \
   "https://pkg.freesense.org/v1/inputs/sha256/${image_sha}"
 printf '%s  %s\n' "$image_sha" "$work/base.qcow2" | sha256sum --check
 qemu-img create -f qcow2 -F qcow2 -b "$work/base.qcow2" "$work/worker.qcow2"
-qemu-img resize "$work/worker.qcow2" 64G
-truncate -s 8G "$work/output.img"
+qemu-img resize "$work/worker.qcow2" 110G
+truncate -s 12G "$work/output.img"
 mkfs.vfat -F 32 -n FSOUTPUT "$work/output.img"
 worker_b64=$(base64 -w 0 "$input/worker.sh")
 cat >"$work/user-data" <<EOF
@@ -67,10 +67,10 @@ start=$(date +%s)
 next_report=$start
 while kill -0 "$vm_pid" 2>/dev/null; do
   now=$(date +%s)
-  (( now - start < 19800 )) || { echo 'System core experiment exceeded 5.5 hours' >&2; exit 1; }
+  (( now - start < 19800 )) || { echo 'Complete System experiment exceeded 5.5 hours' >&2; exit 1; }
   if (( now >= next_report )); then
     phase=$(tr '\r' '\n' <"$work/serial.log" | grep -E '^(FreeSense phase|FREESENSE_)' | tail -n 1 || true)
-    printf 'System core heartbeat: elapsed=%ss overlay=%s phase=%s\n' "$((now - start))" \
+    printf 'Complete System heartbeat: elapsed=%ss overlay=%s phase=%s\n' "$((now - start))" \
       "$(du -h "$work/worker.qcow2" | cut -f1)" "${phase:-booting}"
     next_report=$((now + 180))
   fi
@@ -79,7 +79,7 @@ done
 wait "$vm_pid"
 vm_pid=""
 mcopy -i "$work/output.img" '::/*' "$output/"
-[[ $(tr -d '\r\n' <"$output/status") == 0 ]] || { echo 'System core worker failed' >&2; exit 1; }
+[[ $(tr -d '\r\n' <"$output/status") == 0 ]] || { echo 'Complete System worker failed' >&2; exit 1; }
 tr '\r' '\n' <"$work/serial.log" >"$output/system.log"
 df -h "$work" | tee "$output/disk-after.txt"
 du -h "$work/worker.qcow2" | tee "$output/overlay-size.txt"
