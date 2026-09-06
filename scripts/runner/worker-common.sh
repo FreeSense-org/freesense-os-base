@@ -22,6 +22,7 @@ for name in AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN R2_ENDPOIN
   CHANNEL_PAYLOAD_B64 CHANNEL_SIGNATURE_B64 BUNDLE_ID CLOUD_FILESYSTEM CLOUD_VIRTUAL_SIZE_GIB \
   TARGET ARCHITECTURE PACKAGE_ARCH ABI ALTABI FREEBSD_TARGET FREEBSD_TARGET_ARCH POUDRIERE_ARCH KERNEL \
   EXECUTOR IMAGE_PROFILE FIRMWARE IMAGE_CAPABILITIES INSTALLER_FORMAT PUBLISH_ENABLED \
+  SYSTEM_PART SYSTEM_SHARD_INDEX SYSTEM_SHARD_COUNT \
   BOOT_INPUTS TARGET_MODELS PARTITION_SCHEME APPLIANCE_FILESYSTEM APPLIANCE_FORMAT APPLIANCE_COMPRESSION; do
   eval "$name=\$(decode \"\${${name}_B64}\")"
 done
@@ -31,6 +32,28 @@ export HOME=/root PATH="/usr/local/sbin:/usr/local/bin:${PATH}"
 export ASSUME_ALWAYS_YES=yes LC_ALL=C LANG=C TZ=UTC
 umask 022
 case "${STAGE}" in system|packages|iso|cloud|appliance) : ;; *) echo "invalid build stage" >&2; exit 1 ;; esac
+case "${SYSTEM_SHARD_INDEX}:${SYSTEM_SHARD_COUNT}" in
+  *[!0-9:]*|:*|*:) echo "invalid System shard coordinates" >&2; exit 1 ;;
+esac
+[ "${SYSTEM_SHARD_COUNT}" -ge 1 ] && [ "${SYSTEM_SHARD_COUNT}" -le 19 ] && \
+  [ "${SYSTEM_SHARD_INDEX}" -lt "${SYSTEM_SHARD_COUNT}" ] || {
+  echo "invalid System shard coordinates" >&2
+  exit 1
+}
+if [ "${STAGE}" = system ]; then
+  case "${SYSTEM_PART}" in full|core|shard|finalize) : ;; *)
+    echo "invalid System farm part" >&2; exit 1 ;;
+  esac
+  if [ "${SYSTEM_PART}" = shard ] && [ "${SYSTEM_SHARD_COUNT}" -le 1 ]; then
+    echo "a System package shard requires more than one shard" >&2
+    exit 1
+  fi
+else
+  [ "${SYSTEM_PART}:${SYSTEM_SHARD_INDEX}:${SYSTEM_SHARD_COUNT}" = full:0:1 ] || {
+    echo "System farm coordinates were supplied to a non-System stage" >&2
+    exit 1
+  }
+fi
 case "${TARGET}:${ARCHITECTURE}:${PACKAGE_ARCH}:${FREEBSD_TARGET}:${FREEBSD_TARGET_ARCH}:${POUDRIERE_ARCH}" in
   amd64:amd64:amd64:amd64:amd64:amd64.amd64) : ;;
   arm64:arm64:aarch64:arm64:aarch64:arm64.aarch64) : ;;
@@ -186,9 +209,16 @@ configure_source() {
   export FREESENSE_SOURCE_COMMIT_TIME SOURCE_DATE_EPOCH DATESTRING BUILTDATESTRING
   export FREESENSE_REQUIRE_SOURCE_DATE_EPOCH
 
-  printf '%s' "${FREESENSE_REPO_SIGNING_KEY}" >/root/sign/repo.key
-  chmod 400 /root/sign/repo.key
-  openssl pkey -in /root/sign/repo.key -pubout -out /root/sign/repo.pub >/dev/null 2>&1
+  if [ -n "${FREESENSE_REPO_SIGNING_KEY}" ]; then
+    printf '%s' "${FREESENSE_REPO_SIGNING_KEY}" >/root/sign/repo.key
+    chmod 400 /root/sign/repo.key
+    openssl pkey -in /root/sign/repo.key -pubout -out /root/sign/repo.pub >/dev/null 2>&1
+  elif [ "${STAGE}" = system ] && { [ "${SYSTEM_PART}" = core ] || [ "${SYSTEM_PART}" = shard ]; }; then
+    cp /root/os-definition/config/channel-signing-public.pem /root/sign/repo.pub
+  else
+    echo "repository signing key is missing" >&2
+    return 1
+  fi
   chmod 444 /root/sign/repo.pub
   cp /root/sign/repo.pub /root/sign/channel-public.pem
   chmod 444 /root/sign/channel-public.pem
@@ -352,6 +382,161 @@ merge_package() {
   }
   mv "${temporary}" "${target}"
   printf '%s|%s|%s|%s\n' "${metadata}" "${filename}" "${sha}" "${target}" >>"${inventory}"
+}
+
+publish_system_checkpoint() {
+  checkpoint_kind=$1 checkpoint_id=$2 checkpoint_directory=$3
+  checkpoint_farm="${RESULT}/checkpoints/farm-${SYSTEM_SHARD_COUNT}"
+  if [ "${checkpoint_kind}" = core ]; then
+    checkpoint_result="${checkpoint_farm}/core"
+  else
+    checkpoint_result="${checkpoint_farm}/shards/${checkpoint_id}"
+  fi
+  checkpoint_items=/tmp/freesense-checkpoint-items.$$
+  checkpoint_inventory=/tmp/freesense-checkpoint-inventory.$$
+  checkpoint_marker=${checkpoint_directory}/complete.json
+  checkpoint_count=0
+
+  case "${checkpoint_kind}:${checkpoint_id}" in
+    core:core|shard:[0-9]|shard:1[0-8]) : ;;
+    *) echo "invalid System checkpoint identity" >&2; return 1 ;;
+  esac
+  [ -d "${checkpoint_directory}/All" ] || {
+    echo "System checkpoint has no package directory" >&2
+    return 1
+  }
+  : >"${checkpoint_items}"
+  : >"${checkpoint_inventory}"
+  for package in "${checkpoint_directory}"/All/*.pkg; do
+    [ -f "${package}" ] && [ ! -L "${package}" ] || continue
+    metadata=$(package_metadata "${package}") || return 1
+    name=${metadata%%|*}
+    remainder=${metadata#*|}; version=${remainder%%|*}
+    remainder=${remainder#*|}; origin=${remainder%%|*}
+    remainder=${remainder#*|}; flavor=${remainder%%|*}
+    subpackage=${remainder#*|}
+    filename=$(basename "${package}")
+    sha=$(sha256 -q "${package}")
+    size=$(stat -f %z "${package}")
+    inventory_package "${package}" "${checkpoint_inventory}" || return 1
+    jq -cn --arg file "${filename}" --arg sha256 "${sha}" --argjson size "${size}" \
+      --arg name "${name}" --arg version "${version}" --arg origin "${origin}" \
+      --arg flavor "${flavor}" --arg subpackage "${subpackage}" \
+      '{file:$file,sha256:$sha256,size:$size,name:$name,version:$version,origin:$origin,flavor:$flavor,subpackage:$subpackage}' \
+      >>"${checkpoint_items}"
+    checkpoint_count=$((checkpoint_count + 1))
+  done
+  [ "${checkpoint_count}" -gt 0 ] || {
+    echo "System checkpoint contains no packages" >&2
+    return 1
+  }
+  jq -s --arg kind "${checkpoint_kind}" --arg id "${checkpoint_id}" \
+    --arg fingerprint "${FINGERPRINT}" --arg platform "${PLATFORM_ID}" \
+    --arg system "${SYSTEM_ID}" --arg source "${SOURCE_SHA}" \
+    --arg system_ports "${SYSTEM_SHA}" --arg os_definition "${OS_BASE_SHA}" \
+    --arg freebsd "${FREEBSD_SHA}" --arg ports "${PORTS_SHA}" \
+    --arg freebsd_pin_id "${FREEBSD_PIN_ID}" --arg package_train "${PACKAGE_TRAIN}" \
+    --arg architecture "${ARCHITECTURE}" --arg package_arch "${PACKAGE_ARCH}" \
+    --arg signing_public_key "${derived_fingerprint}" \
+    --argjson generation "${GENERATION}" --argjson shard_count "${SYSTEM_SHARD_COUNT}" \
+    '{schema_version:"freesense.system-checkpoint/v1",kind:$kind,id:$id,
+      fingerprint:$fingerprint,generation:$generation,architecture:$architecture,
+      package_arch:$package_arch,shard_count:$shard_count,
+      inputs:{platform:$platform,system:$system,source:$source,system_ports:$system_ports,
+        os_definition:$os_definition,freebsd:$freebsd,ports:$ports,
+        freebsd_pin_id:$freebsd_pin_id,package_train:$package_train,
+        signing_public_key:$signing_public_key},packages:.}' \
+    "${checkpoint_items}" >"${checkpoint_marker}"
+  phase system-checkpoint-publish
+  for package in "${checkpoint_directory}"/All/*.pkg; do
+    [ -f "${package}" ] || continue
+    upload_immutable "${package}" \
+      "${checkpoint_result}/${PACKAGE_ARCH}/All/$(basename "${package}")"
+  done
+  upload_immutable "${checkpoint_marker}" "${checkpoint_result}/complete.json"
+  rm -f "${checkpoint_items}" "${checkpoint_inventory}"
+  phase system-checkpoint-complete
+}
+
+fetch_system_checkpoint() {
+  checkpoint_kind=$1 checkpoint_id=$2 checkpoint_destination=$3
+  checkpoint_farm="${RESULT}/checkpoints/farm-${SYSTEM_SHARD_COUNT}"
+  if [ "${checkpoint_kind}" = core ]; then
+    checkpoint_source="${checkpoint_farm}/core"
+  else
+    checkpoint_source="${checkpoint_farm}/shards/${checkpoint_id}"
+  fi
+  checkpoint_part=${checkpoint_destination}.part.$$
+  checkpoint_expected=/tmp/freesense-checkpoint-expected.$$
+  checkpoint_actual=/tmp/freesense-checkpoint-actual.$$
+  checkpoint_seen=/tmp/freesense-checkpoint-seen.$$
+
+  rm -rf "${checkpoint_part}" "${checkpoint_destination}"
+  mkdir -p "${checkpoint_part}"
+  phase system-checkpoint-fetch
+  rclone copy --error-on-no-transfer --retries 10 --low-level-retries 20 \
+    "${checkpoint_source}" "${checkpoint_part}"
+  marker=${checkpoint_part}/complete.json
+  jq -e --arg kind "${checkpoint_kind}" --arg id "${checkpoint_id}" \
+    --arg fingerprint "${FINGERPRINT}" --arg platform "${PLATFORM_ID}" \
+    --arg system "${SYSTEM_ID}" --arg source "${SOURCE_SHA}" \
+    --arg system_ports "${SYSTEM_SHA}" --arg os_definition "${OS_BASE_SHA}" \
+    --arg freebsd "${FREEBSD_SHA}" --arg ports "${PORTS_SHA}" \
+    --arg freebsd_pin_id "${FREEBSD_PIN_ID}" --arg package_train "${PACKAGE_TRAIN}" \
+    --arg architecture "${ARCHITECTURE}" --arg package_arch "${PACKAGE_ARCH}" \
+    --arg signing_public_key "${derived_fingerprint}" \
+    --argjson generation "${GENERATION}" --argjson shard_count "${SYSTEM_SHARD_COUNT}" '
+      .schema_version == "freesense.system-checkpoint/v1" and .kind == $kind and .id == $id and
+      .fingerprint == $fingerprint and .generation == $generation and
+      .architecture == $architecture and .package_arch == $package_arch and
+      .shard_count == $shard_count and .inputs.platform == $platform and
+      .inputs.system == $system and .inputs.source == $source and
+      .inputs.system_ports == $system_ports and .inputs.os_definition == $os_definition and
+      .inputs.freebsd == $freebsd and .inputs.ports == $ports and
+      .inputs.freebsd_pin_id == $freebsd_pin_id and .inputs.package_train == $package_train and
+      .inputs.signing_public_key == $signing_public_key and
+      (.packages | type == "array" and length > 0) and
+      all(.packages[];
+        (.file | type == "string" and test("^[A-Za-z0-9][A-Za-z0-9+_.-]*[.]pkg$")) and
+        (.sha256 | type == "string" and test("^[0-9a-f]{64}$")) and
+        (.size | type == "number" and . > 0 and floor == .) and
+        (.name | type == "string" and length > 0) and
+        (.version | type == "string" and length > 0) and
+        (.origin | type == "string") and
+        (.flavor | type == "string") and (.subpackage | type == "string"))
+    ' "${marker}" >/dev/null || {
+    echo "invalid System checkpoint marker: ${checkpoint_kind}/${checkpoint_id}" >&2
+    return 1
+  }
+  jq -r '.packages[] | [.file,.sha256,(.size|tostring),.name,.version,.origin,.flavor,.subpackage] | @tsv' \
+    "${marker}" | LC_ALL=C sort >"${checkpoint_expected}"
+  cut -f 1 "${checkpoint_expected}" | uniq -d >"${checkpoint_seen}"
+  [ ! -s "${checkpoint_seen}" ] || {
+    echo "System checkpoint contains duplicate filenames" >&2
+    return 1
+  }
+  find "${checkpoint_part}/${PACKAGE_ARCH}/All" -type f -name '*.pkg' -exec basename {} \; \
+    | LC_ALL=C sort >"${checkpoint_actual}"
+  cut -f 1 "${checkpoint_expected}" | cmp -s - "${checkpoint_actual}" || {
+    echo "System checkpoint payload differs from its marker" >&2
+    return 1
+  }
+  tab=$(printf '\t')
+  while IFS="${tab}" read -r filename sha size name version origin flavor subpackage; do
+    package=${checkpoint_part}/${PACKAGE_ARCH}/All/${filename}
+    [ "$(stat -f %z "${package}")" = "${size}" ] && \
+      [ "$(sha256 -q "${package}")" = "${sha}" ] || {
+      echo "System checkpoint package integrity mismatch: ${filename}" >&2
+      return 1
+    }
+    [ "$(package_metadata "${package}")" = "${name}|${version}|${origin}|${flavor}|${subpackage}" ] || {
+      echo "System checkpoint package metadata mismatch: ${filename}" >&2
+      return 1
+    }
+  done <"${checkpoint_expected}"
+  rm -f "${checkpoint_expected}" "${checkpoint_actual}" "${checkpoint_seen}"
+  mv "${checkpoint_part}" "${checkpoint_destination}"
+  phase system-checkpoint-ready
 }
 
 seed_poudriere_repository() {

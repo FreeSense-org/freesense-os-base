@@ -27,7 +27,7 @@ def render(values, os_base_sha):
     runtime_start = common.index("clone_exact() {")
     runtime_end = common.index("\nfetch_input()", runtime_start)
     runtime = common[runtime_start:runtime_end]
-    start = runtime.index("  printf '%s' \"${FREESENSE_REPO_SIGNING_KEY}\"")
+    start = runtime.index('  if [ -n "${FREESENSE_REPO_SIGNING_KEY}" ]; then')
     end = runtime.index("  trusted_fingerprint=", start)
     runtime = runtime[:start] + "  cp /root/sign/repo.pub /root/sign/channel-public.pem\n" + runtime[end:]
 
@@ -62,6 +62,7 @@ def render(values, os_base_sha):
         "PACKAGE_TRAIN": values["package_train"],
         "PRODUCT_VERSION": values["release_version"] + "-DEVELOPMENT",
         "GENERATION": "1", "TARGET": "amd64", "ARCHITECTURE": "amd64",
+        "SYSTEM_PART": "full", "SYSTEM_SHARD_INDEX": "0", "SYSTEM_SHARD_COUNT": "1",
         "PACKAGE_ARCH": "amd64", "ABI": values["abi"], "ALTABI": values["altabi"],
         "OSVERSION": str(values["osversion"]), "FREEBSD_TARGET": "amd64",
         "FREEBSD_TARGET_ARCH": "amd64", "POUDRIERE_ARCH": "amd64.amd64",
@@ -75,7 +76,7 @@ fetch_input() {
 }
 '''
     stage = (ROOT / "scripts/runner/stages/system.sh").read_text()
-    terminal = "sign_repository /root/work/system\npublish_repository /root/work/system\n"
+    terminal = '  sign_repository "${system_repository}"\n  publish_repository "${system_repository}"\n'
     if terminal not in stage:
         raise ValueError("System stage publication contract changed")
     package = r'''

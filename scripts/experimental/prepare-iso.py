@@ -27,7 +27,7 @@ def render(values):
         raise ValueError("experiment requires a verified System/Packages pair")
     common = (ROOT / "scripts/runner/worker-common.sh").read_text()
     configure = function(common, "configure_source", "configure_poudriere")
-    start = configure.index("  printf '%s' \"${FREESENSE_REPO_SIGNING_KEY}\"")
+    start = configure.index('  if [ -n "${FREESENSE_REPO_SIGNING_KEY}" ]; then')
     end = configure.index("  trusted_fingerprint=", start)
     configure = configure[:start] + "  cp /root/sign/repo.pub /root/sign/channel-public.pem\n" + configure[end:]
     installer = (ROOT / "scripts/runner/install-worker-tools.sh").read_text()

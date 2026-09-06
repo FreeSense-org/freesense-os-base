@@ -68,12 +68,28 @@ jobs:
       image_capabilities: ${{ steps.plan.outputs.image_capabilities }}
       installer_format: ${{ steps.plan.outputs.installer_format }}
       publish_enabled: ${{ steps.plan.outputs.publish_enabled }}
+      build_matrix: ${{ steps.farm.outputs.matrix }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with: {go-version-file: go.mod, cache: false}
       - id: plan
         run: python3 scripts/plan.py system --target "${{ inputs.target || 'amd64' }}" --os-base-sha "${GITHUB_SHA}" --github-output "${GITHUB_OUTPUT}"
+      - id: farm
+        env: {TARGET: "${{ steps.plan.outputs.target }}"}
+        run: |
+          python3 - <<'PY' >>"${GITHUB_OUTPUT}"
+          import json, os
+          if os.environ["TARGET"] == "amd64":
+              include = [{"part": "core", "shard": "0", "count": "19"}]
+              include += [
+                  {"part": "shard", "shard": str(index), "count": "19"}
+                  for index in range(19)
+              ]
+          else:
+              include = [{"part": "full", "shard": "0", "count": "1"}]
+          print("matrix=" + json.dumps({"include": include}, separators=(",", ":")))
+          PY
       - if: steps.plan.outputs.needed == 'true'
         run: go build -trimpath -o "${RUNNER_TEMP}/fsbuild" ./cmd/fsbuild
       - if: steps.plan.outputs.needed == 'true'
@@ -99,9 +115,13 @@ jobs:
             --output "${RUNNER_TEMP}/generation.json"
           echo "generation=$(jq -r .generation "${RUNNER_TEMP}/generation.json")" >>"${GITHUB_OUTPUT}"
 
-  build:
+  build_parts:
     needs: plan
     if: needs.plan.outputs.needed == 'true'
+    strategy:
+      fail-fast: false
+      max-parallel: 20
+      matrix: ${{ fromJSON(needs.plan.outputs.build_matrix) }}
     uses: ./.github/workflows/runner-build.yml
     with:
       stage: system
@@ -137,12 +157,62 @@ jobs:
       image_capabilities: ${{ needs.plan.outputs.image_capabilities }}
       installer_format: ${{ needs.plan.outputs.installer_format }}
       publish_enabled: ${{ needs.plan.outputs.publish_enabled }}
+      system_part: ${{ matrix.part }}
+      system_shard_index: ${{ matrix.shard }}
+      system_shard_count: ${{ matrix.count }}
       build_host: ${{ needs.plan.outputs.target == 'amd64' && 'github-hosted' || 'dedicated' }}
     secrets: inherit
 
+  build_finalize:
+    needs: [plan, build_parts]
+    if: needs.plan.outputs.needed == 'true' && needs.plan.outputs.target == 'amd64' && needs.build_parts.result == 'success'
+    uses: ./.github/workflows/runner-build.yml
+    with:
+      stage: system
+      fingerprint: ${{ needs.plan.outputs.system }}
+      platform_id: ${{ needs.plan.outputs.platform }}
+      system_id: ${{ needs.plan.outputs.system }}
+      source_sha: ${{ needs.plan.outputs.source_sha }}
+      system_sha: ${{ needs.plan.outputs.system_sha }}
+      packages_sha: ${{ needs.plan.outputs.packages_sha }}
+      os_base_sha: ${{ needs.plan.outputs.os_base_sha }}
+      freebsd_sha: ${{ needs.plan.outputs.freebsd_sha }}
+      ports_sha: ${{ needs.plan.outputs.ports_sha }}
+      image_sha256: ${{ needs.plan.outputs.image_sha256 }}
+      worker_tools_sha256: ${{ needs.plan.outputs.worker_tools_sha256 }}
+      jail_object: ${{ needs.plan.outputs.jail_object }}
+      freebsd_pin_id: ${{ needs.plan.outputs.freebsd_pin_id }}
+      product_version: ${{ needs.plan.outputs.product_version }}
+      package_train: ${{ needs.plan.outputs.package_train }}
+      generation: ${{ needs.plan.outputs.generation }}
+      public_base_url: ${{ needs.plan.outputs.public_base_url }}
+      target: ${{ needs.plan.outputs.target }}
+      architecture: ${{ needs.plan.outputs.architecture }}
+      package_arch: ${{ needs.plan.outputs.package_arch }}
+      abi: ${{ needs.plan.outputs.abi }}
+      altabi: ${{ needs.plan.outputs.altabi }}
+      freebsd_target: ${{ needs.plan.outputs.freebsd_target }}
+      freebsd_target_arch: ${{ needs.plan.outputs.freebsd_target_arch }}
+      poudriere_arch: ${{ needs.plan.outputs.poudriere_arch }}
+      kernel: ${{ needs.plan.outputs.kernel }}
+      executor: ${{ needs.plan.outputs.executor }}
+      image_profile: ${{ needs.plan.outputs.image_profile }}
+      firmware: ${{ needs.plan.outputs.firmware }}
+      image_capabilities: ${{ needs.plan.outputs.image_capabilities }}
+      installer_format: ${{ needs.plan.outputs.installer_format }}
+      publish_enabled: ${{ needs.plan.outputs.publish_enabled }}
+      system_part: finalize
+      system_shard_index: "0"
+      system_shard_count: "19"
+      build_host: github-hosted
+    secrets: inherit
+
   publish:
-    needs: [plan, build]
-    if: needs.build.result == 'success' && needs.plan.outputs.publish_enabled == 'true'
+    needs: [plan, build_parts, build_finalize]
+    if: >-
+      always() && needs.plan.result == 'success' && needs.plan.outputs.publish_enabled == 'true' &&
+      ((needs.plan.outputs.target == 'amd64' && needs.build_finalize.result == 'success') ||
+       (needs.plan.outputs.target != 'amd64' && needs.build_parts.result == 'success'))
     runs-on: ubuntu-24.04
     environment: channel-publisher
     permissions: {contents: read, id-token: write}

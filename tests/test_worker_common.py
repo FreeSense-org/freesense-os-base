@@ -158,6 +158,84 @@ class WorkerVersionValidationTests(unittest.TestCase):
         self.assertIn("gzip -dc /tmp/freesense-built-kernel.gz", system)
         self.assertIn("ELF 64-bit.*ARM aarch64", system)
 
+    def test_amd64_system_farm_uses_all_twenty_hosted_slots(self) -> None:
+        workflow = (ROOT / ".github/workflows/system.yml").read_text(
+            encoding="utf-8"
+        )
+        reusable = (ROOT / ".github/workflows/runner-build.yml").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn('max-parallel: 20', workflow)
+        self.assertIn('{"part": "core", "shard": "0", "count": "19"}', workflow)
+        self.assertIn('for index in range(19)', workflow)
+        self.assertIn('needs: [plan, build_parts]', workflow)
+        self.assertIn('system_part: finalize', workflow)
+        self.assertIn('system_shard_count: "19"', workflow)
+        self.assertIn("needs.build_finalize.result == 'success'", workflow)
+        self.assertIn(
+            "freesense-github-hosted-build-{0}-{1}",
+            reusable,
+        )
+
+    def test_system_farm_checkpoints_are_verified_and_repaired(self) -> None:
+        common = (ROOT / "scripts/runner/worker-common.sh").read_text(
+            encoding="utf-8"
+        )
+        system = (ROOT / "scripts/runner/stages/system.sh").read_text(
+            encoding="utf-8"
+        )
+        publish = common[common.index("publish_system_checkpoint() {") :]
+        self.assertLess(
+            publish.index('upload_immutable "${package}"'),
+            publish.index('upload_immutable "${checkpoint_marker}"'),
+        )
+        for value in (
+            'schema_version:"freesense.system-checkpoint/v1"',
+            'checkpoint payload differs from its marker',
+            'checkpoint package integrity mismatch',
+            'checkpoint package metadata mismatch',
+        ):
+            with self.subTest(value=value):
+                self.assertIn(value, common)
+        for value in (
+            'fetch_system_checkpoint core core',
+            'while [ "${shard}" -lt "${SYSTEM_SHARD_COUNT}" ]',
+            'merge_package "${package}" "${shard_seed}/All" "${shard_inventory}" identical',
+            'seed_poudriere_repository "${shard_seed}"',
+            'prepare_system_ports full',
+            'phase system-closure-check',
+        ):
+            with self.subTest(value=value):
+                self.assertIn(value, system)
+
+    def test_system_shard_dependency_expansion_fails_closed(self) -> None:
+        system = (ROOT / "scripts/runner/stages/system.sh").read_text(
+            encoding="utf-8"
+        )
+        shard_roots = system[
+            system.index("write_system_shard_roots() {") :
+            system.index("\nprepare_system_ports()", system.index("write_system_shard_roots() {"))
+        ]
+        self.assertIn('>>"${meta_dependencies}" || {', shard_roots)
+        self.assertIn('dependencies contain unresolved variables', shard_roots)
+        self.assertIn('root_count=$(awk', shard_roots)
+        self.assertNotIn('@{}$-', shard_roots)
+
+    def test_system_farm_workers_do_not_receive_the_private_signing_key(self) -> None:
+        workflow = (ROOT / ".github/workflows/runner-build.yml").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("name: Render credential-free System farm worker", workflow)
+        self.assertIn("FREESENSE_REPO_SIGNING_KEY: ''", workflow)
+        self.assertIn(
+            "inputs.system_part != 'core' && inputs.system_part != 'shard'",
+            workflow,
+        )
+        common = (ROOT / "scripts/runner/worker-common.sh").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn('cp /root/os-definition/config/channel-signing-public.pem /root/sign/repo.pub', common)
+
     def test_cloud_first_boot_uses_supported_growth_and_sanitization(self) -> None:
         cloud = (ROOT / "scripts/runner/stages/cloud.sh").read_text(encoding="utf-8")
         self.assertIn('growfs_enable="YES"', cloud)
