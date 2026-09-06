@@ -54,7 +54,8 @@ build_system_core() {
   rm -f /tmp/freesense-built-kernel
 }
 
-write_system_shard_roots() {
+write_system_farm_roots() {
+  roots_mode=$1
   all_roots=/tmp/system-farm-roots
   shard_roots=/tmp/system-shard-roots
   meta_dependencies=/tmp/system-farm-meta-dependencies
@@ -95,20 +96,37 @@ EOF
 
   sed -e '/^security\/FreeSense$/d' -e '/^security\/FreeSense-system$/d' \
     "${all_roots}" | LC_ALL=C sort -u >"${all_roots}.sorted"
-  root_count=$(awk 'END { print NR }' "${all_roots}.sorted")
-  [ "${root_count}" -ge "${SYSTEM_SHARD_COUNT}" ] || {
-    echo "System farm has fewer roots (${root_count}) than shards (${SYSTEM_SHARD_COUNT})" >&2
-    return 1
-  }
-  awk -v shard="${SYSTEM_SHARD_INDEX}" -v count="${SYSTEM_SHARD_COUNT}" \
-    '((NR - 1) % count) == shard' "${all_roots}.sorted" >"${shard_roots}"
+
+  case "${roots_mode}" in
+    bootstrap)
+      printf '%s\n' lang/rust >"${shard_roots}"
+      ;;
+    dependent)
+      cat >"${shard_roots}" <<'EOF'
+net/cloud-init
+sysutils/FreeSense-cloud-init
+EOF
+      ;;
+    shard)
+      sed -e '/^net\/cloud-init$/d' -e '/^sysutils\/FreeSense-cloud-init$/d' \
+        "${all_roots}.sorted" >"${all_roots}.general"
+      general_shard_count=$((SYSTEM_SHARD_COUNT - 1))
+      root_count=$(awk 'END { print NR }' "${all_roots}.general")
+      [ "${root_count}" -ge "${general_shard_count}" ] || {
+        echo "System farm has fewer general roots (${root_count}) than shards (${general_shard_count})" >&2
+        return 1
+      }
+      awk -v shard="${SYSTEM_SHARD_INDEX}" -v count="${general_shard_count}" \
+        '((NR - 1) % count) == shard' "${all_roots}.general" >"${shard_roots}"
+      ;;
+  esac
   [ -s "${shard_roots}" ] || {
-    echo "System package shard ${SYSTEM_SHARD_INDEX} has no roots" >&2
+    echo "System package ${roots_mode} ${SYSTEM_SHARD_INDEX} has no roots" >&2
     return 1
   }
   cp "${shard_roots}" tools/conf/pfPorts/poudriere_bulk
-  printf 'FreeSense System shard %s/%s roots:\n' \
-    "${SYSTEM_SHARD_INDEX}" "${SYSTEM_SHARD_COUNT}"
+  printf 'FreeSense System %s %s/%s roots:\n' \
+    "${roots_mode}" "${SYSTEM_SHARD_INDEX}" "${SYSTEM_SHARD_COUNT}"
   cat "${shard_roots}"
 }
 
@@ -132,9 +150,9 @@ prepare_system_ports() {
       mv tools/conf/pfPorts/poudriere_bulk.next tools/conf/pfPorts/poudriere_bulk
     done
   fi
-  if [ "${roots_mode}" = shard ]; then
-    write_system_shard_roots
-  fi
+  case "${roots_mode}" in
+    shard|bootstrap|dependent) write_system_farm_roots "${roots_mode}" ;;
+  esac
   create_source_archive
 }
 
@@ -183,8 +201,22 @@ case "${SYSTEM_PART}" in
     build_system_core
     publish_system_checkpoint core core "${core_repository}"
     ;;
+  bootstrap)
+    prepare_system_ports bootstrap
+    build_system_packages
+    publish_system_checkpoint bootstrap bootstrap "${latest}"
+    ;;
   shard)
     prepare_system_ports shard
+    build_system_packages
+    publish_system_checkpoint shard "${SYSTEM_SHARD_INDEX}" "${latest}"
+    ;;
+  dependent)
+    prepare_system_ports dependent
+    fetch_system_checkpoint bootstrap bootstrap /root/system-bootstrap-checkpoint
+    phase system-bootstrap-seed
+    seed_poudriere_repository "/root/system-bootstrap-checkpoint/${PACKAGE_ARCH}"
+    phase system-bootstrap-seed-ready
     build_system_packages
     publish_system_checkpoint shard "${SYSTEM_SHARD_INDEX}" "${latest}"
     ;;

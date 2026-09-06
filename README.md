@@ -3,9 +3,11 @@
 This repository pins FreeBSD 16 and defines the complete FreeSense build. GitHub
 Actions plans and publishes while FreeBSD work runs in a fresh KVM guest.
 Rolling amd64 Development System builds use a GitHub-hosted build farm: one
-core job and 19 package shards run concurrently, then a fresh finalizer verifies
-and combines their immutable checkpoints, repairs the complete Poudriere
-closure, signs it, and publishes the completion marker. Each guest receives all
+core job, one Rust bootstrap, and 18 Rust-free package shards begin concurrently.
+A nested cloud-init shard reuses the Rust checkpoint instead of rebuilding that
+toolchain. A fresh finalizer then verifies and combines the immutable checkpoints,
+repairs the complete Poudriere closure, signs it, and publishes the completion
+marker. Each guest receives all
 host CPU threads and 80% of currently available host memory. Stable and ARM64
 retain the dedicated 16-thread, 32-GiB builder, and other Development stages use
 one GitHub-hosted guest. The reusable executor preserves the dedicated host as
