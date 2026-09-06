@@ -46,6 +46,9 @@ on:
       image_capabilities: {type: string, required: false, default: '{"bios":true,"cloud_init":true,"installer_img":false,"iso":true,"uefi":true}'}
       installer_format: {type: string, required: false, default: iso}
       publish_enabled: {type: string, required: false, default: 'true'}
+      system_part: {type: string, required: false, default: full}
+      system_shard_index: {type: string, required: false, default: "0"}
+      system_shard_count: {type: string, required: false, default: "1"}
       boot_inputs: {type: string, required: false, default: '{}'}
       target_models: {type: string, required: false, default: '[]'}
       partition_scheme: {type: string, required: false, default: gpt}
@@ -58,7 +61,7 @@ jobs:
   build:
     runs-on: ${{ inputs.build_host == 'github-hosted' && 'ubuntu-24.04' || 'build-runner' }}
     concurrency:
-      group: ${{ inputs.build_host == 'github-hosted' && 'freesense-github-hosted-build' || 'freesense-kvm-host' }}
+      group: ${{ inputs.build_host == 'github-hosted' && format('freesense-github-hosted-build-{0}-{1}', inputs.system_part, inputs.system_shard_index) || 'freesense-kvm-host' }}
       cancel-in-progress: false
     timeout-minutes: 360
     environment: build
@@ -116,6 +119,9 @@ jobs:
       IMAGE_CAPABILITIES: ${{ inputs.image_capabilities }}
       INSTALLER_FORMAT: ${{ inputs.installer_format }}
       PUBLISH_ENABLED: ${{ inputs.publish_enabled }}
+      SYSTEM_PART: ${{ inputs.system_part }}
+      SYSTEM_SHARD_INDEX: ${{ inputs.system_shard_index }}
+      SYSTEM_SHARD_COUNT: ${{ inputs.system_shard_count }}
       BOOT_INPUTS: ${{ inputs.boot_inputs }}
       TARGET_MODELS: ${{ inputs.target_models }}
       PARTITION_SCHEME: ${{ inputs.partition_scheme }}
@@ -144,6 +150,7 @@ jobs:
           df -h
       - run: go build -trimpath -o "${RUNNER_TEMP}/fsbuild" ./cmd/fsbuild
       - name: Verify repository signing trust root
+        if: inputs.stage != 'system' || (inputs.system_part != 'core' && inputs.system_part != 'shard')
         env: {SIGNING_KEY: "${{ secrets.FREESENSE_PKG_SIGNING_KEY }}"}
         run: |
           umask 077
@@ -175,6 +182,25 @@ jobs:
           if [[ "${STAGE}" == packages ]]; then args+=(--package-train "${PACKAGE_TRAIN}"); fi
           if [[ "${STAGE}" == packages ]]; then args+=(--freebsd-pin-id "${FREEBSD_PIN_ID}"); fi
           "${RUNNER_TEMP}/fsbuild" result check "${args[@]}"
+      - id: checkpoint
+        name: Reuse completed System farm checkpoint
+        if: >-
+          steps.reuse.outputs.complete != 'true' && inputs.stage == 'system' &&
+          (inputs.system_part == 'core' || inputs.system_part == 'shard')
+        run: |
+          if [[ "${SYSTEM_PART}" == core ]]; then
+            checkpoint="core"
+          else
+            checkpoint="shards/${SYSTEM_SHARD_INDEX}"
+          fi
+          key="${FSBUILD_STORE_PREFIX}/artifacts/system/${FINGERPRINT}/checkpoints/farm-${SYSTEM_SHARD_COUNT}/${checkpoint}/complete.json"
+          if aws s3api head-object --endpoint-url "${R2_ENDPOINT}" \
+              --bucket "${R2_BUCKET}" --key "${key}" >/dev/null 2>&1; then
+            echo "Reusing completed System checkpoint ${checkpoint}"
+            echo "complete=true" >>"${GITHUB_OUTPUT}"
+          else
+            echo "complete=false" >>"${GITHUB_OUTPUT}"
+          fi
       - name: Verify required System result
         if: steps.reuse.outputs.complete != 'true' && inputs.stage != 'system'
         run: |
@@ -186,8 +212,21 @@ jobs:
             --image-profile "${SYSTEM_IMAGE_PROFILE}" \
             --github-output "${output}"
           grep -qx 'complete=true' "${output}"
+      - name: Render credential-free System farm worker
+        if: >-
+          steps.reuse.outputs.complete != 'true' && steps.checkpoint.outputs.complete != 'true' &&
+          inputs.stage == 'system' && (inputs.system_part == 'core' || inputs.system_part == 'shard')
+        env:
+          FREESENSE_REPO_SIGNING_KEY: ''
+        run: |
+          python3 scripts/render-worker.py --common scripts/runner/worker-common.sh \
+            --stages scripts/runner/stages --output "${RUNNER_TEMP}/worker.sh"
+          sh -n "${RUNNER_TEMP}/worker.sh"
       - name: Render checked FreeBSD worker
-        if: steps.reuse.outputs.complete != 'true' && steps.reuse.outputs.assembled != 'true'
+        if: >-
+          steps.reuse.outputs.complete != 'true' && steps.reuse.outputs.assembled != 'true' &&
+          steps.checkpoint.outputs.complete != 'true' &&
+          !(inputs.stage == 'system' && (inputs.system_part == 'core' || inputs.system_part == 'shard'))
         env:
           FREESENSE_REPO_SIGNING_KEY: ${{ secrets.FREESENSE_PKG_SIGNING_KEY }}
         run: |
@@ -195,7 +234,7 @@ jobs:
             --stages scripts/runner/stages --output "${RUNNER_TEMP}/worker.sh"
           sh -n "${RUNNER_TEMP}/worker.sh"
       - name: Build in a fresh capacity-matched FreeBSD VM
-        if: steps.reuse.outputs.complete != 'true' && steps.reuse.outputs.assembled != 'true'
+        if: steps.reuse.outputs.complete != 'true' && steps.reuse.outputs.assembled != 'true' && steps.checkpoint.outputs.complete != 'true'
         env:
           FSBUILD: ${{ runner.temp }}/fsbuild
         run: >-
@@ -208,7 +247,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
         with:
-          name: build-vm-failure-${{ inputs.stage }}-${{ inputs.fingerprint }}
+          name: build-vm-failure-${{ inputs.stage }}-${{ inputs.fingerprint }}-${{ inputs.system_part }}-${{ inputs.system_shard_index }}
           path: ${{ runner.temp }}/build-vm-failure/
           if-no-files-found: ignore
           retention-days: 14

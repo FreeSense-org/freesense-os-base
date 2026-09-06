@@ -43,6 +43,9 @@ for workflow in workflow_paths:
                 f"{workflow.name} bypasses the supported build-runner entry points")
 
 reusable = read(".github/workflows/runner-build.yml")
+system_workflow = read(".github/workflows/system.yml")
+system_stage = read("scripts/runner/stages/system.sh")
+common = read("scripts/runner/worker-common.sh")
 pin_workflow = read(".github/workflows/pin.yml")
 require("apt-get" not in pin_workflow,
         "the dedicated pin runner must be provisioned outside workflows")
@@ -60,6 +63,30 @@ require("build_host:" not in read(".github/workflows/stable.yml"),
         "Stable must retain the reusable runner's dedicated-host default")
 require("schedule:" in read(".github/workflows/system.yml"),
         "the daily System check is not scheduled")
+for value in ('max-parallel: 20',
+              '{"part": "core", "shard": "0", "count": "19"}',
+              "for index in range(19)", "needs: [plan, build_parts]",
+              "system_part: finalize", 'system_shard_count: "19"',
+              "needs.build_finalize.result == 'success'"):
+    require(value in system_workflow,
+            f"AMD64 System farm orchestration is missing {value!r}")
+for value in ("freesense-github-hosted-build-{0}-{1}",
+              "Reuse completed System farm checkpoint",
+              "Render credential-free System farm worker",
+              "FREESENSE_REPO_SIGNING_KEY: ''"):
+    require(value in reusable,
+            f"reusable System farm isolation is missing {value!r}")
+for value in ('fetch_system_checkpoint core core',
+              'while [ "${shard}" -lt "${SYSTEM_SHARD_COUNT}" ]',
+              'seed_poudriere_repository "${shard_seed}"',
+              'prepare_system_ports full', "phase system-closure-check",
+              '>>"${meta_dependencies}" || {',
+              "dependencies contain unresolved variables"):
+    require(value in system_stage,
+            f"System farm checkpoint/repair path is missing {value!r}")
+require(common.index('upload_immutable "${package}"') <
+        common.index('upload_immutable "${checkpoint_marker}"'),
+        "System checkpoint marker is not published after its package payload")
 arm64_workflow = read(".github/workflows/arm64-experimental.yml")
 for value in ("uses: ./.github/workflows/system.yml",
               "uses: ./.github/workflows/packages.yml",

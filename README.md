@@ -2,10 +2,14 @@
 
 This repository pins FreeBSD 16 and defines the complete FreeSense build. GitHub
 Actions plans and publishes while FreeBSD work runs in a fresh KVM guest.
-Rolling amd64 Development builds prefer GitHub-hosted runners with all host CPU
-threads and 80% of currently available host memory assigned to the guest;
-Stable and ARM64 retain the dedicated 16-thread, 32-GiB builder.
-The reusable executor preserves the dedicated host as the fallback profile.
+Rolling amd64 Development System builds use a GitHub-hosted build farm: one
+core job and 19 package shards run concurrently, then a fresh finalizer verifies
+and combines their immutable checkpoints, repairs the complete Poudriere
+closure, signs it, and publishes the completion marker. Each guest receives all
+host CPU threads and 80% of currently available host memory. Stable and ARM64
+retain the dedicated 16-thread, 32-GiB builder, and other Development stages use
+one GitHub-hosted guest. The reusable executor preserves the dedicated host as
+the fallback profile.
 
 There are two independently invalidated package repositories for the
 policy-configured Development train:
@@ -18,10 +22,11 @@ policy-configured Development train:
   Poudriere from a compatible System repository without rebuilding System
   packages.
 
-`system.yml` starts every day at 06:00 UTC. The shared KVM concurrency group
-queues all actual builds, so the optional job cannot race a System build. A
-successful new System also produces one development ISO for that System
-identity.
+`system.yml` starts every day at 06:00 UTC. Dedicated builds retain the shared
+KVM concurrency group. Hosted System farm parts use stable per-part groups so
+separate workflow runs cannot overwrite each other's work while all shards in
+one farm can execute concurrently. A successful new System also produces one
+development ISO for that System identity.
 
 Both publish immutable objects below `https://pkg.freesense.org/v1/artifacts/`.
 The only mutable object is `v1/repos.manifest.json`: one RSA-signed document that
@@ -67,6 +72,9 @@ bucket keeps its newest broker smoke marker.
 
 See [credential broker operations](docs/credential-broker.md) for the small set
 of GitHub variables, environments, and secrets.
+
+See [GitHub-hosted System build farm](docs/github-system-farm.md) for shard,
+checkpoint, retry, merge, and trust-boundary details.
 
 The dedicated host is provisioned once with KVM/QEMU, OVMF, cloud-image-utils,
 xz, zstd, jq, GitHub CLI, Go, and the Actions runner. Build workflows never
