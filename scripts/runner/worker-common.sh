@@ -41,13 +41,33 @@ esac
   exit 1
 }
 if [ "${STAGE}" = system ]; then
-  case "${SYSTEM_PART}" in full|core|shard|finalize) : ;; *)
+  case "${SYSTEM_PART}" in full|core|bootstrap|shard|dependent|finalize) : ;; *)
     echo "invalid System farm part" >&2; exit 1 ;;
   esac
-  if [ "${SYSTEM_PART}" = shard ] && [ "${SYSTEM_SHARD_COUNT}" -le 1 ]; then
-    echo "a System package shard requires more than one shard" >&2
-    exit 1
-  fi
+  case "${SYSTEM_PART}" in
+    full)
+      [ "${SYSTEM_SHARD_INDEX}:${SYSTEM_SHARD_COUNT}" = 0:1 ] || {
+        echo "a full System build requires default shard coordinates" >&2; exit 1;
+      }
+      ;;
+    core|bootstrap|finalize)
+      [ "${SYSTEM_SHARD_INDEX}" -eq 0 ] || {
+        echo "System ${SYSTEM_PART} requires shard index zero" >&2; exit 1;
+      }
+      ;;
+    shard)
+      [ "${SYSTEM_SHARD_COUNT}" -gt 1 ] && \
+        [ "${SYSTEM_SHARD_INDEX}" -lt "$((SYSTEM_SHARD_COUNT - 1))" ] || {
+        echo "invalid general System package shard" >&2; exit 1;
+      }
+      ;;
+    dependent)
+      [ "${SYSTEM_SHARD_COUNT}" -gt 1 ] && \
+        [ "${SYSTEM_SHARD_INDEX}" -eq "$((SYSTEM_SHARD_COUNT - 1))" ] || {
+        echo "invalid dependent System package shard" >&2; exit 1;
+      }
+      ;;
+  esac
 else
   [ "${SYSTEM_PART}:${SYSTEM_SHARD_INDEX}:${SYSTEM_SHARD_COUNT}" = full:0:1 ] || {
     echo "System farm coordinates were supplied to a non-System stage" >&2
@@ -213,7 +233,9 @@ configure_source() {
     printf '%s' "${FREESENSE_REPO_SIGNING_KEY}" >/root/sign/repo.key
     chmod 400 /root/sign/repo.key
     openssl pkey -in /root/sign/repo.key -pubout -out /root/sign/repo.pub >/dev/null 2>&1
-  elif [ "${STAGE}" = system ] && { [ "${SYSTEM_PART}" = core ] || [ "${SYSTEM_PART}" = shard ]; }; then
+  elif [ "${STAGE}" = system ] && { [ "${SYSTEM_PART}" = core ] || \
+      [ "${SYSTEM_PART}" = bootstrap ] || [ "${SYSTEM_PART}" = shard ] || \
+      [ "${SYSTEM_PART}" = dependent ]; }; then
     cp /root/os-definition/config/channel-signing-public.pem /root/sign/repo.pub
   else
     echo "repository signing key is missing" >&2
@@ -387,18 +409,19 @@ merge_package() {
 publish_system_checkpoint() {
   checkpoint_kind=$1 checkpoint_id=$2 checkpoint_directory=$3
   checkpoint_farm="${RESULT}/checkpoints/farm-${SYSTEM_SHARD_COUNT}"
-  if [ "${checkpoint_kind}" = core ]; then
-    checkpoint_result="${checkpoint_farm}/core"
-  else
-    checkpoint_result="${checkpoint_farm}/shards/${checkpoint_id}"
-  fi
+  case "${checkpoint_kind}" in
+    core) checkpoint_result="${checkpoint_farm}/core" ;;
+    bootstrap) checkpoint_result="${checkpoint_farm}/bootstrap" ;;
+    shard) checkpoint_result="${checkpoint_farm}/shards/${checkpoint_id}" ;;
+    *) echo "invalid System checkpoint kind" >&2; return 1 ;;
+  esac
   checkpoint_items=/tmp/freesense-checkpoint-items.$$
   checkpoint_inventory=/tmp/freesense-checkpoint-inventory.$$
   checkpoint_marker=${checkpoint_directory}/complete.json
   checkpoint_count=0
 
   case "${checkpoint_kind}:${checkpoint_id}" in
-    core:core|shard:[0-9]|shard:1[0-8]) : ;;
+    core:core|bootstrap:bootstrap|shard:[0-9]|shard:1[0-8]) : ;;
     *) echo "invalid System checkpoint identity" >&2; return 1 ;;
   esac
   [ -d "${checkpoint_directory}/All" ] || {
@@ -461,11 +484,12 @@ publish_system_checkpoint() {
 fetch_system_checkpoint() {
   checkpoint_kind=$1 checkpoint_id=$2 checkpoint_destination=$3
   checkpoint_farm="${RESULT}/checkpoints/farm-${SYSTEM_SHARD_COUNT}"
-  if [ "${checkpoint_kind}" = core ]; then
-    checkpoint_source="${checkpoint_farm}/core"
-  else
-    checkpoint_source="${checkpoint_farm}/shards/${checkpoint_id}"
-  fi
+  case "${checkpoint_kind}" in
+    core) checkpoint_source="${checkpoint_farm}/core" ;;
+    bootstrap) checkpoint_source="${checkpoint_farm}/bootstrap" ;;
+    shard) checkpoint_source="${checkpoint_farm}/shards/${checkpoint_id}" ;;
+    *) echo "invalid System checkpoint kind" >&2; return 1 ;;
+  esac
   checkpoint_part=${checkpoint_destination}.part.$$
   checkpoint_expected=/tmp/freesense-checkpoint-expected.$$
   checkpoint_actual=/tmp/freesense-checkpoint-actual.$$

@@ -84,7 +84,7 @@ jobs:
               include = [{"part": "core", "shard": "0", "count": "19"}]
               include += [
                   {"part": "shard", "shard": str(index), "count": "19"}
-                  for index in range(19)
+                  for index in range(18)
               ]
           else:
               include = [{"part": "full", "shard": "0", "count": "1"}]
@@ -163,9 +163,100 @@ jobs:
       build_host: ${{ needs.plan.outputs.target == 'amd64' && 'github-hosted' || 'dedicated' }}
     secrets: inherit
 
+  build_bootstrap:
+    needs: plan
+    if: needs.plan.outputs.needed == 'true' && needs.plan.outputs.target == 'amd64'
+    uses: ./.github/workflows/runner-build.yml
+    with:
+      stage: system
+      fingerprint: ${{ needs.plan.outputs.system }}
+      platform_id: ${{ needs.plan.outputs.platform }}
+      system_id: ${{ needs.plan.outputs.system }}
+      source_sha: ${{ needs.plan.outputs.source_sha }}
+      system_sha: ${{ needs.plan.outputs.system_sha }}
+      packages_sha: ${{ needs.plan.outputs.packages_sha }}
+      os_base_sha: ${{ needs.plan.outputs.os_base_sha }}
+      freebsd_sha: ${{ needs.plan.outputs.freebsd_sha }}
+      ports_sha: ${{ needs.plan.outputs.ports_sha }}
+      image_sha256: ${{ needs.plan.outputs.image_sha256 }}
+      worker_tools_sha256: ${{ needs.plan.outputs.worker_tools_sha256 }}
+      jail_object: ${{ needs.plan.outputs.jail_object }}
+      freebsd_pin_id: ${{ needs.plan.outputs.freebsd_pin_id }}
+      product_version: ${{ needs.plan.outputs.product_version }}
+      package_train: ${{ needs.plan.outputs.package_train }}
+      generation: ${{ needs.plan.outputs.generation }}
+      public_base_url: ${{ needs.plan.outputs.public_base_url }}
+      target: ${{ needs.plan.outputs.target }}
+      architecture: ${{ needs.plan.outputs.architecture }}
+      package_arch: ${{ needs.plan.outputs.package_arch }}
+      abi: ${{ needs.plan.outputs.abi }}
+      altabi: ${{ needs.plan.outputs.altabi }}
+      freebsd_target: ${{ needs.plan.outputs.freebsd_target }}
+      freebsd_target_arch: ${{ needs.plan.outputs.freebsd_target_arch }}
+      poudriere_arch: ${{ needs.plan.outputs.poudriere_arch }}
+      kernel: ${{ needs.plan.outputs.kernel }}
+      executor: ${{ needs.plan.outputs.executor }}
+      image_profile: ${{ needs.plan.outputs.image_profile }}
+      firmware: ${{ needs.plan.outputs.firmware }}
+      image_capabilities: ${{ needs.plan.outputs.image_capabilities }}
+      installer_format: ${{ needs.plan.outputs.installer_format }}
+      publish_enabled: ${{ needs.plan.outputs.publish_enabled }}
+      system_part: bootstrap
+      system_shard_index: "0"
+      system_shard_count: "19"
+      build_host: github-hosted
+    secrets: inherit
+
+  build_dependent:
+    needs: [plan, build_bootstrap]
+    if: needs.plan.outputs.needed == 'true' && needs.plan.outputs.target == 'amd64' && needs.build_bootstrap.result == 'success'
+    uses: ./.github/workflows/runner-build.yml
+    with:
+      stage: system
+      fingerprint: ${{ needs.plan.outputs.system }}
+      platform_id: ${{ needs.plan.outputs.platform }}
+      system_id: ${{ needs.plan.outputs.system }}
+      source_sha: ${{ needs.plan.outputs.source_sha }}
+      system_sha: ${{ needs.plan.outputs.system_sha }}
+      packages_sha: ${{ needs.plan.outputs.packages_sha }}
+      os_base_sha: ${{ needs.plan.outputs.os_base_sha }}
+      freebsd_sha: ${{ needs.plan.outputs.freebsd_sha }}
+      ports_sha: ${{ needs.plan.outputs.ports_sha }}
+      image_sha256: ${{ needs.plan.outputs.image_sha256 }}
+      worker_tools_sha256: ${{ needs.plan.outputs.worker_tools_sha256 }}
+      jail_object: ${{ needs.plan.outputs.jail_object }}
+      freebsd_pin_id: ${{ needs.plan.outputs.freebsd_pin_id }}
+      product_version: ${{ needs.plan.outputs.product_version }}
+      package_train: ${{ needs.plan.outputs.package_train }}
+      generation: ${{ needs.plan.outputs.generation }}
+      public_base_url: ${{ needs.plan.outputs.public_base_url }}
+      target: ${{ needs.plan.outputs.target }}
+      architecture: ${{ needs.plan.outputs.architecture }}
+      package_arch: ${{ needs.plan.outputs.package_arch }}
+      abi: ${{ needs.plan.outputs.abi }}
+      altabi: ${{ needs.plan.outputs.altabi }}
+      freebsd_target: ${{ needs.plan.outputs.freebsd_target }}
+      freebsd_target_arch: ${{ needs.plan.outputs.freebsd_target_arch }}
+      poudriere_arch: ${{ needs.plan.outputs.poudriere_arch }}
+      kernel: ${{ needs.plan.outputs.kernel }}
+      executor: ${{ needs.plan.outputs.executor }}
+      image_profile: ${{ needs.plan.outputs.image_profile }}
+      firmware: ${{ needs.plan.outputs.firmware }}
+      image_capabilities: ${{ needs.plan.outputs.image_capabilities }}
+      installer_format: ${{ needs.plan.outputs.installer_format }}
+      publish_enabled: ${{ needs.plan.outputs.publish_enabled }}
+      system_part: dependent
+      system_shard_index: "18"
+      system_shard_count: "19"
+      build_host: github-hosted
+    secrets: inherit
+
   build_finalize:
-    needs: [plan, build_parts]
-    if: needs.plan.outputs.needed == 'true' && needs.plan.outputs.target == 'amd64' && needs.build_parts.result == 'success'
+    needs: [plan, build_parts, build_bootstrap, build_dependent]
+    if: >-
+      needs.plan.outputs.needed == 'true' && needs.plan.outputs.target == 'amd64' &&
+      needs.build_parts.result == 'success' && needs.build_bootstrap.result == 'success' &&
+      needs.build_dependent.result == 'success'
     uses: ./.github/workflows/runner-build.yml
     with:
       stage: system
@@ -208,7 +299,7 @@ jobs:
     secrets: inherit
 
   publish:
-    needs: [plan, build_parts, build_finalize]
+    needs: [plan, build_parts, build_bootstrap, build_dependent, build_finalize]
     if: >-
       always() && needs.plan.result == 'success' && needs.plan.outputs.publish_enabled == 'true' &&
       ((needs.plan.outputs.target == 'amd64' && needs.build_finalize.result == 'success') ||

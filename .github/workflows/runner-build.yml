@@ -132,7 +132,7 @@ jobs:
       BUILD_MEMORY_MIB: ${{ inputs.build_host == 'github-hosted' && 'auto' || '32768' }}
       BUILD_DISK_GIB: ${{ inputs.build_host == 'github-hosted' && '110' || '160' }}
       BUILD_MINIMUM_FREE_GIB: ${{ inputs.build_host == 'github-hosted' && '70' || '80' }}
-      BUILD_TIMEOUT_SECONDS: ${{ inputs.build_host == 'github-hosted' && '19800' || '18000' }}
+      BUILD_TIMEOUT_SECONDS: ${{ inputs.build_host == 'github-hosted' && (inputs.system_part == 'bootstrap' && '20700' || '19800') || '18000' }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
@@ -150,7 +150,10 @@ jobs:
           df -h
       - run: go build -trimpath -o "${RUNNER_TEMP}/fsbuild" ./cmd/fsbuild
       - name: Verify repository signing trust root
-        if: inputs.stage != 'system' || (inputs.system_part != 'core' && inputs.system_part != 'shard')
+        if: >-
+          inputs.stage != 'system' ||
+          (inputs.system_part != 'core' && inputs.system_part != 'bootstrap' &&
+           inputs.system_part != 'shard' && inputs.system_part != 'dependent')
         env: {SIGNING_KEY: "${{ secrets.FREESENSE_PKG_SIGNING_KEY }}"}
         run: |
           umask 077
@@ -186,13 +189,14 @@ jobs:
         name: Reuse completed System farm checkpoint
         if: >-
           steps.reuse.outputs.complete != 'true' && inputs.stage == 'system' &&
-          (inputs.system_part == 'core' || inputs.system_part == 'shard')
+          (inputs.system_part == 'core' || inputs.system_part == 'bootstrap' ||
+           inputs.system_part == 'shard' || inputs.system_part == 'dependent')
         run: |
-          if [[ "${SYSTEM_PART}" == core ]]; then
-            checkpoint="core"
-          else
-            checkpoint="shards/${SYSTEM_SHARD_INDEX}"
-          fi
+          case "${SYSTEM_PART}" in
+            core) checkpoint="core" ;;
+            bootstrap) checkpoint="bootstrap" ;;
+            shard|dependent) checkpoint="shards/${SYSTEM_SHARD_INDEX}" ;;
+          esac
           key="${FSBUILD_STORE_PREFIX}/artifacts/system/${FINGERPRINT}/checkpoints/farm-${SYSTEM_SHARD_COUNT}/${checkpoint}/complete.json"
           if aws s3api head-object --endpoint-url "${R2_ENDPOINT}" \
               --bucket "${R2_BUCKET}" --key "${key}" >/dev/null 2>&1; then
@@ -215,7 +219,9 @@ jobs:
       - name: Render credential-free System farm worker
         if: >-
           steps.reuse.outputs.complete != 'true' && steps.checkpoint.outputs.complete != 'true' &&
-          inputs.stage == 'system' && (inputs.system_part == 'core' || inputs.system_part == 'shard')
+          inputs.stage == 'system' &&
+          (inputs.system_part == 'core' || inputs.system_part == 'bootstrap' ||
+           inputs.system_part == 'shard' || inputs.system_part == 'dependent')
         env:
           FREESENSE_REPO_SIGNING_KEY: ''
         run: |
@@ -226,7 +232,9 @@ jobs:
         if: >-
           steps.reuse.outputs.complete != 'true' && steps.reuse.outputs.assembled != 'true' &&
           steps.checkpoint.outputs.complete != 'true' &&
-          !(inputs.stage == 'system' && (inputs.system_part == 'core' || inputs.system_part == 'shard'))
+          !(inputs.stage == 'system' &&
+            (inputs.system_part == 'core' || inputs.system_part == 'bootstrap' ||
+             inputs.system_part == 'shard' || inputs.system_part == 'dependent'))
         env:
           FREESENSE_REPO_SIGNING_KEY: ${{ secrets.FREESENSE_PKG_SIGNING_KEY }}
         run: |

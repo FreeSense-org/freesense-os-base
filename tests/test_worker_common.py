@@ -167,8 +167,15 @@ class WorkerVersionValidationTests(unittest.TestCase):
         )
         self.assertIn('max-parallel: 20', workflow)
         self.assertIn('{"part": "core", "shard": "0", "count": "19"}', workflow)
-        self.assertIn('for index in range(19)', workflow)
-        self.assertIn('needs: [plan, build_parts]', workflow)
+        self.assertIn('for index in range(18)', workflow)
+        self.assertIn('system_part: bootstrap', workflow)
+        self.assertIn('needs: [plan, build_bootstrap]', workflow)
+        self.assertIn('system_part: dependent', workflow)
+        self.assertIn('system_shard_index: "18"', workflow)
+        self.assertIn(
+            'needs: [plan, build_parts, build_bootstrap, build_dependent]',
+            workflow,
+        )
         self.assertIn('system_part: finalize', workflow)
         self.assertIn('system_shard_count: "19"', workflow)
         self.assertIn("needs.build_finalize.result == 'success'", workflow)
@@ -176,6 +183,7 @@ class WorkerVersionValidationTests(unittest.TestCase):
             "freesense-github-hosted-build-{0}-{1}",
             reusable,
         )
+        self.assertIn("inputs.system_part == 'bootstrap' && '20700'", reusable)
 
     def test_system_farm_checkpoints_are_verified_and_repaired(self) -> None:
         common = (ROOT / "scripts/runner/worker-common.sh").read_text(
@@ -194,6 +202,7 @@ class WorkerVersionValidationTests(unittest.TestCase):
             'checkpoint payload differs from its marker',
             'checkpoint package integrity mismatch',
             'checkpoint package metadata mismatch',
+            'checkpoint_farm}/bootstrap',
         ):
             with self.subTest(value=value):
                 self.assertIn(value, common)
@@ -202,6 +211,8 @@ class WorkerVersionValidationTests(unittest.TestCase):
             'while [ "${shard}" -lt "${SYSTEM_SHARD_COUNT}" ]',
             'merge_package "${package}" "${shard_seed}/All" "${shard_inventory}" identical',
             'seed_poudriere_repository "${shard_seed}"',
+            'fetch_system_checkpoint bootstrap bootstrap',
+            'seed_poudriere_repository "/root/system-bootstrap-checkpoint/${PACKAGE_ARCH}"',
             'prepare_system_ports full',
             'phase system-closure-check',
         ):
@@ -213,12 +224,16 @@ class WorkerVersionValidationTests(unittest.TestCase):
             encoding="utf-8"
         )
         shard_roots = system[
-            system.index("write_system_shard_roots() {") :
-            system.index("\nprepare_system_ports()", system.index("write_system_shard_roots() {"))
+            system.index("write_system_farm_roots() {") :
+            system.index("\nprepare_system_ports()", system.index("write_system_farm_roots() {"))
         ]
         self.assertIn('>>"${meta_dependencies}" || {', shard_roots)
         self.assertIn('dependencies contain unresolved variables', shard_roots)
         self.assertIn('root_count=$(awk', shard_roots)
+        self.assertIn("lang/rust", shard_roots)
+        self.assertIn("net/cloud-init", shard_roots)
+        self.assertIn("sysutils/FreeSense-cloud-init", shard_roots)
+        self.assertIn('general_shard_count=$((SYSTEM_SHARD_COUNT - 1))', shard_roots)
         self.assertNotIn('@{}$-', shard_roots)
 
     def test_system_farm_workers_do_not_receive_the_private_signing_key(self) -> None:
@@ -227,10 +242,9 @@ class WorkerVersionValidationTests(unittest.TestCase):
         )
         self.assertIn("name: Render credential-free System farm worker", workflow)
         self.assertIn("FREESENSE_REPO_SIGNING_KEY: ''", workflow)
-        self.assertIn(
-            "inputs.system_part != 'core' && inputs.system_part != 'shard'",
-            workflow,
-        )
+        for part in ("core", "bootstrap", "shard", "dependent"):
+            with self.subTest(part=part):
+                self.assertIn(f"inputs.system_part != '{part}'", workflow)
         common = (ROOT / "scripts/runner/worker-common.sh").read_text(
             encoding="utf-8"
         )

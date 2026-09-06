@@ -65,7 +65,10 @@ require("schedule:" in read(".github/workflows/system.yml"),
         "the daily System check is not scheduled")
 for value in ('max-parallel: 20',
               '{"part": "core", "shard": "0", "count": "19"}',
-              "for index in range(19)", "needs: [plan, build_parts]",
+              "for index in range(18)", "system_part: bootstrap",
+              "needs: [plan, build_bootstrap]", "system_part: dependent",
+              'system_shard_index: "18"',
+              "needs: [plan, build_parts, build_bootstrap, build_dependent]",
               "system_part: finalize", 'system_shard_count: "19"',
               "needs.build_finalize.result == 'success'"):
     require(value in system_workflow,
@@ -73,12 +76,17 @@ for value in ('max-parallel: 20',
 for value in ("freesense-github-hosted-build-{0}-{1}",
               "Reuse completed System farm checkpoint",
               "Render credential-free System farm worker",
-              "FREESENSE_REPO_SIGNING_KEY: ''"):
+              "FREESENSE_REPO_SIGNING_KEY: ''",
+              "inputs.system_part == 'bootstrap' && '20700'"):
     require(value in reusable,
             f"reusable System farm isolation is missing {value!r}")
 for value in ('fetch_system_checkpoint core core',
+              'fetch_system_checkpoint bootstrap bootstrap',
               'while [ "${shard}" -lt "${SYSTEM_SHARD_COUNT}" ]',
               'seed_poudriere_repository "${shard_seed}"',
+              'seed_poudriere_repository "/root/system-bootstrap-checkpoint/${PACKAGE_ARCH}"',
+              "lang/rust", "net/cloud-init", "sysutils/FreeSense-cloud-init",
+              'general_shard_count=$((SYSTEM_SHARD_COUNT - 1))',
               'prepare_system_ports full', "phase system-closure-check",
               '>>"${meta_dependencies}" || {',
               "dependencies contain unresolved variables"):

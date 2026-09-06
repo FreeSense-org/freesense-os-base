@@ -6,20 +6,25 @@ the original single-guest dedicated path.
 
 ## Execution graph
 
-The planner creates one `core` matrix entry and 19 `shard` entries. Those 20
-jobs run concurrently. The finalizer starts only after every matrix entry has
-completed successfully.
+The planner starts one `core` worker, one `bootstrap` worker for `lang/rust`,
+and 18 general package shards. Those 20 jobs run concurrently. The two
+cloud-init roots that pulled Rust into separate five-hour closures are excluded
+from the general shards. A nested `dependent` worker starts after the bootstrap
+checkpoint exists, seeds Poudriere from it, and builds both cloud-init roots
+without recompiling Rust. The finalizer starts only after every package
+checkpoint has completed successfully.
 
 ```text
-plan -> core ---------\
-     -> shard 0 -------\
-     -> ... ------------> finalize -> publish channel
-     -> shard 18 ------/
+plan -> core -------------------------------\
+     -> general shards 0..17 ----------------> finalize -> publish channel
+     -> Rust bootstrap -> cloud-init shard --/
 ```
 
 The core job builds and validates world/kernel packages. Package shards create
 the same pinned jail and ports tree, expand the large System metaports into
-smaller roots, and select a deterministic modulo partition. Each shard lets
+smaller roots, and select a deterministic modulo partition. Rust has its own
+bootstrap checkpoint because the first farm run showed that compiling it inside
+both cloud-init closures exhausted the per-job watchdog. Each shard lets
 Poudriere complete normally; no live VM or partially written repository is
 snapshotted.
 
@@ -29,6 +34,7 @@ Checkpoints live below the incomplete final System artifact:
 
 ```text
 artifacts/system/<fingerprint>/checkpoints/farm-19/core/
+artifacts/system/<fingerprint>/checkpoints/farm-19/bootstrap/
 artifacts/system/<fingerprint>/checkpoints/farm-19/shards/<0..18>/
 ```
 
@@ -38,8 +44,9 @@ generation, target, source commits, FreeBSD pin, package train, and trusted
 signing public key. Package payloads are written first and `complete.json` is
 written last.
 
-Core and shard jobs do not receive the package-repository private key. The
-finalizer receives it only after all unsigned checkpoints exist. It downloads
+Core, bootstrap, dependent, and general shard jobs do not receive the
+package-repository private key. The finalizer receives it only after all
+unsigned checkpoints exist. It downloads
 and validates every marker and payload, permits duplicated dependencies only
 when package identity and bytes are identical, and seeds a fresh Poudriere
 repository with the merged packages.
@@ -58,8 +65,9 @@ They never consume checkpoints directly.
 
 ## Retry behavior
 
-Before starting a core or shard VM, the reusable runner checks for that part's
-completion marker. A retry skips completed parts and runs only missing ones.
+Before starting a core, bootstrap, dependent, or general shard VM, the reusable
+runner checks for that part's completion marker. A retry skips completed parts
+and runs only missing ones.
 The finalizer always performs full marker and payload validation. A mismatched
 or corrupt immutable checkpoint therefore fails closed instead of being
 silently replaced.
