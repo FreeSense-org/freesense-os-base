@@ -3,6 +3,9 @@ name: Release control and ISO recovery
 on:
   workflow_call:
     inputs:
+      pair_generation: {type: string, required: false, default: ''}
+      build_host: {type: string, required: false, default: ''}
+      suppress_publication: {type: boolean, required: false, default: false}
       operation:
         type: string
         required: true
@@ -49,7 +52,9 @@ on:
 
 # actions: write is required so called runner-build can upload cloud smoke failure artifacts.
 permissions: {contents: read, actions: write, id-token: write}
-concurrency: {group: release-control, cancel-in-progress: false}
+concurrency:
+  group: release-control-${{ inputs.target || 'amd64' }}
+  cancel-in-progress: false
 
 jobs:
   release_gate:
@@ -273,7 +278,7 @@ jobs:
           SELECTED_CHANNEL: ${{ inputs.operation == 'retry-stable-bundle' && 'stable' || (github.event_name != 'workflow_run' && inputs.channel || 'devel') }}
         run: |
           target="${{ github.event_name != 'workflow_run' && inputs.target || needs.release_gate.outputs.target }}"
-          if [[ "${target}" == arm64 && "${{ github.event_name }}" != workflow_run ]]; then
+          if [[ ("${target}" == arm64 || "${{ inputs.suppress_publication }}" == true) && "${{ github.event_name }}" != workflow_run ]]; then
             [[ "${SELECTED_CHANNEL}" == devel ]] || {
               echo "ARM64 is Development-only until a separate Stable promotion" >&2; exit 1;
             }
@@ -289,7 +294,7 @@ jobs:
             curl --fail --silent --show-error --location --retry 12 --retry-all-errors \
               --retry-delay 5 --connect-timeout 15 \
               "${public_base_url}/artifacts/packages/${package_train}/${packages}/complete.json?workflow_run=${GITHUB_RUN_ID}" -o "${RUNNER_TEMP}/packages-marker.json"
-            python3 scripts/staged_system_closure.py --target arm64 \
+            python3 scripts/staged_system_closure.py --target "${target}" \
               --marker "${RUNNER_TEMP}/system-marker.json" \
               --packages-marker "${RUNNER_TEMP}/packages-marker.json" \
               --output "${RUNNER_TEMP}/system.json"
@@ -299,10 +304,14 @@ jobs:
               --json-output "${RUNNER_TEMP}/system.json"
           fi
       - id: plan
+        env:
+          SELECTED_BUILD_HOST: ${{ inputs.build_host }}
         run: |
           target="${{ github.event_name != 'workflow_run' && inputs.target || needs.release_gate.outputs.target }}"
+          args=()
+          if [[ -n "${SELECTED_BUILD_HOST}" ]]; then args+=(--build-host "${SELECTED_BUILD_HOST}"); fi
           python3 scripts/plan.py iso --target "${target}" --system-closure "${RUNNER_TEMP}/system.json" \
-            --github-output "${GITHUB_OUTPUT}"
+            --github-output "${GITHUB_OUTPUT}" "${args[@]}"
       - run: go build -trimpath -o "${RUNNER_TEMP}/fsbuild" ./cmd/fsbuild
       - name: Acquire generation coordinator
         env:
@@ -323,6 +332,7 @@ jobs:
           FSBUILD_STORE_PREFIX: v1
         run: |
           proposed="${GITHUB_RUN_NUMBER}"
+          if [[ -n "${{ inputs.pair_generation }}" ]]; then proposed="${{ inputs.pair_generation }}"; fi
           public_base_url=$(jq -er .public_base_url config/build-policy.json)
           channel="${{ steps.plan.outputs.channel }}"
           architecture="${{ steps.plan.outputs.architecture }}"
@@ -392,12 +402,12 @@ jobs:
       image_capabilities: ${{ needs.iso-plan.outputs.image_capabilities }}
       installer_format: ${{ needs.iso-plan.outputs.installer_format }}
       publish_enabled: ${{ needs.iso-plan.outputs.publish_enabled }}
-      build_host: ${{ needs.iso-plan.outputs.target == 'amd64' && 'github-hosted' || 'dedicated' }}
+      build_host: ${{ inputs.build_host || (needs.iso-plan.outputs.target == 'amd64' && 'github-hosted' || 'dedicated') }}
     secrets: inherit
 
   appliance-rpi4b:
-    needs: [iso-plan, iso]
-    if: always() && needs.iso-plan.outputs.target == 'arm64' && needs.iso.result == 'success'
+    needs: iso-plan
+    if: always() && needs.iso-plan.result == 'success' && needs.iso-plan.outputs.target == 'arm64'
     uses: ./.github/workflows/runner-build.yml
     with:
       stage: appliance
@@ -434,7 +444,8 @@ jobs:
       freebsd_target_arch: aarch64
       poudriere_arch: arm64.aarch64
       kernel: FreeSense
-      executor: amd64-cross-qemu-user
+      executor: ${{ needs.iso-plan.outputs.executor }}
+      build_host: ${{ inputs.build_host || 'dedicated' }}
       image_profile: arm64-rpi4b
       system_image_profile: generic-arm64-uefi
       firmware: raspberry-pi-firmware,u-boot
@@ -450,8 +461,8 @@ jobs:
     secrets: inherit
 
   appliance-rpi5-d0:
-    needs: [iso-plan, appliance-rpi4b]
-    if: always() && needs.iso-plan.outputs.target == 'arm64' && needs.appliance-rpi4b.result == 'success'
+    needs: iso-plan
+    if: always() && needs.iso-plan.result == 'success' && needs.iso-plan.outputs.target == 'arm64'
     uses: ./.github/workflows/runner-build.yml
     with:
       stage: appliance
@@ -488,7 +499,8 @@ jobs:
       freebsd_target_arch: aarch64
       poudriere_arch: arm64.aarch64
       kernel: FreeSense
-      executor: amd64-cross-qemu-user
+      executor: ${{ needs.iso-plan.outputs.executor }}
+      build_host: ${{ inputs.build_host || 'dedicated' }}
       image_profile: arm64-rpi5-d0
       system_image_profile: generic-arm64-uefi
       firmware: raspberry-pi,uefi
@@ -504,8 +516,8 @@ jobs:
     secrets: inherit
 
   cloud-ufs:
-    needs: [iso-plan, iso]
-    if: always() && needs.iso-plan.result == 'success' && needs.iso.result == 'success' && needs.iso-plan.outputs.cloud_enabled == 'true'
+    needs: iso-plan
+    if: always() && needs.iso-plan.result == 'success' && needs.iso-plan.outputs.cloud_enabled == 'true'
     uses: ./.github/workflows/runner-build.yml
     with:
       stage: cloud
@@ -550,12 +562,12 @@ jobs:
       publish_enabled: ${{ needs.iso-plan.outputs.publish_enabled }}
       cloud_filesystem: ufs
       cloud_virtual_size_gib: ${{ needs.iso-plan.outputs.cloud_ufs_virtual_size_gib }}
-      build_host: github-hosted
+      build_host: ${{ inputs.build_host || 'github-hosted' }}
     secrets: inherit
 
   cloud-zfs:
-    needs: [iso-plan, cloud-ufs]
-    if: always() && needs.iso-plan.result == 'success' && needs.cloud-ufs.result == 'success' && needs.iso-plan.outputs.cloud_enabled == 'true'
+    needs: iso-plan
+    if: always() && needs.iso-plan.result == 'success' && needs.iso-plan.outputs.cloud_enabled == 'true'
     uses: ./.github/workflows/runner-build.yml
     with:
       stage: cloud
@@ -600,7 +612,7 @@ jobs:
       publish_enabled: ${{ needs.iso-plan.outputs.publish_enabled }}
       cloud_filesystem: zfs
       cloud_virtual_size_gib: ${{ needs.iso-plan.outputs.cloud_zfs_virtual_size_gib }}
-      build_host: github-hosted
+      build_host: ${{ inputs.build_host || 'github-hosted' }}
     secrets: inherit
 
   publish-download:
@@ -635,7 +647,7 @@ jobs:
             --appliance-fingerprint "${{ needs.iso-plan.outputs.appliance_rpi4b_fingerprint }}" \
             --appliance-fingerprint "${{ needs.iso-plan.outputs.appliance_rpi5_d0_fingerprint }}" \
             --system "${{ needs.iso-plan.outputs.system }}" \
-            --generation "${{ needs.iso-plan.outputs.generation }}" \
+            --generation "${{ inputs.pair_generation || needs.iso-plan.outputs.generation }}" \
             --source "${{ needs.iso-plan.outputs.source_sha }}" \
             --system-ports "${{ needs.iso-plan.outputs.system_sha }}" \
             --packages "${{ needs.iso-plan.outputs.packages_sha }}" \
@@ -644,7 +656,16 @@ jobs:
             --os-definition "${{ needs.iso-plan.outputs.os_base_sha }}" \
             --freebsd "${{ needs.iso-plan.outputs.freebsd_sha }}" \
             --output "${RUNNER_TEMP}/${{ needs.iso-plan.outputs.channel }}.json"
+      - name: Retain verified immutable release document for the pair gate
+        if: inputs.suppress_publication
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f
+        with:
+          name: multiarch-release-${{ needs.iso-plan.outputs.target }}
+          path: ${{ runner.temp }}/${{ needs.iso-plan.outputs.channel }}.json
+          if-no-files-found: error
+          retention-days: 14
       - name: Acquire downloads-bucket writer
+        if: ${{ !inputs.suppress_publication }}
         env:
           R2_CREDENTIAL_BROKER_URL: ${{ vars.R2_CREDENTIAL_BROKER_URL }}
           R2_CREDENTIAL_BROKER_AUDIENCE: ${{ vars.R2_CREDENTIAL_BROKER_AUDIENCE }}
@@ -656,11 +677,13 @@ jobs:
           --expected-bucket "${R2_BUCKET}" --expected-prefix v1 --expected-endpoint "${R2_ENDPOINT}"
           --github-env "${GITHUB_ENV}"
       - name: Publish boot-tested ISO to downloads
+        if: ${{ !inputs.suppress_publication }}
         env:
           R2_BUCKET: ${{ vars.R2_DOWNLOAD_BUCKET }}
           R2_ENDPOINT: ${{ vars.R2_ENDPOINT }}
         run: bash scripts/publish_iso.sh "${RUNNER_TEMP}/${{ needs.iso-plan.outputs.channel }}.json"
       - name: Acquire download-index writer
+        if: ${{ !inputs.suppress_publication }}
         env:
           R2_CREDENTIAL_BROKER_URL: ${{ vars.R2_CREDENTIAL_BROKER_URL }}
           R2_CREDENTIAL_BROKER_AUDIENCE: ${{ vars.R2_CREDENTIAL_BROKER_AUDIENCE }}
@@ -672,6 +695,7 @@ jobs:
           --expected-bucket "${R2_BUCKET}" --expected-prefix v1 --expected-endpoint "${R2_ENDPOINT}"
           --github-env "${GITHUB_ENV}"
       - name: Publish release document after downloads verification
+        if: ${{ !inputs.suppress_publication }}
         env:
           R2_BUCKET: ${{ vars.R2_BUILD_BUCKET }}
           R2_ENDPOINT: ${{ vars.R2_ENDPOINT }}

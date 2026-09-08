@@ -3,6 +3,9 @@ name: Optional packages
 on:
   workflow_call:
     inputs:
+      multiarch_plan: {type: string, required: false, default: ''}
+      pair_generation: {type: string, required: false, default: ''}
+      suppress_publication: {type: boolean, required: false, default: false}
       target:
         type: string
         required: true
@@ -12,7 +15,7 @@ on:
     outputs:
       packages_fingerprint:
         description: Exact immutable Optional Packages result
-        value: ${{ jobs.plan.outputs.packages }}
+        value: ${{ jobs.multiarch.outputs.fingerprint || jobs.plan.outputs.packages }}
   workflow_dispatch:
     inputs:
       target:
@@ -29,11 +32,30 @@ on:
     types: [completed]
 
 permissions: {actions: write, contents: read, id-token: write}
-concurrency: {group: package-planner, cancel-in-progress: false}
+concurrency:
+  group: package-planner-${{ inputs.target || 'amd64' }}
+  cancel-in-progress: false
 
 jobs:
+  reject_invalid_pair:
+    if: inputs.multiarch_plan != '' && !inputs.suppress_publication
+    runs-on: ubuntu-24.04
+    steps:
+      - run: |
+          echo 'Multiarch component calls must suppress mutable publication.' >&2
+          exit 1
+
+  multiarch:
+    if: inputs.multiarch_plan != '' && inputs.suppress_publication
+    uses: ./.github/workflows/component-farm.yml
+    with:
+      stage: packages
+      plan: ${{ inputs.multiarch_plan }}
+      pair_generation: ${{ inputs.pair_generation }}
+    secrets: inherit
+
   plan:
-    if: github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call' || github.event.workflow_run.conclusion == 'success'
+    if: inputs.multiarch_plan == '' && (github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call' || github.event.workflow_run.conclusion == 'success')
     runs-on: ubuntu-24.04
     environment: build-coordinator
     outputs:
@@ -190,7 +212,7 @@ jobs:
 
   publish:
     needs: [plan, build]
-    if: needs.build.result == 'success' && needs.plan.outputs.publish_enabled == 'true'
+    if: ${{ !inputs.suppress_publication && needs.build.result == 'success' && needs.plan.outputs.publish_enabled == 'true' }}
     runs-on: ubuntu-24.04
     environment: channel-publisher
     permissions: {contents: read, id-token: write}

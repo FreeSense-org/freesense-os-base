@@ -3,13 +3,16 @@ name: System
 on:
   workflow_call:
     inputs:
+      multiarch_plan: {type: string, required: false, default: ''}
+      pair_generation: {type: string, required: false, default: ''}
+      suppress_publication: {type: boolean, required: false, default: false}
       target:
         type: string
         required: true
     outputs:
       system_fingerprint:
         description: Exact immutable System result
-        value: ${{ jobs.plan.outputs.system }}
+        value: ${{ jobs.multiarch.outputs.fingerprint || jobs.plan.outputs.system }}
   workflow_dispatch:
     inputs:
       target:
@@ -26,11 +29,29 @@ permissions:
   id-token: write
 
 concurrency:
-  group: system-planner
+  group: system-planner-${{ inputs.target || 'amd64' }}
   cancel-in-progress: false
 
 jobs:
+  reject_invalid_pair:
+    if: inputs.multiarch_plan != '' && !inputs.suppress_publication
+    runs-on: ubuntu-24.04
+    steps:
+      - run: |
+          echo 'Multiarch component calls must suppress mutable publication.' >&2
+          exit 1
+
+  multiarch:
+    if: inputs.multiarch_plan != '' && inputs.suppress_publication
+    uses: ./.github/workflows/component-farm.yml
+    with:
+      stage: system
+      plan: ${{ inputs.multiarch_plan }}
+      pair_generation: ${{ inputs.pair_generation }}
+    secrets: inherit
+
   plan:
+    if: inputs.multiarch_plan == ''
     runs-on: ubuntu-24.04
     environment: build-coordinator
     outputs:
@@ -301,7 +322,7 @@ jobs:
   publish:
     needs: [plan, build_parts, build_bootstrap, build_dependent, build_finalize]
     if: >-
-      always() && needs.plan.result == 'success' && needs.plan.outputs.publish_enabled == 'true' &&
+      always() && !inputs.suppress_publication && needs.plan.result == 'success' && needs.plan.outputs.publish_enabled == 'true' &&
       ((needs.plan.outputs.target == 'amd64' && needs.build_finalize.result == 'success') ||
        (needs.plan.outputs.target != 'amd64' && needs.build_parts.result == 'success'))
     runs-on: ubuntu-24.04
