@@ -140,9 +140,15 @@ jobs:
           import os
           from pathlib import Path
           def roots(name):
-              return sorted({line.replace('%%PRODUCT_NAME%%', 'FreeSense').strip()
-                             for line in Path('/root/source/tools/conf/pfPorts/' + name).read_text().splitlines()
-                             if line.strip() and not line.lstrip().startswith('#')})
+              items = []
+              for line in Path('/root/source/tools/conf/pfPorts/' + name).read_text().splitlines():
+                  line = line.replace('%%PRODUCT_NAME%%', 'FreeSense').strip()
+                  if not line or line.startswith('#'):
+                      continue
+                  if line == 'emulators/qemu-guest-agent':
+                      line = 'emulators/qemu@guestagent'
+                  items.append(line)
+              return sorted(set(items))
           system = roots('poudriere_system')
           packages = roots('poudriere_packages')
           if os.environ['PIN_ARCH'] == 'arm64':
