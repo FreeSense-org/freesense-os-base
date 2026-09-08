@@ -100,6 +100,12 @@ function claimsFor(role, overrides = {}) {
     event_name: "schedule",
   };
   const variants = {
+    "input-reader": {
+      environment: "build-coordinator",
+      workflow_ref: protocol.workflows.multiarch,
+      job_workflow_ref: protocol.workflows.multiarch,
+      job_workflow_sha: "b".repeat(40),
+    },
     coordinator: {
       environment: "build-coordinator",
       workflow_ref: protocol.workflows.system,
@@ -235,6 +241,56 @@ function decodeSession(value) {
   return JSON.parse(decoder.decode(decodeB64url(parts[1])));
 }
 
+describe("multiarch identity boundaries", () => {
+  it("grants the ARM probe read-only input access", async () => {
+    const response = await request("input-reader");
+    assert.equal(response.status, 200);
+    const session = decodeSession((await response.json()).session_token);
+    assert.deepEqual(session.paths.prefixPaths, ["v1/inputs/sha256/"]);
+    assert.deepEqual(session.actions, ["GetObject", "HeadObject"]);
+  });
+  it("allows generation reservation from the nested component farm", async () => {
+    const claims = claimsFor("coordinator", {
+      workflow_ref: protocol.workflows.multiarch,
+      job_workflow_ref: protocol.workflows.componentFarm,
+    });
+    assert.equal((await request("coordinator", claims)).status, 200);
+    assert.equal((await request("coordinator", { ...claims, job_workflow_sha: "c".repeat(40) })).status, 403);
+    assert.equal((await request("coordinator", { ...claims, event_name: "pull_request" })).status, 403);
+  });
+  it("does not grant channel writes to component or image subworkflows", async () => {
+    for (const workflow of [protocol.workflows.componentFarm, protocol.workflows.release]) {
+      assert.equal((await request("channel-writer", claimsFor("channel-writer", {
+        workflow_ref: protocol.workflows.multiarch, job_workflow_ref: workflow,
+      }))).status, 403);
+    }
+  });
+  it("allows native and fallback build jobs under the same protected orchestrator", async () => {
+    for (const runner of ["github-hosted", "self-hosted"]) {
+      const claims = claimsFor("artifact-writer", {
+        workflow_ref: protocol.workflows.multiarch, runner_environment: runner,
+      });
+      assert.equal((await request("artifact-writer", claims)).status, 200);
+    }
+  });
+  it("grants the protected follow-up publisher only channel and download scopes", async () => {
+    const publisher = {
+      workflow_ref: protocol.workflows.multiarchPublish,
+      job_workflow_ref: protocol.workflows.multiarchPublish,
+      event_name: "workflow_run",
+    };
+    const channel = await request("channel-writer", claimsFor("channel-writer", publisher));
+    assert.equal(channel.status, 200);
+    const channelSession = decodeSession((await channel.json()).session_token);
+    assert.ok(channelSession.paths.objectPaths.includes("v1/releases/devel.multiarch.json"));
+    assert.equal((await request("download-writer", claimsFor("download-writer", publisher))).status, 200);
+    assert.equal((await request("artifact-writer", claimsFor("artifact-writer", publisher))).status, 403);
+    assert.equal((await request("channel-writer", claimsFor("channel-writer", {
+      ...publisher, event_name: "workflow_dispatch",
+    }))).status, 403);
+  });
+});
+
 describe("configuration and protocol", () => {
   it("exposes health only for a complete deployment", async () => {
     const broker = harness();
@@ -265,6 +321,28 @@ describe("configuration and protocol", () => {
     assert.deepEqual(contract.roles, Object.keys(protocol.roles).sort());
     assert.equal(contract.request_schema, protocol.requestSchema);
     assert.equal(contract.response_schema, protocol.responseSchema);
+  });
+});
+
+describe("dual-architecture pin identity", () => {
+  it("allows the protected native ARM target to mirror immutable pin inputs", async () => {
+    const response = await request("pin-writer", claimsFor("pin-writer", {
+      workflow_ref: protocol.workflows.pin,
+      job_workflow_ref: protocol.workflows.pinTarget,
+      runner_environment: "github-hosted",
+      event_name: "schedule",
+    }));
+    assert.equal(response.status, 200);
+  });
+
+  it("rejects an untrusted nested pin workflow", async () => {
+    const response = await request("pin-writer", claimsFor("pin-writer", {
+      workflow_ref: protocol.workflows.pin,
+      job_workflow_ref: protocol.workflows.runnerBuild,
+      runner_environment: "github-hosted",
+      event_name: "schedule",
+    }));
+    assert.equal(response.status, 403);
   });
 });
 
@@ -309,6 +387,7 @@ describe("least-privilege role policies", () => {
         "v1/releases/devel.amd64.json",
         "v1/releases/stable.arm64.json",
         "v1/releases/devel.arm64.json",
+        "v1/releases/devel.multiarch.json",
       ],
       ["GetObject", "HeadObject", "PutObject"],
     ],
@@ -335,6 +414,7 @@ describe("least-privilege role policies", () => {
         "v1/releases/devel.amd64.json",
         "v1/releases/stable.arm64.json",
         "v1/releases/devel.arm64.json",
+        "v1/releases/devel.multiarch.json",
         "v1/state/retention.json",
       ],
       ["GetObject", "HeadObject", "ListObjectsV2"],

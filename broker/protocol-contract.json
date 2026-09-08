@@ -28,6 +28,7 @@
     "coordinator",
     "download-smoke",
     "download-writer",
+    "input-reader",
     "pin-writer",
     "retention-build-deleter",
     "retention-build-reader",
