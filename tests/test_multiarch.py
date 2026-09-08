@@ -288,6 +288,20 @@ class RequirementsCollectorTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "conflicting package name across ports/flavors"):
             collector.visit("other/py-docutils")
 
+    def test_collector_values_passes_target_architecture(self):
+        with tempfile.TemporaryDirectory() as root:
+            ports = Path(root) / "ports"
+            (ports / "www/sample").mkdir(parents=True)
+            collector = object.__new__(package_requirements.Collector)
+            collector.ports = ports.resolve()
+            collector.make_conf = Path(root) / "make.conf"
+            collector.abi = "FreeBSD:16:aarch64"
+            with mock.patch("subprocess.check_output", return_value="foo\nbar\n") as mock_check:
+                res = collector.values("www/sample", ("PKGBASE", "PKGVERSION"))
+                self.assertEqual(res, {"PKGBASE": "foo", "PKGVERSION": "bar"})
+                command = mock_check.call_args[0][0]
+                self.assertIn("ARCH=aarch64", command)
+
 
 class PinSealingTests(unittest.TestCase):
     def prepare(self, root):

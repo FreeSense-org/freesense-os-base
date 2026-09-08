@@ -87,7 +87,8 @@ class Collector:
         path, _, flavor = origin.partition("@")
         directory = self.ports / path
         directory.resolve().relative_to(self.ports)
-        command = ["make", "-C", str(directory), f"__MAKE_CONF={self.make_conf}", "BATCH=yes"]
+        target_arch = self.abi.split(":")[-1]
+        command = ["make", "-C", str(directory), f"__MAKE_CONF={self.make_conf}", f"ARCH={target_arch}", "BATCH=yes"]
         if flavor:
             command.append(f"FLAVOR={flavor}")
         for name in names:
