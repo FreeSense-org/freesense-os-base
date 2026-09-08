@@ -72,7 +72,7 @@ PRODUCT_VERSION=${PRODUCT_VERSION}
 FREESENSE_PACKAGE_TRAIN=${PACKAGE_TRAIN}
 POUDRIERE_PORTS_NAME=FreeSense_main
 EOF
-  sed 's/%%PRODUCT_NAME%%/FreeSense/g' tools/conf/pfPorts/poudriere_system \
+  sed 's/%%PRODUCT_NAME%%/FreeSense/g' tools/conf/pfPorts/poudriere_bulk \
     | sed -e '/^[[:space:]]*#/d' -e '/^[[:space:]]*$/d' >"${all_roots}"
   : >"${meta_dependencies}"
   for meta_origin in security/FreeSense security/FreeSense-system; do
@@ -108,6 +108,11 @@ sysutils/FreeSense-cloud-init
 EOF
       ;;
     shard)
+      if [ "${FARM_LAYOUT}" = delta-v1 ]; then
+        python3 /root/os-definition/scripts/partition_roots.py \
+          --config /root/os-definition/config/multiarch-shards.json --component system \
+          --shard "${SYSTEM_SHARD_INDEX}" --roots "${all_roots}.sorted" --output "${shard_roots}"
+      else
       sed -e '/^net\/cloud-init$/d' -e '/^sysutils\/FreeSense-cloud-init$/d' \
         "${all_roots}.sorted" >"${all_roots}.general"
       general_shard_count=$((SYSTEM_SHARD_COUNT - 1))
@@ -118,8 +123,16 @@ EOF
       }
       awk -v shard="${SYSTEM_SHARD_INDEX}" -v count="${general_shard_count}" \
         '((NR - 1) % count) == shard' "${all_roots}.general" >"${shard_roots}"
+      fi
       ;;
   esac
+  if [ "${FARM_LAYOUT}:${roots_mode}" = delta-v1:shard ] && [ ! -s "${shard_roots}" ]; then
+    EMPTY_SOURCE_SHARD=true
+    export EMPTY_SOURCE_SHARD
+    : >tools/conf/pfPorts/poudriere_bulk
+    echo "FreeSense System shard ${SYSTEM_SHARD_INDEX}/${SYSTEM_SHARD_COUNT} has no source deltas."
+    return 0
+  fi
   [ -s "${shard_roots}" ] || {
     echo "System package ${roots_mode} ${SYSTEM_SHARD_INDEX} has no roots" >&2
     return 1
@@ -154,6 +167,10 @@ prepare_system_ports() {
     shard|bootstrap|dependent) write_system_farm_roots "${roots_mode}" ;;
   esac
   create_source_archive
+  if [ -n "${BINARY_SEED_OBJECT}" ]; then
+    load_binary_seed
+    seed_poudriere_repository /root/binary-seed
+  fi
 }
 
 build_system_packages() {
@@ -208,6 +225,10 @@ case "${SYSTEM_PART}" in
     ;;
   shard)
     prepare_system_ports shard
+    if [ "${EMPTY_SOURCE_SHARD:-false}" = true ]; then
+      publish_system_checkpoint shard "${SYSTEM_SHARD_INDEX}" /root/binary-seed
+      exit 0
+    fi
     build_system_packages
     publish_system_checkpoint shard "${SYSTEM_SHARD_INDEX}" "${latest}"
     ;;
@@ -228,12 +249,15 @@ case "${SYSTEM_PART}" in
     rm -rf "${shard_seed}"
     mkdir -p "${shard_seed}/All"
     : >"${shard_inventory}"
+    rm -f "${shard_inventory}.rebuild"
+    seed_duplicate_policy=identical
+    if [ "${FARM_LAYOUT}" = delta-v1 ]; then seed_duplicate_policy=rebuild; fi
     shard=0
     while [ "${shard}" -lt "${SYSTEM_SHARD_COUNT}" ]; do
       shard_directory=/root/system-shard-${shard}
       fetch_system_checkpoint shard "${shard}" "${shard_directory}"
       for package in "${shard_directory}/${PACKAGE_ARCH}/All"/*.pkg; do
-        merge_package "${package}" "${shard_seed}/All" "${shard_inventory}" identical
+        merge_package "${package}" "${shard_seed}/All" "${shard_inventory}" "${seed_duplicate_policy}"
       done
       shard=$((shard + 1))
     done

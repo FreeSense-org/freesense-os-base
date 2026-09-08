@@ -1,0 +1,151 @@
+name: Immutable multiarch component farm
+
+on:
+  workflow_call:
+    inputs:
+      stage: {type: string, required: true}
+      plan: {type: string, required: true}
+      pair_generation: {type: string, required: true}
+    outputs:
+      fingerprint:
+        description: Verified immutable component identity
+        value: ${{ jobs.prepare.outputs.fingerprint }}
+
+permissions: {actions: write, contents: read, id-token: write}
+
+jobs:
+  prepare:
+    runs-on: ubuntu-24.04
+    environment: build-coordinator
+    outputs:
+      generation: ${{ steps.reserve.outputs.generation }}
+      fingerprint: ${{ steps.plan.outputs.fingerprint }}
+      matrix: ${{ steps.plan.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+        with: {go-version-file: go.mod, cache: false}
+      - id: plan
+        name: Validate immutable coordinator plan
+        env:
+          COMPONENT_PLAN: ${{ inputs.plan }}
+          COMPONENT_STAGE: ${{ inputs.stage }}
+          PAIR_GENERATION: ${{ inputs.pair_generation }}
+        run: python3 scripts/component_farm.py --github-output "${GITHUB_OUTPUT}"
+      - run: go build -trimpath -o "${RUNNER_TEMP}/fsbuild" ./cmd/fsbuild
+      - name: Acquire generation coordinator
+        env:
+          R2_CREDENTIAL_BROKER_URL: ${{ vars.R2_CREDENTIAL_BROKER_URL }}
+          R2_CREDENTIAL_BROKER_AUDIENCE: ${{ vars.R2_CREDENTIAL_BROKER_AUDIENCE }}
+          R2_BUCKET: ${{ vars.R2_BUILD_BUCKET }}
+          R2_ENDPOINT: ${{ vars.R2_ENDPOINT }}
+        run: >-
+          "${RUNNER_TEMP}/fsbuild" credentials acquire --broker-url "${R2_CREDENTIAL_BROKER_URL}"
+          --audience "${R2_CREDENTIAL_BROKER_AUDIENCE}" --role coordinator
+          --expected-bucket "${R2_BUCKET}" --expected-prefix v1 --expected-endpoint "${R2_ENDPOINT}"
+          --github-env "${GITHUB_ENV}"
+      - id: reserve
+        env:
+          R2_BUCKET: ${{ vars.R2_BUILD_BUCKET }}
+          FSBUILD_STORE_PREFIX: v1
+          FINGERPRINT: ${{ steps.plan.outputs.fingerprint }}
+          PAIR_GENERATION: ${{ inputs.pair_generation }}
+        run: |
+          "${RUNNER_TEMP}/fsbuild" state reserve-generation --fingerprint "${FINGERPRINT}" \
+            --proposed "${PAIR_GENERATION}" --output "${RUNNER_TEMP}/generation.json"
+          echo "generation=$(jq -er .generation "${RUNNER_TEMP}/generation.json")" >>"${GITHUB_OUTPUT}"
+
+  parts:
+    needs: prepare
+    strategy:
+      fail-fast: false
+      max-parallel: 5
+      matrix: ${{ fromJSON(needs.prepare.outputs.matrix) }}
+    uses: ./.github/workflows/runner-build.yml
+    with:
+      stage: ${{ inputs.stage }}
+      fingerprint: ${{ needs.prepare.outputs.fingerprint }}
+      generation: ${{ needs.prepare.outputs.generation }}
+      platform_id: ${{ fromJSON(inputs.plan).platform }}
+      system_id: ${{ fromJSON(inputs.plan).system }}
+      source_sha: ${{ fromJSON(inputs.plan).source_sha }}
+      system_sha: ${{ fromJSON(inputs.plan).system_sha }}
+      packages_sha: ${{ fromJSON(inputs.plan).packages_sha }}
+      os_base_sha: ${{ fromJSON(inputs.plan).os_base_sha }}
+      freebsd_sha: ${{ fromJSON(inputs.plan).freebsd_sha }}
+      ports_sha: ${{ fromJSON(inputs.plan).ports_sha }}
+      image_sha256: ${{ fromJSON(inputs.plan).image_sha256 }}
+      worker_tools_sha256: ${{ fromJSON(inputs.plan).worker_tools_sha256 }}
+      jail_object: ${{ fromJSON(inputs.plan).jail_object }}
+      freebsd_pin_id: ${{ fromJSON(inputs.plan).freebsd_pin_id }}
+      product_version: ${{ fromJSON(inputs.plan).product_version }}
+      package_train: ${{ fromJSON(inputs.plan).package_train }}
+      public_base_url: ${{ fromJSON(inputs.plan).public_base_url }}
+      target: ${{ fromJSON(inputs.plan).target }}
+      architecture: ${{ fromJSON(inputs.plan).architecture }}
+      package_arch: ${{ fromJSON(inputs.plan).package_arch }}
+      abi: ${{ fromJSON(inputs.plan).abi }}
+      altabi: ${{ fromJSON(inputs.plan).altabi }}
+      freebsd_target: ${{ fromJSON(inputs.plan).freebsd_target }}
+      freebsd_target_arch: ${{ fromJSON(inputs.plan).freebsd_target_arch }}
+      poudriere_arch: ${{ fromJSON(inputs.plan).poudriere_arch }}
+      kernel: ${{ fromJSON(inputs.plan).kernel }}
+      executor: ${{ fromJSON(inputs.plan).executor }}
+      image_profile: ${{ fromJSON(inputs.plan).image_profile }}
+      firmware: ${{ fromJSON(inputs.plan).firmware }}
+      image_capabilities: ${{ fromJSON(inputs.plan).image_capabilities }}
+      installer_format: ${{ fromJSON(inputs.plan).installer_format }}
+      build_host: ${{ fromJSON(inputs.plan).build_host }}
+      binary_seed_object: ${{ fromJSON(inputs.plan).binary_seed_object }}
+      binary_seed_provenance_sha256: ${{ fromJSON(inputs.plan).binary_seed_provenance_sha256 }}
+      publish_enabled: ${{ 'false' }}
+      farm_layout: delta-v1
+      system_part: ${{ matrix.part }}
+      system_shard_index: ${{ matrix.shard }}
+      system_shard_count: '4'
+    secrets: inherit
+
+  finalize:
+    needs: [prepare, parts]
+    uses: ./.github/workflows/runner-build.yml
+    with:
+      stage: ${{ inputs.stage }}
+      fingerprint: ${{ needs.prepare.outputs.fingerprint }}
+      generation: ${{ needs.prepare.outputs.generation }}
+      platform_id: ${{ fromJSON(inputs.plan).platform }}
+      system_id: ${{ fromJSON(inputs.plan).system }}
+      source_sha: ${{ fromJSON(inputs.plan).source_sha }}
+      system_sha: ${{ fromJSON(inputs.plan).system_sha }}
+      packages_sha: ${{ fromJSON(inputs.plan).packages_sha }}
+      os_base_sha: ${{ fromJSON(inputs.plan).os_base_sha }}
+      freebsd_sha: ${{ fromJSON(inputs.plan).freebsd_sha }}
+      ports_sha: ${{ fromJSON(inputs.plan).ports_sha }}
+      image_sha256: ${{ fromJSON(inputs.plan).image_sha256 }}
+      worker_tools_sha256: ${{ fromJSON(inputs.plan).worker_tools_sha256 }}
+      jail_object: ${{ fromJSON(inputs.plan).jail_object }}
+      freebsd_pin_id: ${{ fromJSON(inputs.plan).freebsd_pin_id }}
+      product_version: ${{ fromJSON(inputs.plan).product_version }}
+      package_train: ${{ fromJSON(inputs.plan).package_train }}
+      public_base_url: ${{ fromJSON(inputs.plan).public_base_url }}
+      target: ${{ fromJSON(inputs.plan).target }}
+      architecture: ${{ fromJSON(inputs.plan).architecture }}
+      package_arch: ${{ fromJSON(inputs.plan).package_arch }}
+      abi: ${{ fromJSON(inputs.plan).abi }}
+      altabi: ${{ fromJSON(inputs.plan).altabi }}
+      freebsd_target: ${{ fromJSON(inputs.plan).freebsd_target }}
+      freebsd_target_arch: ${{ fromJSON(inputs.plan).freebsd_target_arch }}
+      poudriere_arch: ${{ fromJSON(inputs.plan).poudriere_arch }}
+      kernel: ${{ fromJSON(inputs.plan).kernel }}
+      executor: ${{ fromJSON(inputs.plan).executor }}
+      image_profile: ${{ fromJSON(inputs.plan).image_profile }}
+      firmware: ${{ fromJSON(inputs.plan).firmware }}
+      image_capabilities: ${{ fromJSON(inputs.plan).image_capabilities }}
+      installer_format: ${{ fromJSON(inputs.plan).installer_format }}
+      build_host: ${{ fromJSON(inputs.plan).build_host }}
+      binary_seed_object: ${{ fromJSON(inputs.plan).binary_seed_object }}
+      binary_seed_provenance_sha256: ${{ fromJSON(inputs.plan).binary_seed_provenance_sha256 }}
+      publish_enabled: ${{ 'false' }}
+      farm_layout: delta-v1
+      system_part: finalize
+      system_shard_count: '4'
+    secrets: inherit

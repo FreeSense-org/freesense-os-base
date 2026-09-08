@@ -25,6 +25,10 @@ FIELDS = (
     "APPLIANCE_FORMAT", "APPLIANCE_COMPRESSION",
 )
 ROOT = Path(__file__).resolve().parents[1]
+OPTIONAL_FIELDS = {
+    "BINARY_SEED_OBJECT": "", "BINARY_SEED_PROVENANCE_SHA256": "",
+    "FARM_LAYOUT": "legacy",
+}
 
 
 def main() -> int:
@@ -46,8 +50,8 @@ def main() -> int:
         args.stages / f"{stage}.sh",
     ]
     lines = ["#!/bin/sh", "set -eu"]
-    for name in FIELDS:
-        encoded = base64.b64encode(os.environ[name].encode()).decode("ascii")
+    for name in (*FIELDS, *OPTIONAL_FIELDS):
+        encoded = base64.b64encode(os.environ.get(name, OPTIONAL_FIELDS.get(name, "")).encode()).decode("ascii")
         lines.append(f"{name}_B64='{encoded}'")
     if stage == "iso":
         installer_patch = ROOT / "patches/0005-installer.patch"

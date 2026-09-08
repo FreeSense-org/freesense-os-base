@@ -13,6 +13,7 @@ import hashlib
 import json
 from pathlib import Path
 import re
+from datetime import datetime
 
 from build_platform import image_profile, load_policy, pin_target, target as platform_target
 
@@ -32,7 +33,14 @@ def main() -> int:
     parser.add_argument("--target", required=True)
     parser.add_argument("--packages-marker", type=Path)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--published-at", default="1970-01-01T00:00:00Z")
     args = parser.parse_args()
+    try:
+        published_at = datetime.fromisoformat(args.published_at.replace("Z", "+00:00"))
+    except ValueError as error:
+        fail("staged publication time must be RFC3339")
+    if published_at.utcoffset() is None:
+        fail("staged publication time must include a timezone")
 
     policy = load_policy(ROOT / "config/build-policy.json")
     target = platform_target(policy, args.target)
@@ -151,7 +159,7 @@ def main() -> int:
                     "fingerprint": marker["fingerprint"],
                     "url": f"https://pkg.freesense.org/v1/artifacts/system/{marker['fingerprint']}/{target['package_arch']}",
                     "generation": marker["generation"],
-                    "published_at": "1970-01-01T00:00:00Z",
+                    "published_at": args.published_at,
                     "verified": True,
                     "freebsd_pin_id": inputs["freebsd_pin_id"],
                     "osversion": pin["freebsd_source"]["osversion"],
@@ -162,7 +170,7 @@ def main() -> int:
                     "built_against_system": packages_built_against,
                     "url": f"https://pkg.freesense.org/v1/artifacts/packages/{inputs['package_train']}/{package_fingerprint}/{target['package_arch']}",
                     "generation": packages_marker["generation"],
-                    "published_at": "1970-01-01T00:00:00Z",
+                    "published_at": args.published_at,
                     "verified": True,
                     "freebsd_pin_id": inputs["freebsd_pin_id"],
                 },

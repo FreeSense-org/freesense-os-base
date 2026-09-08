@@ -56,12 +56,15 @@ on:
       appliance_format: {type: string, required: false, default: ''}
       appliance_compression: {type: string, required: false, default: ''}
       build_host: {type: string, required: false, default: dedicated}
+      binary_seed_object: {type: string, required: false, default: ''}
+      binary_seed_provenance_sha256: {type: string, required: false, default: ''}
+      farm_layout: {type: string, required: false, default: legacy}
 
 jobs:
   build:
-    runs-on: ${{ inputs.build_host == 'github-hosted' && 'ubuntu-24.04' || 'build-runner' }}
+    runs-on: ${{ inputs.build_host == 'github-arm64' && 'ubuntu-24.04-arm' || ((inputs.build_host == 'github-hosted' || inputs.build_host == 'github-amd64') && 'ubuntu-24.04' || 'build-runner') }}
     concurrency:
-      group: ${{ inputs.build_host == 'github-hosted' && format('freesense-github-hosted-build-{0}-{1}', inputs.system_part, inputs.system_shard_index) || 'freesense-kvm-host' }}
+      group: ${{ inputs.build_host != 'dedicated' && format('freesense-hosted-{0}-{1}-{2}-{3}-{4}', inputs.target, inputs.stage, inputs.fingerprint, inputs.system_part, inputs.system_shard_index) || 'freesense-kvm-host' }}
       cancel-in-progress: false
     timeout-minutes: 360
     environment: build
@@ -122,28 +125,47 @@ jobs:
       SYSTEM_PART: ${{ inputs.system_part }}
       SYSTEM_SHARD_INDEX: ${{ inputs.system_shard_index }}
       SYSTEM_SHARD_COUNT: ${{ inputs.system_shard_count }}
+      BINARY_SEED_OBJECT: ${{ inputs.binary_seed_object }}
+      BINARY_SEED_PROVENANCE_SHA256: ${{ inputs.binary_seed_provenance_sha256 }}
+      FARM_LAYOUT: ${{ inputs.farm_layout }}
       BOOT_INPUTS: ${{ inputs.boot_inputs }}
       TARGET_MODELS: ${{ inputs.target_models }}
       PARTITION_SCHEME: ${{ inputs.partition_scheme }}
       APPLIANCE_FILESYSTEM: ${{ inputs.appliance_filesystem }}
       APPLIANCE_FORMAT: ${{ inputs.appliance_format }}
       APPLIANCE_COMPRESSION: ${{ inputs.appliance_compression }}
-      BUILD_VCPUS: ${{ inputs.build_host == 'github-hosted' && 'auto' || '12' }}
-      BUILD_MEMORY_MIB: ${{ inputs.build_host == 'github-hosted' && 'auto' || '32768' }}
-      BUILD_DISK_GIB: ${{ inputs.build_host == 'github-hosted' && '110' || '160' }}
-      BUILD_MINIMUM_FREE_GIB: ${{ inputs.build_host == 'github-hosted' && '70' || '80' }}
-      BUILD_TIMEOUT_SECONDS: ${{ inputs.build_host == 'github-hosted' && (inputs.system_part == 'bootstrap' && '20700' || '19800') || '18000' }}
+      BUILD_VCPUS: ${{ inputs.build_host != 'dedicated' && 'auto' || '12' }}
+      BUILD_MEMORY_MIB: ${{ inputs.build_host != 'dedicated' && 'auto' || '32768' }}
+      BUILD_DISK_GIB: ${{ inputs.build_host != 'dedicated' && '110' || '160' }}
+      BUILD_MINIMUM_FREE_GIB: ${{ inputs.build_host != 'dedicated' && '70' || '80' }}
+      BUILD_TIMEOUT_SECONDS: ${{ inputs.build_host != 'dedicated' && (inputs.system_part == 'bootstrap' && '20700' || '19800') || '18000' }}
     steps:
+      - name: Validate selected executor
+        env:
+          SELECTED_HOST: ${{ inputs.build_host }}
+          SELECTED_EXECUTOR: ${{ inputs.executor }}
+          SELECTED_TARGET: ${{ inputs.target }}
+        run: |
+          case "${SELECTED_HOST}:${SELECTED_TARGET}:${SELECTED_EXECUTOR}" in
+            github-hosted:amd64:native-amd64|github-amd64:amd64:native-amd64|github-arm64:arm64:native-arm64|dedicated:amd64:native-amd64|dedicated:arm64:amd64-cross-qemu-user) ;;
+            *) echo 'Invalid host/target/executor combination' >&2; exit 1 ;;
+          esac
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
           cache: false
       - name: Prepare disposable GitHub build host
-        if: inputs.build_host == 'github-hosted'
+        if: inputs.build_host != 'dedicated'
+        env:
+          SELECTED_HOST: ${{ inputs.build_host }}
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends qemu-system-x86 qemu-utils ovmf cloud-image-utils
+          if [[ "${SELECTED_HOST}" == github-arm64 ]]; then
+            sudo apt-get install -y --no-install-recommends qemu-system-arm qemu-utils qemu-efi-aarch64 cloud-image-utils
+          else
+            sudo apt-get install -y --no-install-recommends qemu-system-x86 qemu-utils ovmf cloud-image-utils
+          fi
           sudo chmod a+rw /dev/kvm
           nproc
           free -h
@@ -151,7 +173,7 @@ jobs:
       - run: go build -trimpath -o "${RUNNER_TEMP}/fsbuild" ./cmd/fsbuild
       - name: Verify repository signing trust root
         if: >-
-          inputs.stage != 'system' ||
+          (inputs.stage != 'system' && !(inputs.stage == 'packages' && inputs.farm_layout == 'delta-v1')) ||
           (inputs.system_part != 'core' && inputs.system_part != 'bootstrap' &&
            inputs.system_part != 'shard' && inputs.system_part != 'dependent')
         env: {SIGNING_KEY: "${{ secrets.FREESENSE_PKG_SIGNING_KEY }}"}
@@ -188,7 +210,8 @@ jobs:
       - id: checkpoint
         name: Reuse completed System farm checkpoint
         if: >-
-          steps.reuse.outputs.complete != 'true' && inputs.stage == 'system' &&
+          steps.reuse.outputs.complete != 'true' &&
+          (inputs.stage == 'system' || (inputs.stage == 'packages' && inputs.farm_layout == 'delta-v1')) &&
           (inputs.system_part == 'core' || inputs.system_part == 'bootstrap' ||
            inputs.system_part == 'shard' || inputs.system_part == 'dependent')
         run: |
@@ -198,6 +221,11 @@ jobs:
             shard|dependent) checkpoint="shards/${SYSTEM_SHARD_INDEX}" ;;
           esac
           key="${FSBUILD_STORE_PREFIX}/artifacts/system/${FINGERPRINT}/checkpoints/farm-${SYSTEM_SHARD_COUNT}/${checkpoint}/complete.json"
+          if [[ "${FARM_LAYOUT}" == delta-v1 ]]; then
+            component="${STAGE}"
+            if [[ "${STAGE}" == packages ]]; then component="packages/${PACKAGE_TRAIN}"; fi
+            key="${FSBUILD_STORE_PREFIX}/artifacts/${component}/${FINGERPRINT}/checkpoints/farm-${SYSTEM_SHARD_COUNT}/${ARCHITECTURE}/delta-v1/${checkpoint}/complete.json"
+          fi
           if aws s3api head-object --endpoint-url "${R2_ENDPOINT}" \
               --bucket "${R2_BUCKET}" --key "${key}" >/dev/null 2>&1; then
             echo "Reusing completed System checkpoint ${checkpoint}"
@@ -219,7 +247,7 @@ jobs:
       - name: Render credential-free System farm worker
         if: >-
           steps.reuse.outputs.complete != 'true' && steps.checkpoint.outputs.complete != 'true' &&
-          inputs.stage == 'system' &&
+          (inputs.stage == 'system' || (inputs.stage == 'packages' && inputs.farm_layout == 'delta-v1')) &&
           (inputs.system_part == 'core' || inputs.system_part == 'bootstrap' ||
            inputs.system_part == 'shard' || inputs.system_part == 'dependent')
         env:
@@ -232,7 +260,7 @@ jobs:
         if: >-
           steps.reuse.outputs.complete != 'true' && steps.reuse.outputs.assembled != 'true' &&
           steps.checkpoint.outputs.complete != 'true' &&
-          !(inputs.stage == 'system' &&
+          !((inputs.stage == 'system' || (inputs.stage == 'packages' && inputs.farm_layout == 'delta-v1')) &&
             (inputs.system_part == 'core' || inputs.system_part == 'bootstrap' ||
              inputs.system_part == 'shard' || inputs.system_part == 'dependent'))
         env:
@@ -247,6 +275,7 @@ jobs:
           FSBUILD: ${{ runner.temp }}/fsbuild
         run: >-
           scripts/runner/run-vm.sh --image-sha256 "${IMAGE_SHA256}"
+          --host-architecture "${{ inputs.build_host == 'github-arm64' && 'arm64' || 'amd64' }}"
           --script "${RUNNER_TEMP}/worker.sh" --timeout "${BUILD_TIMEOUT_SECONDS}"
           --vcpus "${BUILD_VCPUS}" --memory-mib "${BUILD_MEMORY_MIB}"
           --disk-gib "${BUILD_DISK_GIB}" --minimum-free-gib "${BUILD_MINIMUM_FREE_GIB}"

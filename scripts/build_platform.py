@@ -178,7 +178,13 @@ def release_profiles(policy: dict[str, Any], target_name: str) -> list[dict[str,
 def pin_target(lock: dict[str, Any], target_name: str) -> dict[str, Any]:
     if lock.get("schema_version") == "freesense.freebsd-pin/v2" and target_name == "amd64":
         return {"ready": bool(lock.get("ready")), "jail_seed": lock.get("jail_seed", {})}
-    if lock.get("schema_version") != "freesense.freebsd-pin/v3":
+    if lock.get("schema_version") == "freesense.freebsd-pin/v4":
+        from multiarch_pin import validate
+        try:
+            validate(lock)
+        except (KeyError, TypeError, ValueError) as error:
+            raise SystemExit(f"invalid multiarch FreeBSD pin: {error}") from error
+    elif lock.get("schema_version") != "freesense.freebsd-pin/v3":
         raise SystemExit("unsupported FreeBSD pin schema")
     try:
         value = lock["targets"][target_name]

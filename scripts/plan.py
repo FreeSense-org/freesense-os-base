@@ -214,12 +214,21 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("kind", choices=("system", "packages", "iso", "cloud", "appliance"))
     parser.add_argument("--target", default="amd64")
+    parser.add_argument("--build-host", choices=("github-amd64", "github-arm64", "dedicated"))
     parser.add_argument("--image-profile")
     parser.add_argument("--filesystem", choices=("ufs", "zfs"))
     parser.add_argument("--github-output", type=Path)
     parser.add_argument("--os-base-sha", default=os.environ.get("GITHUB_SHA", ""))
     parser.add_argument("--system-closure", type=Path)
+    parser.add_argument("--resolved-inputs", type=Path, help="one coordinator-resolved source snapshot for both targets")
+    parser.add_argument("--immutable-only", action="store_true", help="plan immutable artifacts without consulting mutable channel pointers")
     args = parser.parse_args()
+    resolved = {}
+    if args.resolved_inputs:
+        resolved = json.loads(args.resolved_inputs.read_text(encoding="utf-8"))
+        if set(resolved) != {"source", "system_ports", "packages"} or any(
+                not isinstance(value, str) or not SHA.fullmatch(value) for value in resolved.values()):
+            raise SystemExit("resolved inputs require exact source, System ports and Optional Packages commits")
     if args.kind == "cloud" and args.filesystem is None:
         raise SystemExit("cloud planning requires --filesystem ufs or zfs")
     if args.kind != "cloud" and args.filesystem is not None:
@@ -275,6 +284,18 @@ def main() -> int:
     if not selected_target["build_enabled"]:
         raise SystemExit(f"target {args.target} builds are disabled")
     target_pin = pin_target(lock, args.target)
+    execution_inputs = {}
+    worker_image = lock.get("worker_image", {})
+    worker_tools = lock.get("worker_tools", {})
+    if lock.get("schema_version") == "freesense.freebsd-pin/v4":
+        from multiarch_pin import worker
+        build_host = args.build_host or ("github-amd64" if args.target == "amd64" else "dedicated")
+        execution_inputs = worker(lock, args.target, build_host)
+        worker_image = execution_inputs["worker_image"]
+        worker_tools = execution_inputs["worker_tools"]
+        selected_target["executor"] = execution_inputs["executor"]
+    elif args.build_host is not None:
+        raise SystemExit("explicit executor selection requires a verified v4 pin")
     jail_seed = target_pin["jail_seed"]
     selected_profile = image_profile(policy, args.image_profile, args.target)
     installer_profile = image_profile(policy, None, args.target)
@@ -309,7 +330,6 @@ def main() -> int:
         raise SystemExit("FreeBSD lock window must be exactly 14 days")
     if now < valid_from or now >= valid_until:
         raise SystemExit("FreeBSD lock is outside its active 14-day window")
-    worker_tools = lock.get("worker_tools", {})
     worker_tools_lock_sha256 = (
         worker_tools.get("sha256", "") if isinstance(worker_tools, dict) else ""
     )
@@ -336,16 +356,19 @@ def main() -> int:
         "jail_seed": jail_seed["sha256"],
         "package_catalog": target_pin.get("package_catalog", {}).get("sha256", ""),
         "package_catalog_osversion": target_pin.get("package_catalog", {}).get("osversion", 0),
-        "worker_image": lock["worker_image"]["sha256"],
+        "worker_image": worker_image["sha256"],
         "worker_tools": worker_tools_lock_sha256,
         "abi": selected_target["abi"],
         "altabi": selected_target["altabi"],
+        **({"execution_inputs": execution_inputs} if execution_inputs else {}),
     })
     patch_files = [ROOT / "apply.sh", ROOT / "manifest.env", *sorted((ROOT / "patches").glob("*.patch"))]
     platform_recipe = recipe_digest([
         ROOT / "scripts/runner/install-worker-tools.sh",
         ROOT / "scripts/runner/worker-common.sh",
-        ROOT / "scripts/runner/stages/system.sh",
+            ROOT / "scripts/runner/stages/system.sh",
+            ROOT / "scripts/partition_roots.py",
+            ROOT / "config/multiarch-shards.json",
         *patch_files,
     ])
     runner_recipe = recipe_digest([ROOT / "scripts/runner/run-vm.sh"])
@@ -353,15 +376,15 @@ def main() -> int:
     latest_system_sha = ""
     desired_system = ""
     if args.kind == "system":
-        latest_source_sha = remote_sha("FreeSense-org/freesense")
-        latest_system_sha = remote_sha("FreeSense-org/freesense-system-ports")
+        latest_source_sha = resolved.get("source") or remote_sha("FreeSense-org/freesense")
+        latest_system_sha = resolved.get("system_ports") or remote_sha("FreeSense-org/freesense-system-ports")
         desired_platform = fingerprint({
             "schema": 2,
             "kind": "platform",
             "freebsd_source": lock["freebsd_source"]["commit"],
             "freebsd_ports": lock["freebsd_ports"]["commit"],
             "jail_seed": jail_seed["sha256"],
-            "worker_image": lock["worker_image"]["sha256"],
+            "worker_image": worker_image["sha256"],
             "worker_tools": worker_tools_lock_sha256,
             "source": latest_source_sha,
             "system_ports": latest_system_sha,
@@ -371,6 +394,7 @@ def main() -> int:
             "runner_recipe": runner_recipe,
             "signing_public_key": signing_public_key_sha256,
             "recipe": platform_recipe,
+            **({"execution_inputs": execution_inputs} if execution_inputs else {}),
             **({} if args.target == "amd64" else {"target": selected_target}),
         })
         desired_system = fingerprint({
@@ -417,6 +441,15 @@ def main() -> int:
             raise SystemExit("selected System jail object is invalid")
         if system_signing_public_key_sha256 != signing_public_key_sha256:
             raise SystemExit("selected System uses a different repository signing trust root")
+        if execution_inputs and any((
+            system_freebsd_pin_id != freebsd_pin_id,
+            system_image_sha256 != worker_image["sha256"],
+            system_worker_tools_sha256 != worker_tools_lock_sha256,
+            system_jail_object != jail_seed["object"],
+            system_freebsd_sha != lock["freebsd_source"]["commit"],
+            system_ports_sha != lock["freebsd_ports"]["commit"],
+        )):
+            raise SystemExit("selected System differs from the frozen v4 pin or executor")
         if args.kind == "packages":
             if channel_name != "devel" or channel_package_train != policy["package_train"]:
                 raise SystemExit("optional packages require the current devel package train")
@@ -448,7 +481,7 @@ def main() -> int:
         source_sha = system_source_sha
         system_sha = system_system_sha
         packages_sha = (
-            remote_sha("FreeSense-org/freesense-packages")
+            (resolved.get("packages") or remote_sha("FreeSense-org/freesense-packages"))
             if args.kind == "packages" else system_packages_sha
         )
         os_base_sha = system_os_base_sha
@@ -467,7 +500,7 @@ def main() -> int:
         os_base_sha = args.os_base_sha
         freebsd_sha = lock["freebsd_source"]["commit"]
         ports_sha = lock["freebsd_ports"]["commit"]
-        image_sha256 = lock["worker_image"]["sha256"]
+        image_sha256 = worker_image["sha256"]
         worker_tools_sha256 = worker_tools_lock_sha256
         jail_object = jail_seed["object"]
         platform = desired_platform
@@ -502,6 +535,8 @@ def main() -> int:
             ROOT / "scripts/runner/install-worker-tools.sh",
             ROOT / "scripts/runner/worker-common.sh",
             ROOT / "scripts/runner/stages/packages.sh",
+            ROOT / "scripts/partition_roots.py",
+            ROOT / "config/multiarch-shards.json",
         ]),
         **({} if args.target == "amd64" else {"package_arch": selected_target["package_arch"]}),
     })
@@ -606,7 +641,7 @@ def main() -> int:
     manifest_url = policy["public_base_url"] + "/" + manifest_name(
         selected_target, legacy=args.target == "amd64"
     )
-    if args.kind in {"iso", "cloud", "appliance"}:
+    if args.immutable_only or args.kind in {"iso", "cloud", "appliance"}:
         current = ""
     elif args.kind == "packages":
         current = current_packages_fingerprint
@@ -633,6 +668,10 @@ def main() -> int:
         "ports_sha": ports_sha,
         "image_sha256": image_sha256,
         "worker_tools_sha256": worker_tools_sha256,
+        "build_host": execution_inputs.get("host", "dedicated"),
+        "host_architecture": execution_inputs.get("host_architecture", "amd64"),
+        "binary_seed_object": execution_inputs.get("binary_seed", {}).get("object", ""),
+        "binary_seed_provenance_sha256": execution_inputs.get("binary_seed", {}).get("provenance_sha256", ""),
         "jail_object": jail_object,
         "package_train": selected_package_train,
         "target": args.target,
