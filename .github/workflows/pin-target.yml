@@ -4,6 +4,7 @@ on:
   workflow_call:
     inputs:
       architecture: {type: string, required: true}
+      runner: {type: string, required: false, default: ''}
     outputs:
       artifact_name:
         value: ${{ jobs.prepare.outputs.artifact_name }}
@@ -12,11 +13,11 @@ permissions: {contents: read, id-token: write}
 
 jobs:
   prepare:
-    runs-on: ${{ fromJSON(inputs.architecture == 'arm64' && '["ubuntu-24.04-arm"]' || '["self-hosted","build-runner"]') }}
+    runs-on: ${{ inputs.runner != '' && inputs.runner || (inputs.architecture == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04') }}
     timeout-minutes: 300
     environment: pin
     concurrency:
-      group: ${{ inputs.architecture == 'amd64' && 'freesense-kvm-host' || format('freebsd-pin-{0}', inputs.architecture) }}
+      group: ${{ format('freebsd-pin-{0}', inputs.architecture) }}
       cancel-in-progress: false
     outputs:
       artifact_name: ${{ steps.identity.outputs.artifact_name }}
@@ -27,10 +28,13 @@ jobs:
       - uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16
         with: {name: freebsd-pin-common, path: '${{ runner.temp }}/pin-common'}
       - name: Prepare native virtualization tools
-        if: inputs.architecture == 'arm64'
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends qemu-system-arm qemu-utils qemu-efi-aarch64 cloud-image-utils
+          if [[ "${{ inputs.architecture }}" == "arm64" ]]; then
+            sudo apt-get install -y --no-install-recommends qemu-system-arm qemu-utils qemu-efi-aarch64 cloud-image-utils zstd
+          else
+            sudo apt-get install -y --no-install-recommends qemu-system-x86 qemu-utils ovmf cloud-image-utils zstd
+          fi
           sudo chmod a+rw /dev/kvm
       - run: go build -trimpath -o "${RUNNER_TEMP}/fsbuild" ./cmd/fsbuild
       - name: Acquire immutable pin writer
@@ -83,6 +87,8 @@ jobs:
           target="${RUNNER_TEMP}/target"; common="${RUNNER_TEMP}/pin-common/common.json"
           image_sha=$(jq -er .sha256 "${target}/worker.qcow2.blob.json")
           tools_sha=$(jq -er .sha256 "${target}/worker-tools.tar.blob.json")
+          mkdir -p "${HOME}/.cache/freesense-build/images"
+          cp -f "${target}/worker.qcow2" "${HOME}/.cache/freesense-build/images/${image_sha}.qcow2"
           cat scripts/runner/install-worker-tools.sh >"${target}/collect.sh"
           cat >>"${target}/collect.sh" <<EOF
           PUBLIC_BASE_URL='$(jq -er .public_base_url config/build-policy.json)'
@@ -136,7 +142,8 @@ jobs:
           echo PIN_REQUIREMENTS_END
           EOF
           scripts/runner/run-vm.sh --host-architecture "${ARCH}" --image-sha256 "${image_sha}" \
-            --script "${target}/collect.sh" --timeout 14400 --serial-output "${target}/serial.log" \
+            --script "${target}/collect.sh" --timeout 14400 --vcpus auto --memory-mib auto \
+            --disk-gib 60 --minimum-free-gib 25 --serial-output "${target}/serial.log" \
             --failure-dir "${RUNNER_TEMP}/pin-${ARCH}-failure"
           python3 scripts/extract_serial_payload.py --log "${target}/serial.log" \
             --name PIN_REQUIREMENTS --output "${target}/requirements.json"
