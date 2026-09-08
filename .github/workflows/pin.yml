@@ -73,8 +73,8 @@ jobs:
           set -euo pipefail
           DIST_AMD64="https://download.freebsd.org/snapshots/amd64/16.0-CURRENT"
           DIST_ARM64="https://download.freebsd.org/snapshots/arm64/16.0-CURRENT"
-          VM_AMD64="https://download.freebsd.org/snapshots/VM-IMAGES/16.0-CURRENT/amd64/Latest"
-          VM_ARM64="https://download.freebsd.org/snapshots/VM-IMAGES/16.0-CURRENT/arm64/Latest"
+          VM_AMD64_BASE="https://download.freebsd.org/snapshots/VM-IMAGES/16.0-CURRENT/amd64"
+          VM_ARM64_BASE="https://download.freebsd.org/snapshots/VM-IMAGES/16.0-CURRENT/aarch64"
 
           downloads="${RUNNER_TEMP}/downloads"
           mkdir -p "${downloads}/amd64" "${downloads}/arm64" "${RUNNER_TEMP}/pin-common"
@@ -84,8 +84,8 @@ jobs:
           curl "${retry[@]}" -o "${downloads}/amd64/MANIFEST" "${DIST_AMD64}/MANIFEST"
           curl "${retry[@]}" -o "${downloads}/arm64/MANIFEST" "${DIST_ARM64}/MANIFEST"
 
-          curl "${retry[@]}" -o "${downloads}/amd64/CHECKSUM.SHA256" "${VM_AMD64}/CHECKSUM.SHA256"
-          curl "${retry[@]}" -o "${downloads}/arm64/CHECKSUM.SHA256" "${VM_ARM64}/CHECKSUM.SHA256"
+          curl "${retry[@]}" -o "${downloads}/amd64/CHECKSUM.SHA256" "${VM_AMD64_BASE}/Latest/CHECKSUM.SHA256"
+          curl "${retry[@]}" -o "${downloads}/arm64/CHECKSUM.SHA256" "${VM_ARM64_BASE}/Latest/CHECKSUM.SHA256"
 
           curl "${retry[@]}" -o "${downloads}/amd64/packagesite.pkg" "https://pkg.freebsd.org/FreeBSD:16:amd64/latest/packagesite.pkg"
           curl "${retry[@]}" -o "${downloads}/arm64/packagesite.pkg" "https://pkg.freebsd.org/FreeBSD:16:aarch64/latest/packagesite.pkg"
@@ -137,8 +137,8 @@ jobs:
             --arg trusted_key_sha256 "${trusted_key_sha256}" \
             --arg dist_amd64 "${DIST_AMD64}" \
             --arg dist_arm64 "${DIST_ARM64}" \
-            --arg vm_amd64 "${VM_AMD64}" \
-            --arg vm_arm64 "${VM_ARM64}" \
+            --arg vm_amd64 "${VM_AMD64_BASE}/${builddate}" \
+            --arg vm_arm64 "${VM_ARM64_BASE}/${builddate}" \
             '{revision: $revision, build_date: $build_date, source_commit: $source_commit,
               osversion: $osversion, trusted_key_sha256: $trusted_key_sha256,
               dist_urls: {amd64: $dist_amd64, arm64: $dist_arm64},
