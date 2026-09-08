@@ -253,6 +253,11 @@ class RequirementsCollectorTests(unittest.TestCase):
         unauthorized_paths = {"Mk/bsd.unauthorized.mk"}
         self.assertTrue(any(path.startswith(("Templates/", "Keywords/")) or (path.startswith("Mk/") and path not in audited_mk) for path in unauthorized_paths))
 
+    def test_installer_allows_bidirectional_one_revision_osversion_skew(self):
+        script = (Path(__file__).resolve().parents[1] / "scripts/runner/install-worker-tools.sh").read_text()
+        self.assertIn("running_osversion + 1", script)
+        self.assertIn("required_osversion + 1", script)
+
 
 class PinSealingTests(unittest.TestCase):
     def prepare(self, root):

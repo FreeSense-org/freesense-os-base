@@ -44,9 +44,12 @@ install_worker_tools() (
     esac
     if [ "${required_osversion}" -eq "${running_osversion}" ]; then
       ignore_osversion=no
-    elif [ "${required_osversion}" -eq $((running_osversion + 1)) ]; then
+    elif [ "${required_osversion}" -eq $((running_osversion + 1)) ] || [ "${running_osversion}" -eq $((required_osversion + 1)) ]; then
       ignore_osversion=yes
       echo "Allowing one-revision worker bootstrap: ${running_osversion} -> ${required_osversion}"
+    elif [ "${required_osversion}" -le $((running_osversion + 2)) ] && [ "${required_osversion}" -ge $((running_osversion - 2)) ]; then
+      ignore_osversion=yes
+      echo "Allowing worker bootstrap with revision skew: ${running_osversion} -> ${required_osversion}"
     else
       echo "worker-tool OSVERSION ${required_osversion} is incompatible with userland ${running_osversion}" >&2
       exit 1
