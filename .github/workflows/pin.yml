@@ -87,18 +87,10 @@ jobs:
           curl "${retry[@]}" -o "${downloads}/amd64/packagesite.pkg" "https://pkg.freebsd.org/FreeBSD:16:amd64/latest/packagesite.pkg"
           curl "${retry[@]}" -o "${downloads}/arm64/packagesite.pkg" "https://pkg.freebsd.org/FreeBSD:16:aarch64/latest/packagesite.pkg"
 
-          amd_revision=$(curl "${retry[@]}" "${DIST_AMD64}/REVISION" | tr -d '
-
-')
-          amd_builddate=$(curl "${retry[@]}" "${DIST_AMD64}/BUILDDATE" | tr -d '
-
-')
-          arm_revision=$(curl "${retry[@]}" "${DIST_ARM64}/REVISION" | tr -d '
-
-')
-          arm_builddate=$(curl "${retry[@]}" "${DIST_ARM64}/BUILDDATE" | tr -d '
-
-')
+          amd_revision=$(curl "${retry[@]}" "${DIST_AMD64}/REVISION" | tr -d '\r\n')
+          amd_builddate=$(curl "${retry[@]}" "${DIST_AMD64}/BUILDDATE" | tr -d '\r\n')
+          arm_revision=$(curl "${retry[@]}" "${DIST_ARM64}/REVISION" | tr -d '\r\n')
+          arm_builddate=$(curl "${retry[@]}" "${DIST_ARM64}/BUILDDATE" | tr -d '\r\n')
 
           if [[ "${amd_revision}" != "${arm_revision}" || "${amd_builddate}" != "${arm_builddate}" ]]; then
             echo "Snapshot mismatch: amd64 (${amd_revision}, ${amd_builddate}) vs arm64 (${arm_revision}, ${arm_builddate})" >&2
