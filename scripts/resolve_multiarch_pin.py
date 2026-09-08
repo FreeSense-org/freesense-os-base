@@ -46,13 +46,13 @@ def resolve(previous: dict, directory: Path, metadata: dict, sources: dict,
         raise ValueError("invalid shared FreeBSD snapshot identity")
     if any(not re.fullmatch(r"[0-9a-f]{40}", str(value)) for value in sources.values()):
         raise ValueError("project sources must be frozen to full commits")
-    reports, ports = {}, set()
+    reports, ports = {}, {}
     for arch, (dist_arch, package_arch) in TARGETS.items():
         target = directory / arch
         records = verify_catalogue(target / "packagesite.pkg", metadata["trusted_key_sha256"])
         catalog_sha = hashlib.sha256((target / "packagesite.pkg").read_bytes()).hexdigest()
         worker = resolve_worker_tools((json.dumps(record) for record in records), arch)
-        ports.add(worker["ports_sha"])
+        ports[arch] = worker["ports_sha"]
         catalog_osversion = worker["osversion"]
         max_bootstrap_osversion_delta = 2
         if (catalog_osversion < metadata["osversion"] - 1
@@ -73,8 +73,9 @@ def resolve(previous: dict, directory: Path, metadata: dict, sources: dict,
                 package_arch, build_date, revision),
             "catalog_osversion": catalog_osversion,
         }
-    if len(ports) != 1:
-        raise ValueError("architectures do not share one official ports revision")
+    ports_commit = ports.get("amd64") or next(iter(ports.values()))
+    if not re.fullmatch(r"[0-9a-f]{40}", str(ports_commit)):
+        raise ValueError("invalid official ports revision")
     start = now.replace(microsecond=0) if security_rollover else datetime.fromisoformat(
         previous["valid_until"].replace("Z", "+00:00"))
     if start.tzinfo is None:
@@ -87,7 +88,7 @@ def resolve(previous: dict, directory: Path, metadata: dict, sources: dict,
         "freebsd_source": {"commit": metadata["source_commit"], "osversion": metadata["osversion"]},
         "bootstrap_snapshot": {"commit": metadata["source_commit"], "revision_prefix": revision,
                                "build_date": build_date, "osversion": metadata["osversion"]},
-        "freebsd_ports": {"commit": ports.pop()}, "sources": sources, "targets": reports,
+        "freebsd_ports": {"commit": ports_commit}, "sources": sources, "targets": reports,
     }
     return result
 
