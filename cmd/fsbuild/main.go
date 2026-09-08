@@ -44,8 +44,10 @@ func run(ctx context.Context, args []string) error {
 		return commandChannel(ctx, args[1:])
 	case "credentials":
 		return commandCredentials(ctx, args[1:])
+	case "multiarch":
+		return commandMultiarch(ctx, args[1:])
 	case "help", "-h", "--help":
-		fmt.Println("fsbuild <blob|result|state|channel|credentials> [options]")
+		fmt.Println("fsbuild <blob|result|state|channel|credentials|multiarch> [options]")
 		return nil
 	default:
 		return usage()
@@ -53,7 +55,7 @@ func run(ctx context.Context, args []string) error {
 }
 
 func usage() error {
-	return errors.New("usage: fsbuild <blob|result|state|channel|credentials> [options]")
+	return errors.New("usage: fsbuild <blob|result|state|channel|credentials|multiarch> [options]")
 }
 
 func commandState(ctx context.Context, args []string) error {
@@ -86,6 +88,9 @@ func commandState(ctx context.Context, args []string) error {
 func commandChannel(ctx context.Context, args []string) error {
 	if len(args) == 0 {
 		return errors.New("usage: fsbuild channel <update|verify|seal-stable> [options]")
+	}
+	if args[0] == "sign-file" {
+		return commandSignChannelFile(args[1:])
 	}
 	flags := newFlagSet("channel " + args[0])
 	component := flags.String("component", "", "system or packages")

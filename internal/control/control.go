@@ -238,6 +238,32 @@ func ParsePrivateKey(data []byte) (*rsa.PrivateKey, error) {
 	return key, nil
 }
 
+func ParsePublicKey(data []byte) (*rsa.PublicKey, error) {
+	block, rest := pem.Decode(data)
+	if block == nil || len(strings.TrimSpace(string(rest))) != 0 {
+		return nil, errors.New("public key must contain exactly one PEM block")
+	}
+	if block.Type == "PUBLIC KEY" {
+		parsed, err := x509.ParsePKIXPublicKey(block.Bytes)
+		if err != nil {
+			return nil, errors.New("invalid public key")
+		}
+		key, ok := parsed.(*rsa.PublicKey)
+		if !ok || key.N.BitLen() < 2048 {
+			return nil, errors.New("public key must be RSA with at least 2048 bits")
+		}
+		return key, nil
+	}
+	if block.Type == "RSA PUBLIC KEY" {
+		key, err := x509.ParsePKCS1PublicKey(block.Bytes)
+		if err != nil || key.N.BitLen() < 2048 {
+			return nil, errors.New("invalid RSA public key")
+		}
+		return key, nil
+	}
+	return nil, errors.New("unsupported public key PEM block")
+}
+
 func MarshalSigned(payload Payload, privateKey *rsa.PrivateKey) ([]byte, error) {
 	if privateKey == nil {
 		return nil, errors.New("private signing key is required")
@@ -482,6 +508,40 @@ func Verify(payload Payload, component, fingerprint string) (Payload, error) {
 	target.Verified = true
 	payload.Channels["devel"] = channel
 	return payload, nil
+}
+
+// ValidateDevelopmentPair checks a complete architecture-qualified manifest
+// without mutating it. Callers use this before signing locally prepared pair
+// documents; publication remains a separate operation.
+func ValidateDevelopmentPair(payload Payload, architecture, packageArch string) error {
+	expectedABI := map[string]string{"amd64": "FreeBSD:16:amd64", "arm64": "FreeBSD:16:aarch64"}[architecture]
+	expectedAltABI := map[string]string{"amd64": "freebsd:16:x86:64", "arm64": "freebsd:16:aarch64:64"}[architecture]
+	channel, ok := payload.Channels["devel"]
+	if !ok || len(payload.Channels) != 1 || channel.Name != "devel" || channel.Default != true ||
+		channel.Architecture != architecture || channel.PackageArch != packageArch ||
+		(channel.Architecture == "amd64" && channel.PackageArch != "amd64") ||
+		(channel.Architecture == "arm64" && channel.PackageArch != "aarch64") ||
+		!releaseVersionPattern.MatchString(channel.Version) || !strings.HasPrefix(channel.Version, channel.PackageTrain+".") ||
+		channel.ABI != expectedABI || channel.AltABI != expectedAltABI ||
+		channel.System == nil || channel.Packages == nil || !channel.System.Verified || !channel.Packages.Verified {
+		return errors.New("incomplete architecture-qualified Development pair")
+	}
+	if !fingerprintPattern.MatchString(channel.System.Fingerprint) ||
+		!fingerprintPattern.MatchString(channel.Packages.Fingerprint) ||
+		!fingerprintPattern.MatchString(channel.System.FreeBSDPinID) ||
+		!fingerprintPattern.MatchString(channel.Packages.FreeBSDPinID) ||
+		channel.System.SystemFingerprint != "" || channel.System.BuiltAgainstSystem != "" ||
+		channel.Packages.SystemFingerprint != channel.System.Fingerprint ||
+		!fingerprintPattern.MatchString(channel.Packages.BuiltAgainstSystem) ||
+		channel.System.URL != fmt.Sprintf("https://pkg.freesense.org/v1/artifacts/system/%s/%s", channel.System.Fingerprint, packageArch) ||
+		channel.Packages.URL != fmt.Sprintf("https://pkg.freesense.org/v1/artifacts/packages/%s/%s/%s", channel.PackageTrain, channel.Packages.Fingerprint, packageArch) ||
+		channel.System.Generation == 0 || channel.Packages.Generation == 0 || channel.System.OSVersion == 0 ||
+		channel.System.PublishedAt.IsZero() || channel.Packages.PublishedAt.IsZero() ||
+		!channel.System.PublishedAt.Equal(channel.Packages.PublishedAt) ||
+		channel.System.FreeBSDPinID != channel.Packages.FreeBSDPinID {
+		return errors.New("invalid Development component identity")
+	}
+	return validatePackageBinding(channel, channel.Packages)
 }
 
 func Promote(payload Payload, component string, now time.Time, soak time.Duration) (Payload, error) {
