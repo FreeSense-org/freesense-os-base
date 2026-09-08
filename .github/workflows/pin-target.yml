@@ -35,7 +35,7 @@ jobs:
           else
             sudo apt-get install -y --no-install-recommends qemu-system-x86 qemu-utils ovmf cloud-image-utils zstd
           fi
-          sudo chmod a+rw /dev/kvm
+          if [[ -e /dev/kvm ]]; then sudo chmod a+rw /dev/kvm; fi
       - run: go build -trimpath -o "${RUNNER_TEMP}/fsbuild" ./cmd/fsbuild
       - name: Acquire immutable pin writer
         env:
@@ -89,11 +89,32 @@ jobs:
           tools_sha=$(jq -er .sha256 "${target}/worker-tools.tar.blob.json")
           mkdir -p "${HOME}/.cache/freesense-build/images"
           cp -f "${target}/worker.qcow2" "${HOME}/.cache/freesense-build/images/${image_sha}.qcow2"
-          cat scripts/runner/install-worker-tools.sh >"${target}/collect.sh"
+          cat <<'EOF' >"${target}/collect.sh"
+          #!/bin/sh
+          set -eu
+          export HOME=/root
+          export PATH="/usr/local/sbin:/usr/local/bin:${PATH}"
+          LAST_PHASE=initialization
+          phase() {
+            LAST_PHASE=$1
+            printf 'FreeSense phase: %s\n' "${LAST_PHASE}"
+          }
+          report_phase_failure() {
+            status=$?
+            if [ "${status}" -ne 0 ]; then
+              printf 'FreeSense phase failed: %s status=%s\n' "${LAST_PHASE}" "${status}" >&2
+            fi
+          }
+          trap report_phase_failure EXIT
+          EOF
+          cat scripts/runner/install-worker-tools.sh >>"${target}/collect.sh"
           cat >>"${target}/collect.sh" <<EOF
           PUBLIC_BASE_URL='$(jq -er .public_base_url config/build-policy.json)'
           WORKER_TOOLS_SHA256='${tools_sha}'
           install_worker_tools
+          if command -v python3.11 >/dev/null && ! command -v python3 >/dev/null; then
+            ln -s "\$(command -v python3.11)" /usr/local/bin/python3
+          fi
           git clone https://github.com/freebsd/freebsd-ports.git /root/ports
           git -C /root/ports checkout --detach '$(jq -er .freebsd_ports.commit "${common}")'
           for spec in \
@@ -196,6 +217,8 @@ jobs:
         if: failure()
         with:
           name: freebsd-pin-${{ inputs.architecture }}-failure
-          path: ${{ runner.temp }}/pin-${{ inputs.architecture }}-failure/
+          path: |
+            ${{ runner.temp }}/pin-${{ inputs.architecture }}-failure/
+            ${{ runner.temp }}/target/*.log
           if-no-files-found: ignore
           retention-days: 14
