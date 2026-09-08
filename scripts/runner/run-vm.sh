@@ -287,7 +287,7 @@ touch "$serial"
   -drive if=pflash,format=raw,file="$vars" \
   -drive if=virtio,format=qcow2,cache=none,discard=unmap,file="$overlay" \
   -drive if="$seed_interface",format=raw,readonly=on,file="$seed" \
-  -device virtio-net-pci,netdev=net0 \
+  -device virtio-net-pci,netdev=net0,romfile="" \
   -netdev user,id=net0 \
   -display none \
   -serial file:"$serial" \

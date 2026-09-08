@@ -77,7 +77,8 @@ class Collector:
         changed = subprocess.check_output(["git", "-C", str(self.ports), "diff", "--name-only", "HEAD"], text=True)
         untracked = subprocess.check_output(["git", "-C", str(self.ports), "ls-files", "--others", "--exclude-standard"], text=True)
         self.changed = set((changed + "\n" + untracked).splitlines())
-        if any(path.startswith(("Mk/", "Templates/", "Keywords/")) for path in self.changed):
+        audited_mk = {"Mk/bsd.freesense-package.mk"}
+        if any(path.startswith(("Templates/", "Keywords/")) or (path.startswith("Mk/") and path not in audited_mk) for path in self.changed):
             raise ValueError("customized ports framework requires a separate compatibility audit")
 
     def values(self, origin: str, names: tuple[str, ...]) -> dict[str, str]:
