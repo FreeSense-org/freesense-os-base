@@ -32,7 +32,43 @@ while IFS= read -r origin; do
 done </tmp/optional-exclusions
 
 phase optional-system-seed
-seed_poudriere_repository /root/system-repo
+if [ "${FARM_LAYOUT}" = delta-v1 ]; then
+  load_binary_seed
+  combined=/root/optional-farm-seed
+  mkdir -p "${combined}/All"
+  inventory=/tmp/optional-farm-seed-inventory
+  : >"${inventory}"
+  rm -f "${inventory}.rebuild"
+  for package in /root/system-repo/All/*.pkg /root/binary-seed/All/*.pkg; do
+    merge_package "${package}" "${combined}/All" "${inventory}" identical
+  done
+  if [ "${SYSTEM_PART}" = finalize ]; then
+    shard=0
+    while [ "${shard}" -lt "${SYSTEM_SHARD_COUNT}" ]; do
+      checkpoint=/root/optional-shard-${shard}
+      fetch_system_checkpoint shard "${shard}" "${checkpoint}"
+      for package in "${checkpoint}/${PACKAGE_ARCH}/All"/*.pkg; do
+        merge_package "${package}" "${combined}/All" "${inventory}" rebuild
+      done
+      shard=$((shard + 1))
+    done
+  else
+    sed -e '/^[[:space:]]*#/d' -e '/^[[:space:]]*$/d' tools/conf/pfPorts/poudriere_bulk \
+      | LC_ALL=C sort -u >/tmp/optional-all-roots
+    python3 /root/os-definition/scripts/partition_roots.py \
+      --config /root/os-definition/config/multiarch-shards.json --component packages \
+      --shard "${SYSTEM_SHARD_INDEX}" --roots /tmp/optional-all-roots \
+      --output tools/conf/pfPorts/poudriere_bulk
+    if [ ! -s tools/conf/pfPorts/poudriere_bulk ]; then
+      echo "FreeSense Optional shard ${SYSTEM_SHARD_INDEX}/${SYSTEM_SHARD_COUNT} has no source deltas."
+      publish_system_checkpoint shard "${SYSTEM_SHARD_INDEX}" "${combined}"
+      exit 0
+    fi
+  fi
+  seed_poudriere_repository "${combined}"
+else
+  seed_poudriere_repository /root/system-repo
+fi
 phase optional-system-seed-ready
 
 create_source_archive
@@ -40,6 +76,10 @@ phase optional-packages-build
 run_poudriere_build env NOLINUX=yes ./build.sh --update-pkg-repo
 phase optional-packages-ready
 latest=$(poudriere_latest_repository)
+if [ "${FARM_LAYOUT}:${SYSTEM_PART}" = delta-v1:shard ]; then
+  publish_system_checkpoint shard "${SYSTEM_SHARD_INDEX}" "${latest}"
+  exit 0
+fi
 mkdir -p /root/work/packages/All
 inventory=/tmp/combined-package-inventory
 : >"${inventory}"

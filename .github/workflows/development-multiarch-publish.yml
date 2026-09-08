@@ -1,0 +1,130 @@
+name: Publish Development multiarch
+
+on:
+  workflow_run:
+    workflows: [Development multiarch]
+    types: [completed]
+
+permissions: {actions: read, contents: read, id-token: write}
+concurrency: {group: development-multiarch-publication, cancel-in-progress: false}
+
+jobs:
+  publish:
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.head_branch == 'main' &&
+      vars.MULTIARCH_PUBLICATION_ENABLED == 'true'
+    runs-on: ubuntu-24.04
+    environment: channel-publisher
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+        with: {go-version-file: go.mod, cache: false}
+      - name: Download the exact successful canary evidence
+        env:
+          GH_TOKEN: ${{ github.token }}
+          UPSTREAM_RUN_ID: ${{ github.event.workflow_run.id }}
+        run: |
+          set -euo pipefail
+          mkdir -p "${RUNNER_TEMP}/bundle"
+          gh run download "${UPSTREAM_RUN_ID}" --repo "${GITHUB_REPOSITORY}" \
+            --name multiarch-authoritative-completion --dir "${RUNNER_TEMP}/bundle/completion"
+          gh run download "${UPSTREAM_RUN_ID}" --repo "${GITHUB_REPOSITORY}" \
+            --name multiarch-repository-documents --dir "${RUNNER_TEMP}/bundle/repositories"
+          gh run download "${UPSTREAM_RUN_ID}" --repo "${GITHUB_REPOSITORY}" \
+            --name multiarch-release-amd64 --dir "${RUNNER_TEMP}/bundle/amd64"
+          gh run download "${UPSTREAM_RUN_ID}" --repo "${GITHUB_REPOSITORY}" \
+            --name multiarch-release-arm64 --dir "${RUNNER_TEMP}/bundle/arm64"
+      - name: Verify the signed commit and every local document before writes
+        run: |
+          set -euo pipefail
+          go build -trimpath -o "${RUNNER_TEMP}/fsbuild" ./cmd/fsbuild
+          "${RUNNER_TEMP}/fsbuild" multiarch verify \
+            --document "${RUNNER_TEMP}/bundle/completion/multiarch-release.json" \
+            --public-key config/channel-signing-public.pem \
+            --output "${RUNNER_TEMP}/bundle/completion/payload.json"
+          python3 scripts/verify_multiarch_publication.py \
+            --completion "${RUNNER_TEMP}/bundle/completion/payload.json" \
+            --amd64-repositories "${RUNNER_TEMP}/bundle/repositories/repos.amd64.manifest.json" \
+            --arm64-repositories "${RUNNER_TEMP}/bundle/repositories/repos.aarch64.manifest.json" \
+            --amd64-release "${RUNNER_TEMP}/bundle/amd64/devel.json" \
+            --arm64-release "${RUNNER_TEMP}/bundle/arm64/devel.json"
+      - name: Acquire downloads writer
+        env:
+          R2_CREDENTIAL_BROKER_URL: ${{ vars.R2_CREDENTIAL_BROKER_URL }}
+          R2_CREDENTIAL_BROKER_AUDIENCE: ${{ vars.R2_CREDENTIAL_BROKER_AUDIENCE }}
+          R2_BUCKET: ${{ vars.R2_DOWNLOAD_BUCKET }}
+          R2_ENDPOINT: ${{ vars.R2_ENDPOINT }}
+        run: >-
+          "${RUNNER_TEMP}/fsbuild" credentials acquire --broker-url "${R2_CREDENTIAL_BROKER_URL}"
+          --audience "${R2_CREDENTIAL_BROKER_AUDIENCE}" --role download-writer
+          --expected-bucket "${R2_BUCKET}" --expected-prefix v1 --expected-endpoint "${R2_ENDPOINT}"
+          --github-env "${GITHUB_ENV}"
+      - name: Publish all immutable download artifacts
+        env:
+          R2_BUCKET: ${{ vars.R2_DOWNLOAD_BUCKET }}
+          R2_ENDPOINT: ${{ vars.R2_ENDPOINT }}
+        run: |
+          bash scripts/publish_iso.sh "${RUNNER_TEMP}/bundle/amd64/devel.json"
+          bash scripts/publish_iso.sh "${RUNNER_TEMP}/bundle/arm64/devel.json"
+      - name: Acquire channel writer
+        env:
+          R2_CREDENTIAL_BROKER_URL: ${{ vars.R2_CREDENTIAL_BROKER_URL }}
+          R2_CREDENTIAL_BROKER_AUDIENCE: ${{ vars.R2_CREDENTIAL_BROKER_AUDIENCE }}
+          R2_BUCKET: ${{ vars.R2_BUILD_BUCKET }}
+          R2_ENDPOINT: ${{ vars.R2_ENDPOINT }}
+        run: >-
+          "${RUNNER_TEMP}/fsbuild" credentials acquire --broker-url "${R2_CREDENTIAL_BROKER_URL}"
+          --audience "${R2_CREDENTIAL_BROKER_AUDIENCE}" --role channel-writer
+          --expected-bucket "${R2_BUCKET}" --expected-prefix v1 --expected-endpoint "${R2_ENDPOINT}"
+          --github-env "${GITHUB_ENV}"
+      - name: Publish qualified documents before the authoritative commit point
+        env:
+          R2_BUCKET: ${{ vars.R2_BUILD_BUCKET }}
+          R2_ENDPOINT: ${{ vars.R2_ENDPOINT }}
+        run: |
+          set -euo pipefail
+          aws s3 cp "${RUNNER_TEMP}/bundle/repositories/repos.amd64.manifest.json" \
+            "s3://${R2_BUCKET}/v1/repos.amd64.manifest.json" --endpoint-url "${R2_ENDPOINT}" \
+            --no-progress --content-type application/json --cache-control 'public, max-age=60, must-revalidate'
+          aws s3 cp "${RUNNER_TEMP}/bundle/repositories/repos.aarch64.manifest.json" \
+            "s3://${R2_BUCKET}/v1/repos.aarch64.manifest.json" --endpoint-url "${R2_ENDPOINT}" \
+            --no-progress --content-type application/json --cache-control 'public, max-age=60, must-revalidate'
+          aws s3 cp "${RUNNER_TEMP}/bundle/amd64/devel.json" \
+            "s3://${R2_BUCKET}/v1/releases/devel.amd64.json" --endpoint-url "${R2_ENDPOINT}" \
+            --no-progress --content-type application/json --cache-control 'public, max-age=60, must-revalidate'
+          aws s3 cp "${RUNNER_TEMP}/bundle/arm64/devel.json" \
+            "s3://${R2_BUCKET}/v1/releases/devel.arm64.json" --endpoint-url "${R2_ENDPOINT}" \
+            --no-progress --content-type application/json --cache-control 'public, max-age=60, must-revalidate'
+          python3 scripts/verify_multiarch_publication.py \
+            --completion "${RUNNER_TEMP}/bundle/completion/payload.json" --public-base-url https://pkg.freesense.org/v1 \
+            --amd64-repositories "${RUNNER_TEMP}/bundle/repositories/repos.amd64.manifest.json" \
+            --arm64-repositories "${RUNNER_TEMP}/bundle/repositories/repos.aarch64.manifest.json" \
+            --amd64-release "${RUNNER_TEMP}/bundle/amd64/devel.json" \
+            --arm64-release "${RUNNER_TEMP}/bundle/arm64/devel.json"
+      - name: Commit the complete pair atomically
+        env:
+          R2_BUCKET: ${{ vars.R2_BUILD_BUCKET }}
+          R2_ENDPOINT: ${{ vars.R2_ENDPOINT }}
+          FSBUILD_STORE_PREFIX: v1
+          SIGNING_KEY: ${{ secrets.FREESENSE_PKG_SIGNING_KEY }}
+        run: |
+          set -euo pipefail
+          umask 077
+          printf '%s' "${SIGNING_KEY}" >"${RUNNER_TEMP}/channel.key"
+          "${RUNNER_TEMP}/fsbuild" multiarch commit \
+            --document "${RUNNER_TEMP}/bundle/completion/multiarch-release.json" \
+            --private-key "${RUNNER_TEMP}/channel.key"
+      - name: Refresh legacy amd64 aliases after the commit point
+        env:
+          R2_BUCKET: ${{ vars.R2_BUILD_BUCKET }}
+          R2_ENDPOINT: ${{ vars.R2_ENDPOINT }}
+        run: |
+          aws s3 cp "${RUNNER_TEMP}/bundle/repositories/repos.amd64.manifest.json" \
+            "s3://${R2_BUCKET}/v1/repos.manifest.json" --endpoint-url "${R2_ENDPOINT}" \
+            --no-progress --content-type application/json --cache-control 'public, max-age=60, must-revalidate'
+          aws s3 cp "${RUNNER_TEMP}/bundle/amd64/devel.json" \
+            "s3://${R2_BUCKET}/v1/releases/devel.json" --endpoint-url "${R2_ENDPOINT}" \
+            --no-progress --content-type application/json --cache-control 'public, max-age=60, must-revalidate'

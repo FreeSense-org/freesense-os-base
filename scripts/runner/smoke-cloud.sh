@@ -224,7 +224,9 @@ prepare_ovmf() {
 }
 
 if [[ "$architecture" == arm64 ]]; then
-  qemu_command=(qemu-system-aarch64 -machine virt -accel tcg,thread=multi -cpu max -m 4096 -nographic)
+  arm_accel=tcg,thread=multi; arm_cpu=max
+  if [[ $(uname -m) == aarch64 ]]; then arm_accel=kvm; arm_cpu=host; fi
+  qemu_command=(qemu-system-aarch64 -machine virt -accel "$arm_accel" -cpu "$arm_cpu" -m 4096 -nographic)
 else
   qemu_command=(qemu-system-x86_64 -machine accel=kvm -m 4096 -nographic)
 fi

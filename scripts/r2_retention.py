@@ -59,6 +59,7 @@ DOCUMENT_KEYS = {
     "v1/releases/devel.amd64.json",
     "v1/releases/stable.arm64.json",
     "v1/releases/devel.arm64.json",
+    "v1/releases/devel.multiarch.json",
     "v1/state/retention.json",
 }
 MAX_DOCUMENT_SIZE = 1024 * 1024
@@ -235,18 +236,39 @@ def snapshot(bucket: str, endpoint: str, kind: str, captured_at: datetime) -> di
     }
 
 
-def verify_manifest(envelope: Any, public_key: Path) -> dict[str, Any]:
-    if not isinstance(envelope, dict) or envelope.get("schema_version") != ENVELOPE_SCHEMA:
-        fail("repository manifest has an unsupported envelope")
+def verify_signed_payload(envelope: Any, public_key: Path, schema: str, label: str) -> dict[str, Any]:
+    if not isinstance(envelope, dict) or envelope.get("schema_version") != schema:
+        fail(f"{label} has an unsupported envelope")
     try:
         payload = base64.b64decode(envelope["payload"], validate=True)
         signature = base64.b64decode(envelope["signature"], validate=True)
     except (KeyError, TypeError, ValueError):
-        fail("repository manifest has invalid canonical base64")
+        fail(f"{label} has invalid canonical base64")
     try:
         decoded = json.loads(payload)
     except json.JSONDecodeError:
-        fail("repository manifest payload is not JSON")
+        fail(f"{label} payload is not JSON")
+    if not isinstance(decoded, dict):
+        fail(f"{label} payload is not an object")
+
+    with tempfile.TemporaryDirectory(prefix="freesense-signed-document.") as directory:
+        root = Path(directory)
+        payload_path = root / "payload.json"
+        signature_path = root / "signature.bin"
+        payload_path.write_bytes(payload)
+        signature_path.write_bytes(signature)
+        checked = subprocess.run(
+            ["openssl", "dgst", "-sha256", "-verify", str(public_key),
+             "-signature", str(signature_path), str(payload_path)],
+            check=False, capture_output=True, text=True, encoding="utf-8",
+        )
+    if checked.returncode != 0:
+        fail(f"{label} signature is invalid")
+    return decoded
+
+
+def verify_manifest(envelope: Any, public_key: Path) -> dict[str, Any]:
+    decoded = verify_signed_payload(envelope, public_key, ENVELOPE_SCHEMA, "repository manifest")
     if (
         not isinstance(decoded, dict)
         or decoded.get("schema_version") not in PAYLOAD_SCHEMAS
@@ -254,30 +276,27 @@ def verify_manifest(envelope: Any, public_key: Path) -> dict[str, Any]:
     ):
         fail("repository manifest payload has an unsupported schema")
 
-    with tempfile.TemporaryDirectory(prefix="freesense-manifest.") as directory:
-        root = Path(directory)
-        payload_path = root / "payload.json"
-        signature_path = root / "signature.bin"
-        payload_path.write_bytes(payload)
-        signature_path.write_bytes(signature)
-        checked = subprocess.run(
-            [
-                "openssl",
-                "dgst",
-                "-sha256",
-                "-verify",
-                str(public_key),
-                "-signature",
-                str(signature_path),
-                str(payload_path),
-            ],
-            check=False,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-        )
-    if checked.returncode != 0:
-        fail("repository manifest signature is invalid")
+    return decoded
+
+
+def verify_multiarch(envelope: Any, public_key: Path) -> dict[str, Any]:
+    decoded = verify_signed_payload(
+        envelope, public_key, "freesense.multiarch-release/v1", "multiarch completion"
+    )
+    arches = decoded.get("architectures")
+    if (decoded.get("schema_version") != "freesense.multiarch-release/v1"
+            or decoded.get("channel") != "devel"
+            or not isinstance(decoded.get("generation"), int)
+            or decoded["generation"] < 1
+            or not isinstance(arches, dict) or set(arches) != {"amd64", "arm64"}):
+        fail("multiarch completion payload is invalid")
+    for arch, value in arches.items():
+        if (not isinstance(value, dict)
+                or not SHA256.fullmatch(str(value.get("system_fingerprint", "")))
+                or not SHA256.fullmatch(str(value.get("packages_fingerprint", "")))
+                or not SHA256.fullmatch(str(value.get("repository_document_sha256", "")))
+                or not SHA256.fullmatch(str(value.get("release_document_sha256", "")))):
+            fail(f"multiarch completion has invalid {arch} component identity")
     return decoded
 
 
@@ -570,6 +589,8 @@ def plan_retention(
     smoke_keep: int = 1,
     stable_train: str | None = None,
     development_train: str | None = None,
+    multiarch: dict[str, Any] | None = None,
+    release_documents: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     if keep_devel < 1:
         fail("Development retention must keep at least one completed build")
@@ -659,6 +680,44 @@ def plan_retention(
             devel["cloud"].append(entry)
         else:
             devel["appliance"].append(entry)
+
+    if multiarch is not None:
+        for arch, value in multiarch["architectures"].items():
+            protected_prefixes.add(f"v1/artifacts/system/{value['system_fingerprint']}")
+            protected_prefixes.add(
+                f"v1/artifacts/packages/{development_train}/{value['packages_fingerprint']}"
+            )
+            rel_key = f"v1/releases/devel.{arch}.json"
+            rel_doc = None
+            if release_documents and arch in release_documents:
+                raw = release_documents[arch]
+                if isinstance(raw, (bytes, bytearray)):
+                    if hashlib.sha256(raw).hexdigest() != value.get("release_document_sha256"):
+                        fail(f"{arch} release document differs from authoritative multiarch completion")
+                    try:
+                        rel_doc = json.loads(raw.decode("utf-8"))
+                    except json.JSONDecodeError:
+                        fail(f"{arch} release document is not valid JSON")
+                elif isinstance(raw, dict):
+                    expected_hash = value.get("release_document_sha256")
+                    doc_hash = build.get("document_hashes", {}).get(rel_key)
+                    if doc_hash and expected_hash and doc_hash != expected_hash:
+                        fail(f"{arch} release document differs from authoritative multiarch completion")
+                    rel_doc = raw
+            elif rel_key in build.get("documents", {}):
+                doc_hash = build.get("document_hashes", {}).get(rel_key)
+                expected_hash = value.get("release_document_sha256")
+                if doc_hash and expected_hash and doc_hash != expected_hash:
+                    fail(f"{arch} release document differs from authoritative multiarch completion")
+                rel_doc = build["documents"][rel_key]
+
+            if rel_doc is not None and isinstance(rel_doc, dict):
+                for item in rel_doc.get("artifacts", []):
+                    kind = item.get("kind")
+                    stage = {"installer": "iso", "cloud": "cloud", "appliance": "appliance"}.get(kind)
+                    fp = item.get("artifact_fingerprint", item.get("build_fingerprint"))
+                    if stage and fp and SHA256.fullmatch(str(fp)):
+                        protected_prefixes.add(f"v1/artifacts/{stage}/{fp}")
 
     entries = devel["system"]
     entries.sort(key=lambda item: (item["generation"], item["prefix"]), reverse=True)
@@ -1234,6 +1293,16 @@ def main() -> None:
             or not re.fullmatch(r"[0-9]+\.[0-9]+", development_train)
             or stable_train == development_train):
         fail("build policy has invalid release trains")
+    completion_envelope = documents.get("v1/releases/devel.multiarch.json")
+    completion = (
+        verify_multiarch(completion_envelope, args.public_key)
+        if completion_envelope is not None else None
+    )
+    release_documents = {}
+    for arch in ("amd64", "arm64"):
+        rel_key = f"v1/releases/devel.{arch}.json"
+        if rel_key in documents:
+            release_documents[arch] = documents[rel_key]
     report = plan_retention(
         build,
         downloads,
@@ -1246,6 +1315,8 @@ def main() -> None:
         args.keep_smoke,
         stable_train,
         development_train,
+        completion,
+        release_documents=release_documents,
     )
     args.output.write_text(
         json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8"

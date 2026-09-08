@@ -4,13 +4,32 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/rsa"
-	"errors"
+	"crypto/x509"
+	"encoding/pem"
 	"reflect"
 	"testing"
 	"time"
 
 	"github.com/FreeSense-org/freesense-os-base/internal/store"
 )
+
+func TestParsePublicKeyAcceptsCanonicalRSAAndRejectsTrailingData(t *testing.T) {
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := x509.MarshalPKIXPublicKey(&key.PublicKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded := pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: data})
+	if parsed, err := ParsePublicKey(encoded); err != nil || parsed.N.Cmp(key.N) != 0 {
+		t.Fatalf("parse public key: %v", err)
+	}
+	if _, err := ParsePublicKey(append(encoded, []byte("trailing")...)); err == nil {
+		t.Fatal("accepted trailing public-key data")
+	}
+}
 
 type memoryStore struct{ objects map[string]store.Object }
 
@@ -37,8 +56,17 @@ func (m *memoryStore) PutIfAbsent(_ context.Context, key string, content store.C
 	m.objects[key] = store.Object{Key: key, Data: data, Size: content.Size, ETag: content.SHA256, SHA256: content.SHA256}
 	return store.ObjectInfo{Key: key, Size: content.Size, ETag: content.SHA256, SHA256: content.SHA256}, true, nil
 }
-func (m *memoryStore) CompareAndSwap(context.Context, string, string, store.Content) (store.ObjectInfo, error) {
-	return store.ObjectInfo{}, errors.New("unused")
+func (m *memoryStore) CompareAndSwap(_ context.Context, key, expected string, content store.Content) (store.ObjectInfo, error) {
+	current, ok := m.objects[key]
+	if !ok || current.ETag != expected {
+		return store.ObjectInfo{}, store.ErrPrecondition
+	}
+	reader, _ := content.Open()
+	defer reader.Close()
+	data := make([]byte, content.Size)
+	_, _ = reader.Read(data)
+	m.objects[key] = store.Object{Key: key, Data: data, Size: content.Size, ETag: content.SHA256, SHA256: content.SHA256}
+	return store.ObjectInfo{Key: key, Size: content.Size, ETag: content.SHA256, SHA256: content.SHA256}, nil
 }
 
 func TestGenerationReservationIsStableAcrossRetries(t *testing.T) {

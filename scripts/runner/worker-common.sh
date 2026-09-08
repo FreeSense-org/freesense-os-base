@@ -22,7 +22,7 @@ for name in AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN R2_ENDPOIN
   CHANNEL_PAYLOAD_B64 CHANNEL_SIGNATURE_B64 BUNDLE_ID CLOUD_FILESYSTEM CLOUD_VIRTUAL_SIZE_GIB \
   TARGET ARCHITECTURE PACKAGE_ARCH ABI ALTABI FREEBSD_TARGET FREEBSD_TARGET_ARCH POUDRIERE_ARCH KERNEL \
   EXECUTOR IMAGE_PROFILE FIRMWARE IMAGE_CAPABILITIES INSTALLER_FORMAT PUBLISH_ENABLED \
-  SYSTEM_PART SYSTEM_SHARD_INDEX SYSTEM_SHARD_COUNT \
+  SYSTEM_PART SYSTEM_SHARD_INDEX SYSTEM_SHARD_COUNT BINARY_SEED_OBJECT BINARY_SEED_PROVENANCE_SHA256 FARM_LAYOUT \
   BOOT_INPUTS TARGET_MODELS PARTITION_SCHEME APPLIANCE_FILESYSTEM APPLIANCE_FORMAT APPLIANCE_COMPRESSION; do
   eval "$name=\$(decode \"\${${name}_B64}\")"
 done
@@ -40,7 +40,23 @@ esac
   echo "invalid System shard coordinates" >&2
   exit 1
 }
-if [ "${STAGE}" = system ]; then
+case "${FARM_LAYOUT}" in legacy|delta-v1) : ;; *) echo "invalid farm layout" >&2; exit 1 ;; esac
+if [ "${FARM_LAYOUT}" = delta-v1 ]; then
+  [ "${SYSTEM_SHARD_COUNT}" -eq 4 ] || { echo "delta farm requires four shards" >&2; exit 1; }
+  case "${STAGE}:${SYSTEM_PART}" in system:core|system:shard|system:finalize|packages:shard|packages:finalize) : ;;
+    *) echo "invalid delta farm part" >&2; exit 1 ;;
+  esac
+  case "${BINARY_SEED_OBJECT}" in inputs/sha256/*) : ;; *) echo "delta farm requires a pinned binary seed" >&2; exit 1 ;; esac
+  [ "${#BINARY_SEED_PROVENANCE_SHA256}" -eq 64 ] || { echo "delta farm requires pinned provenance" >&2; exit 1; }
+  seed_hash=${BINARY_SEED_OBJECT##*/}
+  for value in "${seed_hash}" "${BINARY_SEED_PROVENANCE_SHA256}"; do
+    case "${value}" in *[!0-9a-f]*) echo "invalid seed SHA-256" >&2; exit 1 ;; esac
+    [ "${#value}" -eq 64 ] || { echo "invalid seed SHA-256" >&2; exit 1; }
+  done
+  if [ "${SYSTEM_PART}" != shard ] && [ "${SYSTEM_SHARD_INDEX}" -ne 0 ]; then
+    echo "core/finalizer requires shard index zero" >&2; exit 1
+  fi
+elif [ "${STAGE}" = system ]; then
   case "${SYSTEM_PART}" in full|core|bootstrap|shard|dependent|finalize) : ;; *)
     echo "invalid System farm part" >&2; exit 1 ;;
   esac
@@ -233,7 +249,7 @@ configure_source() {
     printf '%s' "${FREESENSE_REPO_SIGNING_KEY}" >/root/sign/repo.key
     chmod 400 /root/sign/repo.key
     openssl pkey -in /root/sign/repo.key -pubout -out /root/sign/repo.pub >/dev/null 2>&1
-  elif [ "${STAGE}" = system ] && { [ "${SYSTEM_PART}" = core ] || \
+  elif { [ "${STAGE}" = system ] || [ "${STAGE}:${FARM_LAYOUT}" = packages:delta-v1 ]; } && { [ "${SYSTEM_PART}" = core ] || \
       [ "${SYSTEM_PART}" = bootstrap ] || [ "${SYSTEM_PART}" = shard ] || \
       [ "${SYSTEM_PART}" = dependent ]; }; then
     cp /root/os-definition/config/channel-signing-public.pem /root/sign/repo.pub
@@ -377,13 +393,43 @@ merge_package() {
   name=${metadata%%|*}
   filename=$(basename "${package}")
   sha=$(sha256 -q "${package}") || return 1
+  if [ "${duplicate_policy}" = rebuild ] && [ -f "${inventory}.rebuild" ]; then
+    if awk -F '|' -v name="${name}" -v filename="${filename}" \
+      '$1 == name || $2 == filename { found=1 } END { exit !found }' "${inventory}.rebuild"; then
+      echo "Leaving conflicting seed package for authoritative rebuild: ${filename}"
+      return 0
+    fi
+  fi
   existing=$(awk -F '|' -v name="${name}" -v filename="${filename}" \
     '$1 == name || $6 == filename { print; exit }' "${inventory}")
   if [ -n "${existing}" ]; then
     existing_without_path=${existing%|*}
-    if [ "${duplicate_policy}" = identical ] && \
+    if { [ "${duplicate_policy}" = identical ] || [ "${duplicate_policy}" = rebuild ]; } && \
       [ "${existing_without_path}" = "${metadata}|${filename}|${sha}" ]; then
       echo "Reusing identical package already supplied by System: ${filename}"
+      return 0
+    fi
+    if [ "${duplicate_policy}" = rebuild ]; then
+      # Only disposable, unsealed delta seeds use this policy. Remember both
+      # identities so a later shard cannot reintroduce a discarded variant.
+      awk -F '|' -v name="${name}" -v filename="${filename}" \
+        '$1 == name || $6 == filename { print $1 "|" $6 }' "${inventory}" >"${inventory}.conflicts"
+      while IFS='|' read -r conflict_name conflict_file; do
+        [ "${conflict_name}" != pkg ] && [ "${name}" != pkg ] || {
+          echo "conflicting pkg bootstrap cannot seed Poudriere" >&2; return 1;
+        }
+        case "${conflict_file}" in
+          ''|*/*|*..*) echo "invalid seed inventory filename" >&2; return 1 ;;
+        esac
+        rm -f "${destination}/${conflict_file}"
+      done <"${inventory}.conflicts"
+      cat "${inventory}.conflicts" >>"${inventory}.rebuild"
+      printf '%s|%s\n' "${name}" "${filename}" >>"${inventory}.rebuild"
+      awk -F '|' -v name="${name}" -v filename="${filename}" \
+        '$1 != name && $6 != filename' "${inventory}" >"${inventory}.next"
+      mv "${inventory}.next" "${inventory}"
+      rm -f "${inventory}.conflicts"
+      echo "Discarded conflicting delta seed for authoritative rebuild: ${name}"
       return 0
     fi
     echo "conflicting package name or filename while composing repository: ${name}" >&2
@@ -409,6 +455,7 @@ merge_package() {
 publish_system_checkpoint() {
   checkpoint_kind=$1 checkpoint_id=$2 checkpoint_directory=$3
   checkpoint_farm="${RESULT}/checkpoints/farm-${SYSTEM_SHARD_COUNT}"
+  if [ "${FARM_LAYOUT}" = delta-v1 ]; then checkpoint_farm="${checkpoint_farm}/${ARCHITECTURE}/delta-v1"; fi
   case "${checkpoint_kind}" in
     core) checkpoint_result="${checkpoint_farm}/core" ;;
     bootstrap) checkpoint_result="${checkpoint_farm}/bootstrap" ;;
@@ -470,6 +517,14 @@ publish_system_checkpoint() {
         freebsd_pin_id:$freebsd_pin_id,package_train:$package_train,
         signing_public_key:$signing_public_key},packages:.}' \
     "${checkpoint_items}" >"${checkpoint_marker}"
+  if [ "${FARM_LAYOUT}" = delta-v1 ]; then
+    jq --arg stage "${STAGE}" --arg packages "${PACKAGES_SHA}" --arg executor "${EXECUTOR}" \
+      --arg seed "${BINARY_SEED_OBJECT}" '
+      .schema_version = "freesense.component-checkpoint/v1" | .stage = $stage |
+      .inputs.packages = $packages | .inputs.executor = $executor | .inputs.binary_seed = $seed
+    ' "${checkpoint_marker}" >"${checkpoint_marker}.next"
+    mv "${checkpoint_marker}.next" "${checkpoint_marker}"
+  fi
   phase system-checkpoint-publish
   for package in "${checkpoint_directory}"/All/*.pkg; do
     [ -f "${package}" ] || continue
@@ -484,6 +539,7 @@ publish_system_checkpoint() {
 fetch_system_checkpoint() {
   checkpoint_kind=$1 checkpoint_id=$2 checkpoint_destination=$3
   checkpoint_farm="${RESULT}/checkpoints/farm-${SYSTEM_SHARD_COUNT}"
+  if [ "${FARM_LAYOUT}" = delta-v1 ]; then checkpoint_farm="${checkpoint_farm}/${ARCHITECTURE}/delta-v1"; fi
   case "${checkpoint_kind}" in
     core) checkpoint_source="${checkpoint_farm}/core" ;;
     bootstrap) checkpoint_source="${checkpoint_farm}/bootstrap" ;;
@@ -501,7 +557,17 @@ fetch_system_checkpoint() {
   rclone copy --error-on-no-transfer --retries 10 --low-level-retries 20 \
     "${checkpoint_source}" "${checkpoint_part}"
   marker=${checkpoint_part}/complete.json
+  checkpoint_schema=freesense.system-checkpoint/v1
+  if [ "${FARM_LAYOUT}" = delta-v1 ]; then
+    checkpoint_schema=freesense.component-checkpoint/v1
+    jq -e --arg stage "${STAGE}" --arg packages "${PACKAGES_SHA}" --arg executor "${EXECUTOR}" \
+      --arg seed "${BINARY_SEED_OBJECT}" '
+      .stage == $stage and .inputs.packages == $packages and
+      .inputs.executor == $executor and .inputs.binary_seed == $seed
+    ' "${marker}" >/dev/null || { echo "checkpoint executor/seed/component mismatch" >&2; return 1; }
+  fi
   jq -e --arg kind "${checkpoint_kind}" --arg id "${checkpoint_id}" \
+    --arg checkpoint_schema "${checkpoint_schema}" \
     --arg fingerprint "${FINGERPRINT}" --arg platform "${PLATFORM_ID}" \
     --arg system "${SYSTEM_ID}" --arg source "${SOURCE_SHA}" \
     --arg system_ports "${SYSTEM_SHA}" --arg os_definition "${OS_BASE_SHA}" \
@@ -510,7 +576,7 @@ fetch_system_checkpoint() {
     --arg architecture "${ARCHITECTURE}" --arg package_arch "${PACKAGE_ARCH}" \
     --arg signing_public_key "${derived_fingerprint}" \
     --argjson generation "${GENERATION}" --argjson shard_count "${SYSTEM_SHARD_COUNT}" '
-      .schema_version == "freesense.system-checkpoint/v1" and .kind == $kind and .id == $id and
+      .schema_version == $checkpoint_schema and .kind == $kind and .id == $id and
       .fingerprint == $fingerprint and .generation == $generation and
       .architecture == $architecture and .package_arch == $package_arch and
       .shard_count == $shard_count and .inputs.platform == $platform and
@@ -642,7 +708,7 @@ poudriere_latest_repository() {
 
 create_jail() {
   phase poudriere-jail
-  if [ "${FREEBSD_TARGET_ARCH}" = aarch64 ]; then
+  if [ "${FREEBSD_TARGET_ARCH}" = aarch64 ] && [ "${EXECUTOR}" = amd64-cross-qemu-user ]; then
     command -v qemu-aarch64-static >/dev/null || {
       echo "the pinned worker-tools bundle is missing qemu-aarch64-static" >&2
       return 1
@@ -673,7 +739,12 @@ create_jail() {
     jail_root="/usr/local/poudriere/jails/FreeSense_main_${FREEBSD_TARGET_ARCH}"
     probe="${jail_root}/bin/echo"
     file "${probe}" | grep -q 'ARM aarch64' || { echo "aarch64 jail probe has wrong architecture" >&2; return 1; }
-    qemu-aarch64-static -L "${jail_root}" "${probe}" freesense-aarch64-probe \
+    if [ "${EXECUTOR}" = native-arm64 ]; then
+      [ "$(uname -p)" = aarch64 ] || { echo "native ARM64 executor has wrong host" >&2; return 1; }
+      chroot "${jail_root}" /bin/echo freesense-aarch64-probe
+    else
+      qemu-aarch64-static -L "${jail_root}" "${probe}" freesense-aarch64-probe
+    fi \
       | grep -qx freesense-aarch64-probe || {
       echo "aarch64 target executable probe failed" >&2; return 1;
     }
@@ -860,6 +931,7 @@ EOF
 
 publish_repository() {
   directory=$1
+  record_upstream_provenance "${directory}"
   phase repository-publish
   test -n "$(find "${directory}/All" -type f -name '*.pkg' -print -quit)"
   find "${directory}" -type f ! -name complete.json | while IFS= read -r file; do
@@ -880,6 +952,70 @@ publish_repository() {
     --argjson capabilities "${IMAGE_CAPABILITIES}" --argjson generation "${GENERATION}" \
     '{schema_version:"freesense.artifact/v1",stage:$stage,fingerprint:$fingerprint,generation:$generation,architecture:$architecture,package_arch:$package_arch,platform:$image_profile,firmware:($firmware|split(",")),capabilities:$capabilities,inputs:{platform:$platform,system:$system,source:$source,system_ports:$system_ports,freebsd:$freebsd,ports:$ports,freebsd_pin_id:$freebsd_pin_id,package_train:$package_train,os_definition:$os_definition,worker_image:$worker_image,worker_tools:$worker_tools,jail_object:$jail_object,signing_public_key:$signing_public_key}} | if $stage == "packages" then .inputs.packages = $packages | .inputs.built_against_system = $system else . end' \
     >"${directory}/complete.json"
+  if [ -n "${BINARY_SEED_OBJECT}" ]; then
+    jq --arg seed "${BINARY_SEED_OBJECT}" --arg executor "${EXECUTOR}" \
+      --arg provenance "$(sha256 -q "${directory}/upstream-provenance.json")" '
+      .inputs.binary_seed = $seed | .inputs.executor = $executor |
+      .inputs.upstream_provenance_sha256 = $provenance
+    ' "${directory}/complete.json" >"${directory}/complete.json.next"
+    mv "${directory}/complete.json.next" "${directory}/complete.json"
+  fi
   upload_immutable "${directory}/complete.json" "${RESULT}/complete.json"
   phase repository-complete
+}
+
+# The seed is a pin-time product. Runtime has no upstream repository URL and
+# Poudriere remains responsible for rebuilding incompatible or missing bytes.
+load_binary_seed() {
+  [ -n "${BINARY_SEED_OBJECT}" ] || return 0
+  [ -f /root/binary-seed/provenance.json ] && return 0
+  fetch_input "${BINARY_SEED_OBJECT}" /root/binary-seed.tar
+  mkdir -p /root/binary-seed
+  tar -tf /root/binary-seed.tar | while IFS= read -r member; do
+    case "${member}" in
+      provenance.json) : ;;
+      All/*.pkg)
+        case "${member#All/}" in ''|*/*|*[!A-Za-z0-9+,.@_~-]*) echo "unsafe seed member" >&2; exit 1 ;; esac ;;
+      *) echo "unexpected seed archive member" >&2; exit 1 ;;
+    esac
+  done
+  tar -xpf /root/binary-seed.tar -C /root/binary-seed
+  [ "$(sha256 -q /root/binary-seed/provenance.json)" = "${BINARY_SEED_PROVENANCE_SHA256}" ] || {
+    echo "binary seed provenance hash mismatch" >&2; return 1;
+  }
+  jq -e --arg abi "${ABI}" '
+    .schema_version == "freesense.binary-seed/v1" and .abi == $abi and
+    (.packages | type == "array" and length > 0) and
+    any(.packages[]; .name == "rust" and .origin == "lang/rust") and
+    all(.packages[]; .abi == $abi and
+      (.file | test("^All/[A-Za-z0-9][A-Za-z0-9+,.@_~-]*[.]pkg$")) and
+      (.sha256 | test("^[0-9a-f]{64}$")))
+  ' /root/binary-seed/provenance.json >/dev/null
+  jq -r '.packages[] | [.file,.sha256,(.size|tostring),.name,.version,.origin] | @tsv' \
+    /root/binary-seed/provenance.json >/tmp/binary-seed-checks
+  tab=$(printf '\t')
+  while IFS="${tab}" read -r filename sha size name version origin; do
+    package=/root/binary-seed/${filename}
+    [ -f "${package}" ] && [ ! -L "${package}" ] && \
+      [ "$(sha256 -q "${package}")" = "${sha}" ] && \
+      [ "$(stat -f %z "${package}")" = "${size}" ] && \
+      [ "$(pkg query -F "${package}" '%n|%v|%o|%q')" = "${name}|${version}|${origin}|${ABI}" ] || {
+      echo "binary seed package integrity or ABI mismatch" >&2; return 1;
+    }
+  done </tmp/binary-seed-checks
+}
+
+record_upstream_provenance() {
+  [ -n "${BINARY_SEED_OBJECT}" ] || return 0
+  load_binary_seed
+  : >/tmp/upstream-reused.jsonl
+  for package in "$1"/All/*.pkg; do
+    [ -f "${package}" ] || continue
+    sha=$(sha256 -q "${package}")
+    jq -c --arg sha "${sha}" '.packages[] | select(.sha256 == $sha)' \
+      /root/binary-seed/provenance.json >>/tmp/upstream-reused.jsonl
+  done
+  jq -s --arg seed "${BINARY_SEED_OBJECT}" --arg abi "${ABI}" \
+    '{schema_version:"freesense.upstream-provenance/v1",binary_seed:$seed,abi:$abi,packages:.}' \
+    /tmp/upstream-reused.jsonl >"$1/upstream-provenance.json"
 }

@@ -1,0 +1,8 @@
+{
+  "schema_version": "freesense.multiarch-shards/v1",
+  "count": 4,
+  "measured_heavy_roots": {
+    "system": ["sysutils/telegraf"],
+    "packages": []
+  }
+}

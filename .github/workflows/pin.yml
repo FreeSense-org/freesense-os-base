@@ -3,10 +3,15 @@ name: Pin FreeBSD
 on:
   workflow_dispatch:
     inputs:
-      force:
-        description: Rotate the pin before the normal 14-day boundary
+      security_rollover:
+        description: Rotate early for an explicitly identified security issue
         type: boolean
         default: false
+        required: false
+      security_reference:
+        description: Required advisory or issue URL for an early security rollover
+        type: string
+        default: ''
         required: false
   schedule:
     - cron: "0 2 * * *"
@@ -19,29 +24,21 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  pin:
+  resolve:
     if: github.ref == 'refs/heads/main'
-    runs-on: [self-hosted, build-runner]
-    concurrency:
-      group: freesense-kvm-host
-      cancel-in-progress: false
-    timeout-minutes: 120
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
     environment: pin
     permissions:
-      actions: write
-      contents: write
-      id-token: write
-      pull-requests: write
+      contents: read
     env:
-      FORCE_PIN: ${{ inputs.force || false }}
-      R2_CREDENTIAL_BROKER_URL: ${{ vars.R2_CREDENTIAL_BROKER_URL }}
-      R2_CREDENTIAL_BROKER_AUDIENCE: ${{ vars.R2_CREDENTIAL_BROKER_AUDIENCE }}
-      R2_BUCKET: ${{ vars.R2_BUILD_BUCKET }}
-      R2_ENDPOINT: ${{ vars.R2_ENDPOINT }}
-      FSBUILD_STORE_PREFIX: v1
+      SECURITY_ROLLOVER: ${{ inputs.security_rollover || false }}
+      SECURITY_REFERENCE: ${{ inputs.security_reference || '' }}
       GH_TOKEN: ${{ github.token }}
+    outputs:
+      due: ${{ steps.window.outputs.due }}
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
         with:
           fetch-depth: 1
 
@@ -52,9 +49,13 @@ jobs:
           set -euo pipefail
           valid_until=$(jq -er .valid_until config/freebsd-16.json)
           due_at=$(date -u --date="${valid_until} - 4 hours" +%s)
-          if [[ "${FORCE_PIN}" == true ]]; then
+          if [[ "${SECURITY_ROLLOVER}" == true ]]; then
+            [[ "${SECURITY_REFERENCE}" =~ ^https://[^[:space:]]+$ ]] || {
+              echo "Early security rollover requires an advisory or issue URL." >&2
+              exit 1
+            }
             echo "due=true" >>"${GITHUB_OUTPUT}"
-            echo "Manual early pin rotation requested."
+            echo "Explicit security rollover requested: ${SECURITY_REFERENCE}"
           elif (( $(date -u +%s) >= due_at )); then
             echo "due=true" >>"${GITHUB_OUTPUT}"
           else
@@ -62,18 +63,177 @@ jobs:
             echo "FreeBSD remains pinned through ${valid_until}."
           fi
 
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      - name: Resolve shared snapshot metadata and freeze FreeSense source commits
         if: steps.window.outputs.due == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          DIST_AMD64="https://download.freebsd.org/snapshots/amd64/16.0-CURRENT"
+          DIST_ARM64="https://download.freebsd.org/snapshots/arm64/16.0-CURRENT"
+          VM_AMD64="https://download.freebsd.org/snapshots/VM-IMAGES/16.0-CURRENT/amd64/Latest"
+          VM_ARM64="https://download.freebsd.org/snapshots/VM-IMAGES/16.0-CURRENT/arm64/Latest"
+
+          downloads="${RUNNER_TEMP}/downloads"
+          mkdir -p "${downloads}/amd64" "${downloads}/arm64" "${RUNNER_TEMP}/pin-common"
+
+          retry=(--fail --location --silent --show-error --retry 5 --retry-all-errors --proto '=https')
+
+          curl "${retry[@]}" -o "${downloads}/amd64/MANIFEST" "${DIST_AMD64}/MANIFEST"
+          curl "${retry[@]}" -o "${downloads}/arm64/MANIFEST" "${DIST_ARM64}/MANIFEST"
+
+          curl "${retry[@]}" -o "${downloads}/amd64/CHECKSUM.SHA256" "${VM_AMD64}/CHECKSUM.SHA256"
+          curl "${retry[@]}" -o "${downloads}/arm64/CHECKSUM.SHA256" "${VM_ARM64}/CHECKSUM.SHA256"
+
+          curl "${retry[@]}" -o "${downloads}/amd64/packagesite.pkg" "https://pkg.freebsd.org/FreeBSD:16:amd64/latest/packagesite.pkg"
+          curl "${retry[@]}" -o "${downloads}/arm64/packagesite.pkg" "https://pkg.freebsd.org/FreeBSD:16:aarch64/latest/packagesite.pkg"
+
+          amd_revision=$(curl "${retry[@]}" "${DIST_AMD64}/REVISION" | tr -d '\r\n')
+          amd_builddate=$(curl "${retry[@]}" "${DIST_AMD64}/BUILDDATE" | tr -d '\r\n')
+          arm_revision=$(curl "${retry[@]}" "${DIST_ARM64}/REVISION" | tr -d '\r\n')
+          arm_builddate=$(curl "${retry[@]}" "${DIST_ARM64}/BUILDDATE" | tr -d '\r\n')
+
+          if [[ "${amd_revision}" != "${arm_revision}" || "${amd_builddate}" != "${arm_builddate}" ]]; then
+            echo "Snapshot mismatch: amd64 (${amd_revision}, ${amd_builddate}) vs arm64 (${arm_revision}, ${arm_builddate})" >&2
+            exit 1
+          fi
+
+          revision="${amd_revision}"
+          builddate="${amd_builddate}"
+          [[ "${revision}" =~ ^[0-9a-f]{12}$ ]]
+          [[ "${builddate}" =~ ^[0-9]{8}$ ]]
+
+          source_sha=$(gh api "repos/freebsd/freebsd-src/commits/${revision}" --jq .sha)
+          [[ "${source_sha}" =~ ^[0-9a-f]{40}$ ]]
+
+          curl "${retry[@]}" -o "${RUNNER_TEMP}/param.h" \
+            "https://raw.githubusercontent.com/freebsd/freebsd-src/${source_sha}/sys/sys/param.h"
+          osversion=$(awk '/^#[[:space:]]*define[[:space:]]+__FreeBSD_version[[:space:]]+/ {print $3}' \
+            "${RUNNER_TEMP}/param.h")
+          [[ "${osversion}" =~ ^16[0-9]{5}$ ]]
+
+          curl "${retry[@]}" -o "${RUNNER_TEMP}/trusted_key" \
+            "https://raw.githubusercontent.com/freebsd/freebsd-src/${source_sha}/share/keys/pkg/trusted/pkg.freebsd.org.2013102301"
+          trusted_key_sha256=$(sed -nE 's/^fingerprint: "([0-9a-f]{64})"$/\1/p' "${RUNNER_TEMP}/trusted_key")
+          [[ "${trusted_key_sha256}" =~ ^[0-9a-f]{64}$ ]]
+
+          freesense_sha=$(gh api repos/FreeSense-org/freesense/commits/main --jq .sha)
+          system_ports_sha=$(gh api repos/FreeSense-org/freesense-system-ports/commits/main --jq .sha)
+          packages_sha=$(gh api repos/FreeSense-org/freesense-packages/commits/main --jq .sha)
+          os_base_sha="${GITHUB_SHA}"
+
+          [[ "${freesense_sha}" =~ ^[0-9a-f]{40}$ ]]
+          [[ "${system_ports_sha}" =~ ^[0-9a-f]{40}$ ]]
+          [[ "${packages_sha}" =~ ^[0-9a-f]{40}$ ]]
+          [[ "${os_base_sha}" =~ ^[0-9a-f]{40}$ ]]
+
+          jq -n \
+            --arg revision "${revision}" \
+            --arg build_date "${builddate}" \
+            --arg source_commit "${source_sha}" \
+            --argjson osversion "${osversion}" \
+            --arg trusted_key_sha256 "${trusted_key_sha256}" \
+            --arg dist_amd64 "${DIST_AMD64}" \
+            --arg dist_arm64 "${DIST_ARM64}" \
+            --arg vm_amd64 "${VM_AMD64}" \
+            --arg vm_arm64 "${VM_ARM64}" \
+            '{revision: $revision, build_date: $build_date, source_commit: $source_commit,
+              osversion: $osversion, trusted_key_sha256: $trusted_key_sha256,
+              dist_urls: {amd64: $dist_amd64, arm64: $dist_arm64},
+              vm_urls: {amd64: $vm_amd64, arm64: $vm_arm64}}' >"${RUNNER_TEMP}/metadata.json"
+
+          jq -n \
+            --arg freesense "${freesense_sha}" \
+            --arg system_ports "${system_ports_sha}" \
+            --arg packages "${packages_sha}" \
+            --arg os_base "${os_base_sha}" \
+            '{freesense: $freesense, system_ports: $system_ports, packages: $packages, os_base: $os_base}' \
+            >"${RUNNER_TEMP}/sources.json"
+
+          extra_flags=()
+          if [[ "${SECURITY_ROLLOVER}" == true ]]; then
+            extra_flags+=(--security-rollover)
+          fi
+
+          python3 scripts/resolve_multiarch_pin.py \
+            --previous config/freebsd-16.json \
+            --directory "${downloads}" \
+            --metadata "${RUNNER_TEMP}/metadata.json" \
+            --sources "${RUNNER_TEMP}/sources.json" \
+            --output "${RUNNER_TEMP}/pin-common/common.json" \
+            "${extra_flags[@]}"
+
+      - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f
+        if: steps.window.outputs.due == 'true'
+        with:
+          name: freebsd-pin-common
+          path: ${{ runner.temp }}/pin-common/common.json
+          if-no-files-found: error
+          retention-days: 14
+
+  target_amd64:
+    needs: resolve
+    if: needs.resolve.outputs.due == 'true'
+    uses: ./.github/workflows/pin-target.yml
+    with:
+      architecture: amd64
+    secrets: inherit
+
+  target_arm64:
+    needs: resolve
+    if: needs.resolve.outputs.due == 'true'
+    uses: ./.github/workflows/pin-target.yml
+    with:
+      architecture: arm64
+    secrets: inherit
+
+  finalize:
+    needs: [resolve, target_amd64, target_arm64]
+    if: needs.resolve.outputs.due == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    environment: pin
+    permissions:
+      actions: write
+      contents: write
+      id-token: write
+      pull-requests: write
+    env:
+      SECURITY_ROLLOVER: ${{ inputs.security_rollover || false }}
+      R2_CREDENTIAL_BROKER_URL: ${{ vars.R2_CREDENTIAL_BROKER_URL }}
+      R2_CREDENTIAL_BROKER_AUDIENCE: ${{ vars.R2_CREDENTIAL_BROKER_AUDIENCE }}
+      R2_BUCKET: ${{ vars.R2_BUILD_BUCKET }}
+      R2_ENDPOINT: ${{ vars.R2_ENDPOINT }}
+      FSBUILD_STORE_PREFIX: v1
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
         with:
           go-version-file: go.mod
           cache: false
 
       - name: Build coordinator
-        if: steps.window.outputs.due == 'true'
         run: go build -trimpath -o "${RUNNER_TEMP}/fsbuild" ./cmd/fsbuild
 
+      - uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16
+        with:
+          name: freebsd-pin-common
+          path: ${{ runner.temp }}/pin-common
+
+      - uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16
+        with:
+          name: freebsd-pin-amd64
+          path: ${{ runner.temp }}/pin-amd64
+
+      - uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16
+        with:
+          name: freebsd-pin-arm64
+          path: ${{ runner.temp }}/pin-arm64
+
       - name: Acquire short-lived pin credentials
-        if: steps.window.outputs.due == 'true'
         run: >-
           "${RUNNER_TEMP}/fsbuild" credentials acquire
           --broker-url "${R2_CREDENTIAL_BROKER_URL}"
@@ -84,321 +244,71 @@ jobs:
           --expected-endpoint "${R2_ENDPOINT}"
           --github-env "${GITHUB_ENV}"
 
-      - name: Verify and mirror one official weekly snapshot
-        if: steps.window.outputs.due == 'true'
-        id: resolve
-        shell: bash
+      - name: Assemble multiarch candidate pin and verify mirrored inputs
         run: |
           set -euo pipefail
-          DIST=https://download.freebsd.org/snapshots/amd64/16.0-CURRENT
-          ARM_DIST=https://download.freebsd.org/snapshots/arm64/16.0-CURRENT
-          VM=https://download.freebsd.org/snapshots/VM-IMAGES/16.0-CURRENT/amd64/Latest
-
-          retry=(--fail --location --silent --show-error --retry 5 --retry-all-errors)
-          curl "${retry[@]}" -o "${RUNNER_TEMP}/MANIFEST" "${DIST}/MANIFEST"
-          revision=$(curl "${retry[@]}" "${DIST}/REVISION" | tr -d '\r\n')
-          builddate=$(curl "${retry[@]}" "${DIST}/BUILDDATE" | tr -d '\r\n')
-          arm_ready=false
-          arm_catalog_osversion=0
-          arm_revision=$(curl "${retry[@]}" "${ARM_DIST}/REVISION" 2>/dev/null | tr -d '\r\n' || true)
-          arm_builddate=$(curl "${retry[@]}" "${ARM_DIST}/BUILDDATE" 2>/dev/null | tr -d '\r\n' || true)
-          if [[ "${arm_revision}" == "${revision}" && "${arm_builddate}" == "${builddate}" ]] && \
-            curl "${retry[@]}" -o "${RUNNER_TEMP}/MANIFEST.arm64" "${ARM_DIST}/MANIFEST"; then
-            arm_ready=true
-          else
-            echo "aarch64 snapshot is unavailable or not from ${revision}; sealing amd64 only" >&2
+          extra_flags=()
+          if [[ "${SECURITY_ROLLOVER}" == true ]]; then
+            extra_flags+=(--security-rollover)
           fi
-          [[ "${revision}" =~ ^[0-9a-f]{12}$ ]]
-          [[ "${builddate}" =~ ^[0-9]{8}$ ]]
-          bootstrap_sha=$(gh api "repos/freebsd/freebsd-src/commits/${revision}" --jq .sha)
-          [[ "${bootstrap_sha}" =~ ^[0-9a-f]{40}$ ]]
-          curl "${retry[@]}" -o "${RUNNER_TEMP}/param.bootstrap.h" \
-            "https://raw.githubusercontent.com/freebsd/freebsd-src/${bootstrap_sha}/sys/sys/param.h"
-          bootstrap_osversion=$(awk '/^#[[:space:]]*define[[:space:]]+__FreeBSD_version[[:space:]]+/ {print $3}' \
-            "${RUNNER_TEMP}/param.bootstrap.h")
-          [[ "${bootstrap_osversion}" =~ ^16[0-9]{5}$ ]]
-
-          # Pin source to the verified weekly base snapshot.  The ports catalog
-          # is published independently and ARM64 can lag that snapshot by one
-          # compatible OSVERSION revision.
-          max_bootstrap_osversion_delta=2
-          freebsd_sha="${bootstrap_sha}"
-          [[ "${freebsd_sha}" =~ ^[0-9a-f]{40}$ ]]
-          curl "${retry[@]}" -o "${RUNNER_TEMP}/param.source.h" \
-            "https://raw.githubusercontent.com/freebsd/freebsd-src/${freebsd_sha}/sys/sys/param.h"
-          osversion=$(awk '/^#[[:space:]]*define[[:space:]]+__FreeBSD_version[[:space:]]+/ {print $3}' \
-            "${RUNNER_TEMP}/param.source.h")
-          [[ "${osversion}" =~ ^16[0-9]{5}$ ]]
-          (( osversion >= bootstrap_osversion && osversion - bootstrap_osversion <= max_bootstrap_osversion_delta ))
-          packagesite_url=https://pkg.freebsd.org/FreeBSD:16:amd64/latest/packagesite.pkg
-          curl "${retry[@]}" -o "${RUNNER_TEMP}/packagesite.pkg" "${packagesite_url}"
-          arm_packagesite_url=https://pkg.freebsd.org/FreeBSD:16:aarch64/latest/packagesite.pkg
-          if [[ "${arm_ready}" == true ]] && ! curl "${retry[@]}" \
-            -o "${RUNNER_TEMP}/packagesite.aarch64.pkg" "${arm_packagesite_url}"; then
-            echo "aarch64 package catalog is unavailable; sealing amd64 only" >&2
-            arm_ready=false
-          fi
-          if [[ "${arm_ready}" == true ]]; then
-            mkdir -p "${RUNNER_TEMP}/catalog-aarch64"
-            tar --zstd -xf "${RUNNER_TEMP}/packagesite.aarch64.pkg" \
-              -C "${RUNNER_TEMP}/catalog-aarch64" packagesite.yaml
-            mapfile -t arm_catalog_osversions < <(jq -r \
-              'select(.abi == "FreeBSD:16:aarch64") | .annotations.FreeBSD_version // empty' \
-              "${RUNNER_TEMP}/catalog-aarch64/packagesite.yaml" | sort -u)
-            if (( ${#arm_catalog_osversions[@]} != 1 )) || \
-              [[ ! "${arm_catalog_osversions[0]:-}" =~ ^16[0-9]{5}$ ]]; then
-              echo "aarch64 catalog has no single native OSVERSION" >&2
-              arm_ready=false
-            else
-              arm_catalog_osversion=${arm_catalog_osversions[0]}
-              if (( arm_catalog_osversion < bootstrap_osversion - 1 ||
-                    arm_catalog_osversion > osversion ||
-                    osversion - arm_catalog_osversion > max_bootstrap_osversion_delta )); then
-                echo "aarch64 catalog OSVERSION is outside the bounded bootstrap window" >&2
-                arm_ready=false
-              fi
-            fi
-          fi
-          bash scripts/pin-worker-tools.sh \
-            --catalog "${RUNNER_TEMP}/packagesite.pkg" \
-            --freebsd-sha "${freebsd_sha}" \
-            --build-date "${builddate}" \
-            --output "${RUNNER_TEMP}/worker-tools.tar" \
-            --report "${RUNNER_TEMP}/worker-tools.json"
-          tools_osversion=$(jq -er '.osversion | select(type == "number")' \
-            "${RUNNER_TEMP}/worker-tools.json")
-          [[ "${tools_osversion}" == "${osversion}" ]]
-          ports_sha=$(jq -r .ports_sha "${RUNNER_TEMP}/worker-tools.json")
-          [[ "${ports_sha}" =~ ^[0-9a-f]{40}$ ]]
-          resolved_ports_sha=$(gh api "repos/freebsd/freebsd-ports/commits/${ports_sha}" --jq .sha)
-          [[ "${resolved_ports_sha}" == "${ports_sha}" ]]
-          "${RUNNER_TEMP}/fsbuild" blob put --file "${RUNNER_TEMP}/worker-tools.tar" \
-            --output "${RUNNER_TEMP}/worker-tools-blob.json"
-          "${RUNNER_TEMP}/fsbuild" blob put --file "${RUNNER_TEMP}/packagesite.pkg" \
-            --output "${RUNNER_TEMP}/catalog-amd64-blob.json"
-          if [[ "${arm_ready}" == true ]]; then
-            "${RUNNER_TEMP}/fsbuild" blob put --file "${RUNNER_TEMP}/packagesite.aarch64.pkg" \
-              --output "${RUNNER_TEMP}/catalog-aarch64-blob.json"
-          fi
-          base_sha=$(awk -F '\t' '$1=="base.txz" {print $2}' "${RUNNER_TEMP}/MANIFEST")
-          arm_base_sha=""
-          if [[ "${arm_ready}" == true ]]; then
-            arm_base_sha=$(awk -F '\t' '$1=="base.txz" {print $2}' "${RUNNER_TEMP}/MANIFEST.arm64")
-          fi
-          [[ "${base_sha}" =~ ^[0-9a-f]{64}$ ]]
-          if [[ "${arm_ready}" == true && ! "${arm_base_sha}" =~ ^[0-9a-f]{64}$ ]]; then
-            echo "aarch64 MANIFEST has no valid base.txz digest; sealing amd64 only" >&2
-            arm_ready=false
-          fi
-
-          curl "${retry[@]}" -o "${RUNNER_TEMP}/VM-CHECKSUM.SHA256" "${VM}/CHECKSUM.SHA256"
-          vm_line=$(grep -E \
-            "^SHA256 \\(FreeBSD-16\\.0-CURRENT-amd64-BASIC-CLOUDINIT-${builddate}-${revision}-[0-9]+-ufs\\.qcow2\\.xz\\) = [0-9a-f]{64}$" \
-            "${RUNNER_TEMP}/VM-CHECKSUM.SHA256")
-          [[ "$(wc -l <<<"${vm_line}" | tr -d ' ')" == 1 ]]
-          vm_compressed_sha=$(awk '{print $4}' <<<"${vm_line}")
-          [[ "${vm_compressed_sha}" =~ ^[0-9a-f]{64}$ ]]
-          # FreeBSD's checksum names the exact build, while Latest publishes a
-          # stable alias for those bytes. The checksum makes the alias safe.
-          VM_NAME=FreeBSD-16.0-CURRENT-amd64-BASIC-CLOUDINIT-ufs.qcow2.xz
-          image_url="${VM}/${VM_NAME}"
-
-          current_image_sha=$(jq -r '.worker_image.sha256 // ""' config/freebsd-16.json)
-          if "${RUNNER_TEMP}/fsbuild" blob check --sha256 "${base_sha}" \
-            --output "${RUNNER_TEMP}/base-blob.json"; then
-            echo "Reusing verified jail seed ${base_sha} from R2."
-          else
-            curl "${retry[@]}" -o "${RUNNER_TEMP}/base.txz" "${DIST}/base.txz"
-            echo "${base_sha}  ${RUNNER_TEMP}/base.txz" | sha256sum -c -
-            "${RUNNER_TEMP}/fsbuild" blob put --file "${RUNNER_TEMP}/base.txz" \
-              --output "${RUNNER_TEMP}/base-blob.json"
-            rm -f "${RUNNER_TEMP}/base.txz"
-          fi
-
-          if [[ "${arm_ready}" == true ]]; then
-            if "${RUNNER_TEMP}/fsbuild" blob check --sha256 "${arm_base_sha}" \
-              --output "${RUNNER_TEMP}/base-arm64-blob.json"; then
-              echo "Reusing verified aarch64 jail seed ${arm_base_sha} from R2."
-            elif curl "${retry[@]}" -o "${RUNNER_TEMP}/base.arm64.txz" "${ARM_DIST}/base.txz" && \
-              echo "${arm_base_sha}  ${RUNNER_TEMP}/base.arm64.txz" | sha256sum -c - && \
-              "${RUNNER_TEMP}/fsbuild" blob put --file "${RUNNER_TEMP}/base.arm64.txz" \
-                --output "${RUNNER_TEMP}/base-arm64-blob.json"; then
-              rm -f "${RUNNER_TEMP}/base.arm64.txz"
-            else
-              echo "aarch64 base.txz could not be sealed; sealing amd64 only" >&2
-              rm -f "${RUNNER_TEMP}/base.arm64.txz"
-              arm_ready=false
-            fi
-          fi
-
-          if [[ "${current_image_sha}" =~ ^[0-9a-f]{64}$ ]] && \
-            jq -e --arg url "${image_url}" --arg compressed "${vm_compressed_sha}" \
-              --arg sha "${current_image_sha}" \
-              '.schema_version=="freesense.freebsd-pin/v3" and
-               .worker_image.url==$url and
-               .worker_image.upstream_compressed_sha256==$compressed and
-               .worker_image.sha256==$sha and
-               .worker_image.object==("inputs/sha256/"+$sha) and
-               ((.worker_image.size|type)=="number") and .worker_image.size>0' \
-              config/freebsd-16.json >/dev/null && \
-            "${RUNNER_TEMP}/fsbuild" blob check --sha256 "${current_image_sha}" \
-              --output "${RUNNER_TEMP}/image-blob.json" && \
-            jq -e --slurpfile blob "${RUNNER_TEMP}/image-blob.json" \
-              '.worker_image as $image |
-               ($blob|length)==1 and $blob[0].schema_version=="freesense.blob/v1" and
-               $blob[0].key==$image.object and $blob[0].sha256==$image.sha256 and
-               $blob[0].size==$image.size' config/freebsd-16.json >/dev/null; then
-            echo "Reusing verified worker image ${current_image_sha} from R2."
-          else
-            rm -f "${RUNNER_TEMP}/${VM_NAME}" "${RUNNER_TEMP}/${VM_NAME%.xz}" \
-              "${RUNNER_TEMP}/freebsd-16-worker.qcow2"
-            curl "${retry[@]}" -o "${RUNNER_TEMP}/${VM_NAME}" "${image_url}"
-            echo "${vm_compressed_sha}  ${RUNNER_TEMP}/${VM_NAME}" | sha256sum -c -
-            xz -dk "${RUNNER_TEMP}/${VM_NAME}"
-            raw="${RUNNER_TEMP}/${VM_NAME%.xz}"
-            qemu-img convert -c -f qcow2 -O qcow2 \
-              -o compat=1.1,lazy_refcounts=off,cluster_size=65536 -S 4k \
-              "${raw}" "${RUNNER_TEMP}/freebsd-16-worker.qcow2"
-            qemu-img check -f qcow2 "${RUNNER_TEMP}/freebsd-16-worker.qcow2"
-            rm -f "${RUNNER_TEMP}/${VM_NAME}" "${raw}"
-            "${RUNNER_TEMP}/fsbuild" blob put --file "${RUNNER_TEMP}/freebsd-16-worker.qcow2" \
-              --output "${RUNNER_TEMP}/image-blob.json"
-          fi
-
-          arm_base_object=""; arm_base_object_sha=""; arm_base_size=0
-          arm_catalog_object=""; arm_catalog_sha=""; arm_catalog_size=0
-          if [[ "${arm_ready}" == true ]]; then
-            arm_base_object=$(jq -r .key "${RUNNER_TEMP}/base-arm64-blob.json")
-            arm_base_object_sha=$(jq -r .sha256 "${RUNNER_TEMP}/base-arm64-blob.json")
-            arm_base_size=$(jq -r .size "${RUNNER_TEMP}/base-arm64-blob.json")
-            arm_catalog_object=$(jq -r .key "${RUNNER_TEMP}/catalog-aarch64-blob.json")
-            arm_catalog_sha=$(jq -r .sha256 "${RUNNER_TEMP}/catalog-aarch64-blob.json")
-            arm_catalog_size=$(jq -r .size "${RUNNER_TEMP}/catalog-aarch64-blob.json")
-          fi
-          if [[ "${FORCE_PIN}" == true ]]; then
-            pin_valid_from=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-          else
-            pin_valid_from=$(jq -er .valid_until config/freebsd-16.json)
-          fi
-          pin_valid_until=$(date -u --date="${pin_valid_from} + 14 days" +%Y-%m-%dT%H:%M:%SZ)
-          jq -n \
-            --arg freebsd_sha "${freebsd_sha}" --arg revision "${revision}" \
-            --arg bootstrap_sha "${bootstrap_sha}" \
-            --argjson osversion "${osversion}" \
-            --argjson bootstrap_osversion "${bootstrap_osversion}" \
-            --argjson amd_catalog_osversion "${tools_osversion}" \
-            --argjson arm_catalog_osversion "${arm_catalog_osversion}" \
-            --arg ports_sha "${ports_sha}" \
-            --arg builddate "${builddate}" --arg base_url "${DIST}/base.txz" \
-            --arg base_upstream_sha256 "${base_sha}" \
-            --arg base_object "$(jq -r .key "${RUNNER_TEMP}/base-blob.json")" \
-            --arg base_sha256 "$(jq -r .sha256 "${RUNNER_TEMP}/base-blob.json")" \
-            --arg arm_base_url "${ARM_DIST}/base.txz" \
-            --arg arm_base_upstream_sha256 "${arm_base_sha}" \
-            --arg arm_base_object "${arm_base_object}" \
-            --arg arm_base_sha256 "${arm_base_object_sha}" \
-            --arg amd_catalog_url "${packagesite_url}" \
-            --arg amd_catalog_object "$(jq -r .key "${RUNNER_TEMP}/catalog-amd64-blob.json")" \
-            --arg amd_catalog_sha256 "$(jq -r .sha256 "${RUNNER_TEMP}/catalog-amd64-blob.json")" \
-            --arg arm_catalog_url "${arm_packagesite_url}" \
-            --arg arm_catalog_object "${arm_catalog_object}" \
-            --arg arm_catalog_sha256 "${arm_catalog_sha}" \
-            --arg image_url "${image_url}" \
-            --arg image_upstream_sha256 "${vm_compressed_sha}" \
-            --arg image_object "$(jq -r .key "${RUNNER_TEMP}/image-blob.json")" \
-            --arg image_sha256 "$(jq -r .sha256 "${RUNNER_TEMP}/image-blob.json")" \
-            --arg tools_object "$(jq -r .key "${RUNNER_TEMP}/worker-tools-blob.json")" \
-            --arg tools_sha256 "$(jq -r .sha256 "${RUNNER_TEMP}/worker-tools-blob.json")" \
-            --argjson base_size "$(jq -r .size "${RUNNER_TEMP}/base-blob.json")" \
-            --argjson arm_ready "${arm_ready}" \
-            --argjson arm_base_size "${arm_base_size}" \
-            --argjson amd_catalog_size "$(jq -r .size "${RUNNER_TEMP}/catalog-amd64-blob.json")" \
-            --argjson arm_catalog_size "${arm_catalog_size}" \
-            --argjson image_size "$(jq -r .size "${RUNNER_TEMP}/image-blob.json")" \
-            --argjson tools_size "$(jq -r .size "${RUNNER_TEMP}/worker-tools-blob.json")" \
-            --arg valid_from "${pin_valid_from}" \
-            --arg valid_until "${pin_valid_until}" \
-            '{schema_version:"freesense.freebsd-pin/v3",valid_from:$valid_from,valid_until:$valid_until,freebsd_source:{commit:$freebsd_sha,osversion:$osversion},bootstrap_snapshot:{commit:$bootstrap_sha,revision_prefix:$revision,build_date:$builddate,osversion:$bootstrap_osversion},freebsd_ports:{commit:$ports_sha},targets:{amd64:{ready:true,jail_seed:{url:$base_url,osversion:$bootstrap_osversion,upstream_sha256:$base_upstream_sha256,object:$base_object,sha256:$base_sha256,size:$base_size},package_catalog:{url:$amd_catalog_url,osversion:$amd_catalog_osversion,object:$amd_catalog_object,sha256:$amd_catalog_sha256,size:$amd_catalog_size}},arm64:({ready:$arm_ready,jail_seed:{url:$arm_base_url},package_catalog:{url:$arm_catalog_url}} + if $arm_ready then {jail_seed:{url:$arm_base_url,osversion:$bootstrap_osversion,upstream_sha256:$arm_base_upstream_sha256,object:$arm_base_object,sha256:$arm_base_sha256,size:$arm_base_size},package_catalog:{url:$arm_catalog_url,osversion:$arm_catalog_osversion,object:$arm_catalog_object,sha256:$arm_catalog_sha256,size:$arm_catalog_size}} else {} end)},worker_image:{url:$image_url,upstream_compressed_sha256:$image_upstream_sha256,object:$image_object,sha256:$image_sha256,size:$image_size},worker_tools:{object:$tools_object,sha256:$tools_sha256,size:$tools_size}}' \
-            > config/freebsd-16.json
-          jq -e '.targets.amd64.ready and (.targets.arm64.ready|type)=="boolean" and (.freebsd_source.commit|length)==40' config/freebsd-16.json
-          echo "image_sha256=$(jq -r .worker_image.sha256 config/freebsd-16.json)" >>"${GITHUB_OUTPUT}"
-          echo "worker_tools_sha256=$(jq -r .worker_tools.sha256 config/freebsd-16.json)" >>"${GITHUB_OUTPUT}"
-
-      - name: Install pinned tools and probe the exact R2 image
-        if: steps.window.outputs.due == 'true'
-        env:
-          FSBUILD: ${{ runner.temp }}/fsbuild
-          WORKER_TOOLS_SHA256: ${{ steps.resolve.outputs.worker_tools_sha256 }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          public_base_url=$(jq -er .public_base_url config/build-policy.json)
-          [[ "${public_base_url}" =~ ^https://[A-Za-z0-9./_-]+$ ]]
-          [[ "${WORKER_TOOLS_SHA256}" =~ ^[0-9a-f]{64}$ ]]
-          smoke="${RUNNER_TEMP}/pin-smoke.sh"
-          {
-            printf '#!/bin/sh\nset -eu\n'
-            cat scripts/runner/install-worker-tools.sh
-            printf '%s\n' 'phase() { printf "FreeSense phase: %s\\n" "$1"; }'
-            printf '%s\n' 'PATH="/usr/local/sbin:/usr/local/bin:${PATH}"' 'export PATH'
-            printf '%s\n' 'HOME=/root LC_ALL=C LANG=C TZ=UTC ASSUME_ALWAYS_YES=yes' \
-              'export HOME LC_ALL LANG TZ ASSUME_ALWAYS_YES' 'umask 022'
-            printf "PUBLIC_BASE_URL='%s'\n" "${public_base_url}"
-            printf "WORKER_TOOLS_SHA256='%s'\n" "${WORKER_TOOLS_SHA256}"
-            printf '%s\n' 'install_worker_tools'
-            tail -n +2 scripts/runner/probe.sh
-          } >"${smoke}"
-          sh -n "${smoke}"
-          scripts/runner/run-vm.sh \
-            --image-sha256 "${{ steps.resolve.outputs.image_sha256 }}" \
-            --script "${smoke}" \
-            --timeout 3600
+          python3 scripts/assemble_multiarch_pin.py \
+            --previous config/freebsd-16.json \
+            --common "${RUNNER_TEMP}/pin-common/common.json" \
+            --amd64 "${RUNNER_TEMP}/pin-amd64/report.json" \
+            --arm64 "${RUNNER_TEMP}/pin-arm64/report.json" \
+            --fsbuild "${RUNNER_TEMP}/fsbuild" \
+            --output "${RUNNER_TEMP}/freebsd-16.json" \
+            "${extra_flags[@]}"
 
       - name: Open or update the single pin PR
-        if: steps.window.outputs.due == 'true'
-        shell: bash
         run: |
           set -euo pipefail
-          if git diff --quiet -- config/freebsd-16.json; then
+          pin_file="${RUNNER_TEMP}/freebsd-16.json"
+          if cmp -s "${pin_file}" config/freebsd-16.json; then
             echo "The current pin is already exact; no branch or PR created."
             exit 0
           fi
           branch=automation/freebsd-pin
-          pin_file="${RUNNER_TEMP}/freebsd-16.json"
-          cp config/freebsd-16.json "${pin_file}"
           git config user.name freesense-ci
           git config user.email ci@freesense.org
           git fetch --no-tags origin main
-          git switch -C "${branch}" origin/main
+          if git ls-remote --exit-code --heads origin "${branch}"; then
+            git fetch --no-tags origin "${branch}"
+            git switch "${branch}"
+            git merge --no-edit origin/main || {
+              git merge --abort
+              git switch -C "${branch}" origin/main
+            }
+          else
+            git switch -c "${branch}" origin/main
+          fi
           cp "${pin_file}" config/freebsd-16.json
           git add config/freebsd-16.json
+          if git diff --staged --quiet; then
+            echo "No content changes relative to ${branch}."
+            exit 0
+          fi
           git commit -m "build: pin official FreeBSD 16 snapshot"
-          git push --force origin "HEAD:refs/heads/${branch}"
+          git push origin "HEAD:refs/heads/${branch}"
           number=$(gh pr list --head "${branch}" --state open --json number --jq '.[0].number // empty')
           if [[ -z "${number}" ]]; then
             gh pr create --head "${branch}" --base main \
               --title "Pin the current official FreeBSD 16 snapshot" \
-              --body "Automated checksum-verified FreeBSD source, jail seed, KVM worker image, and signed-catalog worker-tool closure. The fixed branch is reused; pinning never creates tag or branch sprawl."
+              --body "Automated checksum-verified dual-architecture FreeBSD source, jail seeds, KVM worker images, official binary package seeds, and signed-catalog worker-tool closures for amd64 and arm64. The fixed branch is reused; pinning never creates tag or branch sprawl."
+            number=$(gh pr list --head "${branch}" --state open --json number --jq '.[0].number')
+            echo "Created pin PR #${number}"
           else
             echo "Updated pin PR #${number}"
           fi
           gh workflow run ci.yml --ref "${branch}"
-          gh pr merge "${number:-$(gh pr list --head "${branch}" --state open --json number --jq '.[0].number')}" --auto --squash
-          echo "Dispatched required CI for ${branch}."
+          gh pr merge "${number}" --auto --squash
+          echo "Dispatched required CI and configured auto-merge for PR #${number}."
 
       - name: Clean pinning downloads
         if: always()
-        shell: bash
         run: |
-          rm -f "${RUNNER_TEMP}/MANIFEST" "${RUNNER_TEMP}/VM-CHECKSUM.SHA256" \
-            "${RUNNER_TEMP}/param.bootstrap.h" "${RUNNER_TEMP}/param.source.h" \
-            "${RUNNER_TEMP}/base.txz" "${RUNNER_TEMP}/base-blob.json" \
-            "${RUNNER_TEMP}/image-blob.json" "${RUNNER_TEMP}/packagesite.pkg" \
-            "${RUNNER_TEMP}/packagesite.aarch64.pkg" \
-            "${RUNNER_TEMP}/worker-tools.tar" "${RUNNER_TEMP}/worker-tools.json" \
-            "${RUNNER_TEMP}/worker-tools-blob.json" \
-            "${RUNNER_TEMP}/pin-smoke.sh" \
-            "${RUNNER_TEMP}/freebsd-16-worker.qcow2" \
-            "${RUNNER_TEMP}"/FreeBSD-16.0-CURRENT-amd64-BASIC-CLOUDINIT-*.qcow2 \
-            "${RUNNER_TEMP}"/FreeBSD-16.0-CURRENT-amd64-BASIC-CLOUDINIT-*.qcow2.xz
-          rm -rf "${RUNNER_TEMP}/catalog-aarch64"
+          rm -rf "${RUNNER_TEMP}/downloads" "${RUNNER_TEMP}/pin-common" \
+            "${RUNNER_TEMP}/pin-amd64" "${RUNNER_TEMP}/pin-arm64" \
+            "${RUNNER_TEMP}/freebsd-16.json" "${RUNNER_TEMP}/metadata.json" \
+            "${RUNNER_TEMP}/sources.json" "${RUNNER_TEMP}/param.h" \
+            "${RUNNER_TEMP}/trusted_key"

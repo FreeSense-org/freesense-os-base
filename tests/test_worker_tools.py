@@ -66,6 +66,18 @@ def catalog(*extra: dict[str, object], omit: str | None = None) -> list[str]:
 
 
 class WorkerToolResolutionTests(unittest.TestCase):
+    def test_native_arm_tools_have_no_cross_emulator_and_reject_foreign_abi(self):
+        roots, commands = worker_tools.worker_profile("arm64")
+        records = [{**package(name), "abi": "FreeBSD:16:aarch64"} for name in roots]
+        result = worker_tools.resolve_worker_tools(map(json.dumps, records), "arm64")
+        self.assertNotIn("qemu-user-static", result["roots"])
+        self.assertNotIn("qemu-aarch64-static", result["commands"])
+        self.assertIn("python3.11", commands)
+        self.assertEqual(result["abi"], "FreeBSD:16:aarch64")
+        records[0]["abi"] = "FreeBSD:16:amd64"
+        with self.assertRaisesRegex(ValueError, "foreign or ambiguous ABI"):
+            worker_tools.resolve_worker_tools(map(json.dumps, records), "arm64")
+
     def test_streams_catalog_and_emits_dependency_first_deterministic_closure(self):
         dependency = package("libworker", version="1.2_3,1")
         records = [json.loads(line) for line in catalog(dependency)]

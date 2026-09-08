@@ -26,6 +26,8 @@ jobs:
       - run: npm --prefix broker test
       - run: npm --prefix broker run deploy:dry
       - run: python3 scripts/validate-build-pipeline.py
+      - name: Validate reusable workflow contracts
+        run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12 -shellcheck= -pyflakes=
       - run: python3 -m py_compile scripts/*.py
       - run: python3 -m unittest discover -s tests -p 'test_*.py'
       - name: Parse scripts and checked data
@@ -36,7 +38,9 @@ jobs:
           bash -n scripts/publish_iso.sh
           bash -n scripts/pin-worker-tools.sh
           bash -n scripts/verify-release.sh
-          sh -n scripts/runner/install-worker-tools.sh scripts/runner/probe.sh apply.sh
+          for script in scripts/runner/install-worker-tools.sh scripts/runner/probe.sh apply.sh; do
+            sh -n "${script}"
+          done
           render_dir=$(mktemp -d)
           trap 'rm -rf "${render_dir}"' EXIT
           while read -r field; do export "${field}=test-value"; done < <(
@@ -46,7 +50,7 @@ jobs:
               print(field)
           PY
           )
-          for stage in system packages iso cloud; do
+          for stage in system packages iso cloud appliance; do
             export STAGE=${stage}
             python3 scripts/render-worker.py --common scripts/runner/worker-common.sh \
               --stages scripts/runner/stages --output "${render_dir}/${stage}.sh"

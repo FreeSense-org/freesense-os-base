@@ -1,0 +1,318 @@
+name: Development multiarch
+
+on:
+  workflow_dispatch:
+    inputs:
+      force_dedicated:
+        description: Exercise the dedicated ARM64 fallback for this full canary
+        type: boolean
+        default: false
+  schedule:
+    - cron: '0 6 * * *'
+
+permissions: {actions: write, contents: read, id-token: write}
+concurrency: {group: development-multiarch, cancel-in-progress: false}
+
+jobs:
+  readiness:
+    # Opt-in until a publish-disabled canary has passed. The legacy schedule
+    # remains responsible for Development until the rollout is explicitly enabled.
+    if: github.event_name == 'workflow_dispatch' || vars.MULTIARCH_DEVELOPMENT_ENABLED == 'true'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+      - name: Require a complete active v4 pin
+        run: |
+          python3 - <<'PY'
+          import json, sys
+          from datetime import datetime, timezone
+          sys.path.insert(0, 'scripts')
+          from multiarch_pin import validate
+          validate(json.load(open('config/freebsd-16.json')), now=datetime.now(timezone.utc))
+          PY
+
+  arm_capability:
+    continue-on-error: true
+    needs: readiness
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 25
+    environment: build-coordinator
+    outputs:
+      report: ${{ steps.report.outputs.report }}
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+        with: {go-version-file: go.mod, cache: false}
+      - name: Prepare native capability probe
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends qemu-system-arm qemu-utils qemu-efi-aarch64 cloud-image-utils
+          if [[ -e /dev/kvm ]]; then sudo chmod a+rw /dev/kvm; fi
+          go build -trimpath -o "${RUNNER_TEMP}/fsbuild" ./cmd/fsbuild
+      - name: Acquire read-only immutable worker input credential
+        env:
+          R2_CREDENTIAL_BROKER_URL: ${{ vars.R2_CREDENTIAL_BROKER_URL }}
+          R2_CREDENTIAL_BROKER_AUDIENCE: ${{ vars.R2_CREDENTIAL_BROKER_AUDIENCE }}
+          R2_BUCKET: ${{ vars.R2_BUILD_BUCKET }}
+          R2_ENDPOINT: ${{ vars.R2_ENDPOINT }}
+        run: >-
+          "${RUNNER_TEMP}/fsbuild" credentials acquire --broker-url "${R2_CREDENTIAL_BROKER_URL}"
+          --audience "${R2_CREDENTIAL_BROKER_AUDIENCE}" --role input-reader
+          --expected-bucket "${R2_BUCKET}" --expected-prefix v1 --expected-endpoint "${R2_ENDPOINT}"
+          --github-env "${GITHUB_ENV}"
+      - name: Boot pinned native ARM64 worker
+        env:
+          FSBUILD: ${{ runner.temp }}/fsbuild
+          FSBUILD_STORE_PREFIX: v1
+          R2_BUCKET: ${{ vars.R2_BUILD_BUCKET }}
+        run: python3 scripts/arm64_capability.py --output "${RUNNER_TEMP}/arm-probe.json"
+      - id: report
+        if: always()
+        name: Return capability outcome before reserving the pair
+        run: |
+          python3 - <<'PY' >>"${GITHUB_OUTPUT}"
+          import json, os
+          from pathlib import Path
+          report = Path(os.environ['RUNNER_TEMP']) / 'arm-probe.json'
+          print('report=' + json.dumps(json.loads(report.read_text()) if report.exists() else {}, separators=(',', ':')))
+          PY
+      - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f
+        if: always()
+        with:
+          name: multiarch-arm-capability
+          path: |
+            ${{ runner.temp }}/arm-probe.json
+            ${{ runner.temp }}/arm64-probe-failure/
+          if-no-files-found: ignore
+          retention-days: 14
+
+  prepare:
+    needs: [readiness, arm_capability]
+    if: ${{ always() && !cancelled() && needs.readiness.result == 'success' }}
+    runs-on: ubuntu-24.04
+    environment: build-coordinator
+    outputs:
+      pair_generation: ${{ steps.reserve.outputs.generation }}
+      amd64_system: ${{ steps.plan.outputs.amd64_system }}
+      arm64_system: ${{ steps.plan.outputs.arm64_system }}
+      amd64_packages: ${{ steps.plan.outputs.amd64_packages }}
+      arm64_packages: ${{ steps.plan.outputs.arm64_packages }}
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+        with: {go-version-file: go.mod, cache: false}
+      - id: plan
+        env:
+          ARM_PROBE: ${{ needs.arm_capability.outputs.report || '{}' }}
+          FORCE_DEDICATED: ${{ inputs.force_dedicated || false }}
+        run: |
+          printf '%s' "${ARM_PROBE}" >"${RUNNER_TEMP}/arm-probe.json"
+          args=()
+          if [[ "${FORCE_DEDICATED}" == true ]]; then args+=(--force-dedicated); fi
+          python3 scripts/multiarch_plan.py --probe "${RUNNER_TEMP}/arm-probe.json" \
+            --os-base-sha "${GITHUB_SHA}" --output "${RUNNER_TEMP}/multiarch-plan.json" \
+            --github-output "${GITHUB_OUTPUT}" "${args[@]}"
+      - run: go build -trimpath -o "${RUNNER_TEMP}/fsbuild" ./cmd/fsbuild
+      - name: Acquire generation coordinator
+        env:
+          R2_CREDENTIAL_BROKER_URL: ${{ vars.R2_CREDENTIAL_BROKER_URL }}
+          R2_CREDENTIAL_BROKER_AUDIENCE: ${{ vars.R2_CREDENTIAL_BROKER_AUDIENCE }}
+          R2_BUCKET: ${{ vars.R2_BUILD_BUCKET }}
+          R2_ENDPOINT: ${{ vars.R2_ENDPOINT }}
+        run: >-
+          "${RUNNER_TEMP}/fsbuild" credentials acquire --broker-url "${R2_CREDENTIAL_BROKER_URL}"
+          --audience "${R2_CREDENTIAL_BROKER_AUDIENCE}" --role coordinator
+          --expected-bucket "${R2_BUCKET}" --expected-prefix v1 --expected-endpoint "${R2_ENDPOINT}"
+          --github-env "${GITHUB_ENV}"
+      - id: reserve
+        env:
+          R2_BUCKET: ${{ vars.R2_BUILD_BUCKET }}
+          FSBUILD_STORE_PREFIX: v1
+          PAIR_FINGERPRINT: ${{ steps.plan.outputs.pair_fingerprint }}
+        run: |
+          "${RUNNER_TEMP}/fsbuild" state reserve-generation --fingerprint "${PAIR_FINGERPRINT}" \
+            --proposed "$(date -u +%s)" --output "${RUNNER_TEMP}/pair-generation.json"
+          echo "generation=$(jq -er .generation "${RUNNER_TEMP}/pair-generation.json")" >>"${GITHUB_OUTPUT}"
+      - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f
+        with:
+          name: multiarch-plan
+          path: |
+            ${{ runner.temp }}/multiarch-plan.json
+            ${{ runner.temp }}/pair-generation.json
+          if-no-files-found: error
+          retention-days: 14
+
+  system_amd64:
+    needs: prepare
+    uses: ./.github/workflows/system.yml
+    with:
+      target: amd64
+      multiarch_plan: ${{ needs.prepare.outputs.amd64_system }}
+      pair_generation: ${{ needs.prepare.outputs.pair_generation }}
+      suppress_publication: true
+    secrets: inherit
+
+  system_arm64:
+    needs: prepare
+    uses: ./.github/workflows/system.yml
+    with:
+      target: arm64
+      multiarch_plan: ${{ needs.prepare.outputs.arm64_system }}
+      pair_generation: ${{ needs.prepare.outputs.pair_generation }}
+      suppress_publication: true
+    secrets: inherit
+
+  packages_amd64:
+    needs: [prepare, system_amd64, system_arm64]
+    uses: ./.github/workflows/packages.yml
+    with:
+      target: amd64
+      system_fingerprint: ${{ needs.system_amd64.outputs.system_fingerprint }}
+      multiarch_plan: ${{ needs.prepare.outputs.amd64_packages }}
+      pair_generation: ${{ needs.prepare.outputs.pair_generation }}
+      suppress_publication: true
+    secrets: inherit
+
+  packages_arm64:
+    needs: [prepare, system_amd64, system_arm64]
+    uses: ./.github/workflows/packages.yml
+    with:
+      target: arm64
+      system_fingerprint: ${{ needs.system_arm64.outputs.system_fingerprint }}
+      multiarch_plan: ${{ needs.prepare.outputs.arm64_packages }}
+      pair_generation: ${{ needs.prepare.outputs.pair_generation }}
+      suppress_publication: true
+    secrets: inherit
+
+  repository_documents:
+    needs: [prepare, system_amd64, system_arm64, packages_amd64, packages_arm64]
+    runs-on: ubuntu-24.04
+    environment: channel-publisher
+    permissions: {contents: read}
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+        with: {go-version-file: go.mod, cache: false}
+      - run: go build -trimpath -o "${RUNNER_TEMP}/fsbuild" ./cmd/fsbuild
+      - name: Prepare exact signed architecture-qualified repository documents
+        env:
+          AMD64_SYSTEM: ${{ needs.system_amd64.outputs.system_fingerprint }}
+          ARM64_SYSTEM: ${{ needs.system_arm64.outputs.system_fingerprint }}
+          AMD64_PACKAGES: ${{ needs.packages_amd64.outputs.packages_fingerprint }}
+          ARM64_PACKAGES: ${{ needs.packages_arm64.outputs.packages_fingerprint }}
+          SIGNING_KEY: ${{ secrets.FREESENSE_PKG_SIGNING_KEY }}
+        run: |
+          set -euo pipefail
+          umask 077
+          key="${RUNNER_TEMP}/channel.key"
+          printf '%s' "${SIGNING_KEY}" >"${key}"
+          mkdir -p "${RUNNER_TEMP}/repositories"
+          published_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          for arch in amd64 arm64; do
+            if [[ "${arch}" == amd64 ]]; then
+              system=${AMD64_SYSTEM}; packages=${AMD64_PACKAGES}; package_arch=amd64
+            else
+              system=${ARM64_SYSTEM}; packages=${ARM64_PACKAGES}; package_arch=aarch64
+            fi
+            curl --fail --location --silent --show-error --retry 8 --retry-all-errors \
+              "https://pkg.freesense.org/v1/artifacts/system/${system}/complete.json" \
+              --output "${RUNNER_TEMP}/${arch}-system.json"
+            curl --fail --location --silent --show-error --retry 8 --retry-all-errors \
+              "https://pkg.freesense.org/v1/artifacts/packages/1.1/${packages}/complete.json" \
+              --output "${RUNNER_TEMP}/${arch}-packages.json"
+            python3 scripts/staged_system_closure.py --target "${arch}" \
+              --marker "${RUNNER_TEMP}/${arch}-system.json" \
+              --packages-marker "${RUNNER_TEMP}/${arch}-packages.json" \
+              --published-at "${published_at}" --output "${RUNNER_TEMP}/${arch}-closure.json"
+            jq -er .payload_base64 "${RUNNER_TEMP}/${arch}-closure.json" | base64 --decode \
+              >"${RUNNER_TEMP}/${arch}-payload.json"
+            "${RUNNER_TEMP}/fsbuild" channel sign-file --payload "${RUNNER_TEMP}/${arch}-payload.json" \
+              --architecture "${arch}" --package-arch "${package_arch}" --private-key "${key}" \
+              --output "${RUNNER_TEMP}/repositories/repos.${package_arch}.manifest.json"
+          done
+      - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f
+        with:
+          name: multiarch-repository-documents
+          path: ${{ runner.temp }}/repositories
+          if-no-files-found: error
+          retention-days: 14
+
+  release_amd64:
+    needs: [prepare, system_amd64, packages_amd64, packages_arm64, repository_documents]
+    uses: ./.github/workflows/release.yml
+    with:
+      operation: bundle
+      channel: devel
+      target: amd64
+      system_fingerprint: ${{ needs.system_amd64.outputs.system_fingerprint }}
+      packages_fingerprint: ${{ needs.packages_amd64.outputs.packages_fingerprint }}
+      pair_generation: ${{ needs.prepare.outputs.pair_generation }}
+      build_host: github-amd64
+      suppress_publication: true
+    secrets: inherit
+
+  release_arm64:
+    needs: [prepare, system_arm64, packages_amd64, packages_arm64, repository_documents]
+    uses: ./.github/workflows/release.yml
+    with:
+      operation: bundle
+      channel: devel
+      target: arm64
+      system_fingerprint: ${{ needs.system_arm64.outputs.system_fingerprint }}
+      packages_fingerprint: ${{ needs.packages_arm64.outputs.packages_fingerprint }}
+      pair_generation: ${{ needs.prepare.outputs.pair_generation }}
+      build_host: ${{ fromJSON(needs.prepare.outputs.arm64_system).build_host }}
+      suppress_publication: true
+    secrets: inherit
+
+  verify_pair:
+    needs: [release_amd64, release_arm64, repository_documents]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    environment: channel-publisher
+    permissions: {actions: read, contents: read}
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+      - name: Download this run's exact plan and release documents
+        env: {GH_TOKEN: '${{ github.token }}'}
+        run: |
+          gh run download "${GITHUB_RUN_ID}" --repo "${GITHUB_REPOSITORY}" --name multiarch-plan --dir "${RUNNER_TEMP}/plan"
+          gh run download "${GITHUB_RUN_ID}" --repo "${GITHUB_REPOSITORY}" --name multiarch-release-amd64 --dir "${RUNNER_TEMP}/amd64"
+          gh run download "${GITHUB_RUN_ID}" --repo "${GITHUB_REPOSITORY}" --name multiarch-release-arm64 --dir "${RUNNER_TEMP}/arm64"
+          gh run download "${GITHUB_RUN_ID}" --repo "${GITHUB_REPOSITORY}" --name multiarch-repository-documents --dir "${RUNNER_TEMP}/repositories"
+          gh api --paginate --slurp "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/jobs?filter=all&per_page=100" >"${RUNNER_TEMP}/jobs.json"
+      - name: Verify both architecture closures and all reused package bytes
+        run: |
+          python3 scripts/verify_multiarch_canary.py --plan "${RUNNER_TEMP}/plan/multiarch-plan.json" \
+            --amd64 "${RUNNER_TEMP}/amd64/devel.json" --arm64 "${RUNNER_TEMP}/arm64/devel.json" \
+            --jobs "${RUNNER_TEMP}/jobs.json" --run-id "${GITHUB_RUN_ID}" \
+            --pair-reservation "${RUNNER_TEMP}/plan/pair-generation.json" \
+            --output "${RUNNER_TEMP}/multiarch-canary.json"
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+        with: {go-version-file: go.mod, cache: false}
+      - name: Prepare the signed authoritative completion document locally
+        env: {SIGNING_KEY: '${{ secrets.FREESENSE_PKG_SIGNING_KEY }}'}
+        run: |
+          umask 077
+          printf '%s' "${SIGNING_KEY}" >"${RUNNER_TEMP}/channel.key"
+          go build -trimpath -o "${RUNNER_TEMP}/fsbuild" ./cmd/fsbuild
+          "${RUNNER_TEMP}/fsbuild" multiarch prepare \
+            --evidence "${RUNNER_TEMP}/multiarch-canary.json" \
+            --amd64-repositories "${RUNNER_TEMP}/repositories/repos.amd64.manifest.json" \
+            --arm64-repositories "${RUNNER_TEMP}/repositories/repos.aarch64.manifest.json" \
+            --amd64-release "${RUNNER_TEMP}/amd64/devel.json" \
+            --arm64-release "${RUNNER_TEMP}/arm64/devel.json" \
+            --private-key "${RUNNER_TEMP}/channel.key" \
+            --output "${RUNNER_TEMP}/multiarch-release.json"
+      - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f
+        with:
+          name: multiarch-canary-verification
+          path: ${{ runner.temp }}/multiarch-canary.json
+          if-no-files-found: error
+          retention-days: 30
+      - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f
+        with:
+          name: multiarch-authoritative-completion
+          path: ${{ runner.temp }}/multiarch-release.json
+          if-no-files-found: error
+          retention-days: 30

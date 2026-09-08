@@ -7,12 +7,14 @@ usage() {
 }
 
 catalog=""
+architecture=amd64
 freebsd_sha=""
 build_date=""
 output=""
 report=""
 while (($#)); do
   case "$1" in
+    --architecture) architecture=${2:-}; shift 2 ;;
     --catalog) catalog=${2:-}; shift 2 ;;
     --freebsd-sha) freebsd_sha=${2:-}; shift 2 ;;
     --build-date) build_date=${2:-}; shift 2 ;;
@@ -28,7 +30,12 @@ done
 bundle_mtime="${build_date:0:4}-${build_date:4:2}-${build_date:6:2} 00:00:00 UTC"
 [[ $(date -u --date="$bundle_mtime" +%Y%m%d) == "$build_date" ]] || usage
 
-repository=https://pkg.freebsd.org/FreeBSD:16:amd64/latest
+case "${architecture}" in
+  amd64) package_arch=amd64 ;;
+  arm64) package_arch=aarch64 ;;
+  *) usage ;;
+esac
+repository=https://pkg.freebsd.org/FreeBSD:16:${package_arch}/latest
 work=$(mktemp -d "${TMPDIR:-/tmp}/freesense-worker-tools.XXXXXX")
 output_part=${output}.part
 report_part=${report}.part
@@ -73,6 +80,7 @@ printf '%s' "$catalog_digest" | openssl dgst -sha256 \
   -signature "$work/packagesite.yaml.sig" >/dev/null
 
 python3 scripts/resolve_worker_tools.py resolve \
+  --architecture "${architecture}" \
   --catalog "$work/packagesite.yaml" --output "$work/manifest.json"
 ports_sha=$(jq -er '.ports_sha | select(test("^[0-9a-f]{40}$"))' "$work/manifest.json")
 osversion=$(jq -er '.osversion | select(type == "number")' "$work/manifest.json")
@@ -100,7 +108,10 @@ mv "$output_part" "$output"
 
 jq -n \
   --arg ports_sha "$ports_sha" \
+  --arg trusted_key_sha256 "$catalog_key" \
+  --arg catalog_sha256 "$(sha256sum "$catalog" | awk '{print $1}')" \
   --argjson osversion "$osversion" \
-  '{schema_version:"freesense.worker-tools-pin/v1",ports_sha:$ports_sha,osversion:$osversion}' \
+  '{schema_version:"freesense.worker-tools-pin/v1",ports_sha:$ports_sha,osversion:$osversion,
+    trusted_key_sha256:$trusted_key_sha256,catalog_sha256:$catalog_sha256}' \
   >"$report_part"
 mv "$report_part" "$report"

@@ -63,7 +63,16 @@ class WorkerVersionValidationTests(unittest.TestCase):
         ):
             with self.subTest(value=value):
                 self.assertIn(value, common)
-                self.assertNotIn(value, packages)
+            self.assertNotIn(value, packages)
+
+    def test_delta_shards_use_measured_partition_policy_and_allow_empty_work(self) -> None:
+        system = (ROOT / "scripts/runner/stages/system.sh").read_text(encoding="utf-8")
+        packages = (ROOT / "scripts/runner/stages/packages.sh").read_text(encoding="utf-8")
+        for source, component in ((system, "system"), (packages, "packages")):
+            self.assertIn("scripts/partition_roots.py", source)
+            self.assertIn(f"--component {component}", source)
+            self.assertIn("has no source deltas", source)
+            self.assertIn("publish_system_checkpoint shard", source)
 
     def test_optional_package_exclusions_support_product_name_templates(self) -> None:
         packages = (ROOT / "scripts/runner/stages/packages.sh").read_text(
@@ -76,7 +85,7 @@ class WorkerVersionValidationTests(unittest.TestCase):
         common = (ROOT / "scripts/runner/worker-common.sh").read_text(encoding="utf-8")
         create_jail = common[common.index("create_jail() {") :]
         arm64_case = create_jail.index(
-            'if [ "${FREEBSD_TARGET_ARCH}" = aarch64 ]; then'
+            'if [ "${FREEBSD_TARGET_ARCH}" = aarch64 ] && [ "${EXECUTOR}" = amd64-cross-qemu-user ]; then'
         )
         source_path = create_jail.index(
             "poudriere_source=/root/freesense-src/tmp/FreeBSD-src", arm64_case
@@ -180,7 +189,7 @@ class WorkerVersionValidationTests(unittest.TestCase):
         self.assertIn('system_shard_count: "19"', workflow)
         self.assertIn("needs.build_finalize.result == 'success'", workflow)
         self.assertIn(
-            "freesense-github-hosted-build-{0}-{1}",
+            "freesense-hosted-{0}-{1}-{2}-{3}-{4}",
             reusable,
         )
         self.assertIn("inputs.system_part == 'bootstrap' && '20700'", reusable)
@@ -209,7 +218,7 @@ class WorkerVersionValidationTests(unittest.TestCase):
         for value in (
             'fetch_system_checkpoint core core',
             'while [ "${shard}" -lt "${SYSTEM_SHARD_COUNT}" ]',
-            'merge_package "${package}" "${shard_seed}/All" "${shard_inventory}" identical',
+            'merge_package "${package}" "${shard_seed}/All" "${shard_inventory}" "${seed_duplicate_policy}"',
             'seed_poudriere_repository "${shard_seed}"',
             'fetch_system_checkpoint bootstrap bootstrap',
             'seed_poudriere_repository "/root/system-bootstrap-checkpoint/${PACKAGE_ARCH}"',

@@ -1,0 +1,194 @@
+name: Prepare native FreeBSD pin target
+
+on:
+  workflow_call:
+    inputs:
+      architecture: {type: string, required: true}
+    outputs:
+      artifact_name:
+        value: ${{ jobs.prepare.outputs.artifact_name }}
+
+permissions: {contents: read, id-token: write}
+
+jobs:
+  prepare:
+    runs-on: ${{ fromJSON(inputs.architecture == 'arm64' && '["ubuntu-24.04-arm"]' || '["self-hosted","build-runner"]') }}
+    timeout-minutes: 300
+    environment: pin
+    concurrency:
+      group: ${{ inputs.architecture == 'amd64' && 'freesense-kvm-host' || format('freebsd-pin-{0}', inputs.architecture) }}
+      cancel-in-progress: false
+    outputs:
+      artifact_name: ${{ steps.identity.outputs.artifact_name }}
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+        with: {go-version-file: go.mod, cache: false}
+      - uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16
+        with: {name: freebsd-pin-common, path: '${{ runner.temp }}/pin-common'}
+      - name: Prepare native virtualization tools
+        if: inputs.architecture == 'arm64'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends qemu-system-arm qemu-utils qemu-efi-aarch64 cloud-image-utils
+          sudo chmod a+rw /dev/kvm
+      - run: go build -trimpath -o "${RUNNER_TEMP}/fsbuild" ./cmd/fsbuild
+      - name: Acquire immutable pin writer
+        env:
+          R2_CREDENTIAL_BROKER_URL: ${{ vars.R2_CREDENTIAL_BROKER_URL }}
+          R2_CREDENTIAL_BROKER_AUDIENCE: ${{ vars.R2_CREDENTIAL_BROKER_AUDIENCE }}
+          R2_BUCKET: ${{ vars.R2_BUILD_BUCKET }}
+          R2_ENDPOINT: ${{ vars.R2_ENDPOINT }}
+        run: >-
+          "${RUNNER_TEMP}/fsbuild" credentials acquire --broker-url "${R2_CREDENTIAL_BROKER_URL}"
+          --audience "${R2_CREDENTIAL_BROKER_AUDIENCE}" --role pin-writer
+          --expected-bucket "${R2_BUCKET}" --expected-prefix v1 --expected-endpoint "${R2_ENDPOINT}"
+          --github-env "${GITHUB_ENV}"
+      - name: Verify native archives and prepare immutable worker inputs
+        env:
+          ARCH: ${{ inputs.architecture }}
+          FSBUILD: ${{ runner.temp }}/fsbuild
+        run: |
+          set -euo pipefail
+          common="${RUNNER_TEMP}/pin-common/common.json"
+          target="${RUNNER_TEMP}/target"; mkdir -p "${target}"
+          for pair in 'jail_seed base.txz' 'package_catalog packagesite.pkg' 'worker_image_compressed worker.qcow2.xz'; do
+            set -- ${pair}; field=$1; file=$2
+            url=$(jq -er --arg arch "${ARCH}" ".targets[\$arch].${field}.url" "${common}")
+            sha=$(jq -er --arg arch "${ARCH}" ".targets[\$arch].${field}.sha256" "${common}")
+            curl --proto '=https' --fail --location --silent --show-error --retry 5 --retry-all-errors \
+              "${url}" --output "${target}/${file}"
+            echo "${sha}  ${target}/${file}" | sha256sum -c -
+          done
+          xz -d "${target}/worker.qcow2.xz"
+          qemu-img convert -c -f qcow2 -O qcow2 -o compat=1.1,lazy_refcounts=off,cluster_size=65536 -S 4k \
+            "${target}/worker.qcow2" "${target}/worker.compact.qcow2"
+          mv "${target}/worker.compact.qcow2" "${target}/worker.qcow2"
+          qemu-img check -f qcow2 "${target}/worker.qcow2"
+          bash scripts/pin-worker-tools.sh --architecture "${ARCH}" --catalog "${target}/packagesite.pkg" \
+            --freebsd-sha "$(jq -er .freebsd_source.commit "${common}")" \
+            --build-date "$(jq -er .bootstrap_snapshot.build_date "${common}")" \
+            --output "${target}/worker-tools.tar" --report "${target}/worker-tools.json"
+          for file in base.txz packagesite.pkg worker.qcow2 worker-tools.tar; do
+            "${FSBUILD}" blob put --file "${target}/${file}" --output "${target}/${file}.blob.json"
+          done
+      - name: Boot native FreeBSD and evaluate the complete package requirement union
+        env:
+          ARCH: ${{ inputs.architecture }}
+          FSBUILD: ${{ runner.temp }}/fsbuild
+          R2_BUCKET: ${{ vars.R2_BUILD_BUCKET }}
+          FSBUILD_STORE_PREFIX: v1
+        run: |
+          set -euo pipefail
+          target="${RUNNER_TEMP}/target"; common="${RUNNER_TEMP}/pin-common/common.json"
+          image_sha=$(jq -er .sha256 "${target}/worker.qcow2.blob.json")
+          tools_sha=$(jq -er .sha256 "${target}/worker-tools.tar.blob.json")
+          cat scripts/runner/install-worker-tools.sh >"${target}/collect.sh"
+          cat >>"${target}/collect.sh" <<EOF
+          PUBLIC_BASE_URL='$(jq -er .public_base_url config/build-policy.json)'
+          WORKER_TOOLS_SHA256='${tools_sha}'
+          install_worker_tools
+          git clone https://github.com/freebsd/freebsd-ports.git /root/ports
+          git -C /root/ports checkout --detach '$(jq -er .freebsd_ports.commit "${common}")'
+          for spec in \
+            'FreeSense-org/freesense:$(jq -er .sources.freesense "${common}"):source' \
+            'FreeSense-org/freesense-system-ports:$(jq -er .sources.system_ports "${common}"):system' \
+            'FreeSense-org/freesense-packages:$(jq -er .sources.packages "${common}"):packages' \
+            'FreeSense-org/freesense-os-base:$(jq -er .sources.os_base "${common}"):os-definition'; do
+            IFS=: read -r repo revision name <<SPEC
+          \${spec}
+          SPEC
+            git clone "https://github.com/\${repo}.git" "/root/\${name}"
+            git -C "/root/\${name}" checkout --detach "\${revision}"
+          done
+          for overlay in /root/system /root/packages; do
+            (cd "\${overlay}" && tar --exclude=.git -cf - .) | tar -xf - -C /root/ports
+          done
+          mkdir -p /usr/local/etc/poudriere.d
+          sed -e 's,%%PRODUCT_NAME%%,FreeSense,g' -e 's,%%PRODUCT_VERSION%%,1.1.0,g' \
+            -e 's,%%FREESENSE_PACKAGE_TRAIN%%,1.1,g' /root/source/tools/conf/pfPorts/make.conf \
+            >/usr/local/etc/poudriere.d/FreeSense_main-make.conf
+          PIN_ARCH='${ARCH}' python3 - <<'PY' >/root/roots.json
+          import json
+          import os
+          from pathlib import Path
+          def roots(name):
+              return sorted({line.replace('%%PRODUCT_NAME%%', 'FreeSense').strip()
+                             for line in Path('/root/source/tools/conf/pfPorts/' + name).read_text().splitlines()
+                             if line.strip() and not line.lstrip().startswith('#')})
+          system = roots('poudriere_system')
+          packages = roots('poudriere_packages')
+          if os.environ['PIN_ARCH'] == 'arm64':
+              system = [x for x in system if x not in {
+                  'sysutils/xe-guest-utilities', 'dns/coredns', 'net/speedtest-go',
+                  'net/cloud-init', 'sysutils/FreeSense-cloud-init'}]
+              policy = json.loads(Path('/root/packages/architecture-policy.json').read_text())
+              excluded = {item['origin'] for item in policy['architectures']['aarch64']['exclude']}
+              packages = [x for x in packages if x not in excluded]
+          print(json.dumps({'system': system, 'packages': packages}))
+          PY
+          python3 /root/os-definition/scripts/package_requirements.py \
+            --ports /root/ports --make-conf /usr/local/etc/poudriere.d/FreeSense_main-make.conf \
+            --architecture '${ARCH}' --ports-sha '$(jq -er .freebsd_ports.commit "${common}")' \
+            --roots /root/roots.json --output /root/requirements.json
+          echo PIN_REQUIREMENTS_BEGIN
+          base64 /root/requirements.json
+          echo PIN_REQUIREMENTS_END
+          EOF
+          scripts/runner/run-vm.sh --host-architecture "${ARCH}" --image-sha256 "${image_sha}" \
+            --script "${target}/collect.sh" --timeout 14400 --serial-output "${target}/serial.log" \
+            --failure-dir "${RUNNER_TEMP}/pin-${ARCH}-failure"
+          python3 scripts/extract_serial_payload.py --log "${target}/serial.log" \
+            --name PIN_REQUIREMENTS --output "${target}/requirements.json"
+      - name: Build, verify and mirror the official package seed
+        env:
+          ARCH: ${{ inputs.architecture }}
+        run: |
+          set -euo pipefail
+          target="${RUNNER_TEMP}/target"
+          python3 scripts/binary_seed.py --catalog "${target}/packagesite.pkg" \
+            --trusted-key-sha256 "$(jq -er .trusted_key_sha256 "${target}/worker-tools.json")" \
+            --requirements "${target}/requirements.json" --architecture "${ARCH}" \
+            --output "${target}/binary-seed.tar" --report "${target}/binary-seed.json"
+          "${RUNNER_TEMP}/fsbuild" blob put --file "${target}/binary-seed.tar" \
+            --output "${target}/binary-seed.tar.blob.json"
+      - id: identity
+        name: Emit the target report only after every immutable input is verified
+        env:
+          ARCH: ${{ inputs.architecture }}
+        run: |
+          set -euo pipefail
+          target="${RUNNER_TEMP}/target"; common="${RUNNER_TEMP}/pin-common/common.json"
+          abi=$(jq -er --arg arch "${ARCH}" '.targets[$arch].abi' config/build-policy.json)
+          jq -n --arg arch "${ARCH}" --arg abi "${abi}" \
+            --slurpfile jail "${target}/base.txz.blob.json" \
+            --slurpfile catalog "${target}/packagesite.pkg.blob.json" \
+            --slurpfile seedblob "${target}/binary-seed.tar.blob.json" \
+            --slurpfile seed "${target}/binary-seed.json" \
+            --slurpfile image "${target}/worker.qcow2.blob.json" \
+            --slurpfile tools "${target}/worker-tools.tar.blob.json" \
+            --slurpfile toolmeta "${target}/worker-tools.json" '
+            {schema_version:"freesense.freebsd-pin-target/v1",architecture:$arch,abi:$abi,ready:true,
+             jail_seed:($jail[0]),
+             package_catalog:($catalog[0]+{signature_verified:true,trusted_key_sha256:$toolmeta[0].trusted_key_sha256}),
+             binary_seed:($seedblob[0]+$seed[0]),
+             worker_image:($image[0]+{architecture:$arch,boot_verified:true}),
+             worker_tools:($tools[0]+{architecture:$arch,boot_verified:true}),
+             evidence:{schema_version:"freesense.worker-evidence/v1",architecture:$arch,boot:true,tools:true,
+              worker_image_sha256:$image[0].sha256,worker_tools_sha256:$tools[0].sha256,
+              requirements_sha256:$seed[0].requirements_sha256}}' >"${target}/report.json"
+          artifact="freebsd-pin-${ARCH}"
+          echo "artifact_name=${artifact}" >>"${GITHUB_OUTPUT}"
+      - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f
+        with:
+          name: freebsd-pin-${{ inputs.architecture }}
+          path: ${{ runner.temp }}/target/report.json
+          if-no-files-found: error
+          retention-days: 14
+      - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f
+        if: failure()
+        with:
+          name: freebsd-pin-${{ inputs.architecture }}-failure
+          path: ${{ runner.temp }}/pin-${{ inputs.architecture }}-failure/
+          if-no-files-found: ignore
+          retention-days: 14

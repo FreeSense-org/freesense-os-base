@@ -2,20 +2,23 @@
 set -euo pipefail
 
 usage() {
-  echo "usage: run-vm.sh --image-sha256 SHA256 --script FILE [--timeout SECONDS] [--vcpus N] [--memory-mib N] [--disk-gib N] [--minimum-free-gib N] [--failure-dir DIR]" >&2
+  echo "usage: run-vm.sh --image-sha256 SHA256 --script FILE [--timeout SECONDS] [--vcpus N] [--memory-mib N] [--disk-gib N] [--minimum-free-gib N] [--failure-dir DIR] [--serial-output FILE]" >&2
   exit 2
 }
 
 image_sha=""
+host_architecture=amd64
 script_path=""
 timeout_seconds=19800
 failure_dir=""
+serial_output=""
 vcpus=12
 memory_mib=32768
 disk_gib=160
 minimum_free_gib=80
 while (($#)); do
   case "$1" in
+    --host-architecture) host_architecture=${2:-}; shift 2 ;;
     --image-sha256) image_sha=${2:-}; shift 2 ;;
     --script) script_path=${2:-}; shift 2 ;;
     --timeout) timeout_seconds=${2:-}; shift 2 ;;
@@ -24,12 +27,31 @@ while (($#)); do
     --disk-gib) disk_gib=${2:-}; shift 2 ;;
     --minimum-free-gib) minimum_free_gib=${2:-}; shift 2 ;;
     --failure-dir) failure_dir=${2:-}; shift 2 ;;
+    --serial-output) serial_output=${2:-}; shift 2 ;;
     *) usage ;;
   esac
 done
+case "${host_architecture}:$(uname -m)" in
+  amd64:x86_64)
+    qemu=qemu-system-x86_64
+    machine=q35,accel=kvm
+    seed_interface=ide,media=cdrom
+    firmware_codes=(/usr/share/OVMF/OVMF_CODE_4M.fd /usr/share/OVMF/OVMF_CODE.fd /usr/share/edk2/ovmf/OVMF_CODE.fd)
+    firmware_vars=(/usr/share/OVMF/OVMF_VARS_4M.fd /usr/share/OVMF/OVMF_VARS.fd /usr/share/edk2/ovmf/OVMF_VARS.fd)
+    ;;
+  arm64:aarch64)
+    qemu=qemu-system-aarch64
+    machine=virt,accel=kvm,gic-version=host
+    seed_interface=virtio
+    firmware_codes=(/usr/share/AAVMF/AAVMF_CODE.fd)
+    firmware_vars=(/usr/share/AAVMF/AAVMF_VARS.fd)
+    ;;
+  *) echo "worker host architecture does not match native executor" >&2; exit 1 ;;
+esac
 [[ $image_sha =~ ^[0-9a-f]{64}$ ]] || usage
 [[ -f $script_path ]] || usage
 [[ -z $failure_dir || $failure_dir == /* ]] || usage
+[[ -z $serial_output || $serial_output == /* ]] || usage
 for value in "$timeout_seconds" "$disk_gib" "$minimum_free_gib"; do
   [[ $value =~ ^[1-9][0-9]*$ ]] || usage
 done
@@ -38,7 +60,7 @@ done
 : "${FSBUILD:?FSBUILD must point to the fsbuild executable}"
 : "${RUNNER_TEMP:?RUNNER_TEMP is required}"
 
-for tool in qemu-system-x86_64 qemu-img cloud-localds curl sha256sum base64 awk; do
+for tool in "$qemu" qemu-img cloud-localds curl sha256sum base64 awk; do
   command -v "$tool" >/dev/null || { echo "missing host dependency: $tool" >&2; exit 1; }
 done
 [[ -r /dev/kvm && -w /dev/kvm ]] || { echo "/dev/kvm is not available to the runner" >&2; exit 1; }
@@ -89,6 +111,10 @@ stop_qemu() {
 
 cleanup() {
   status=$?
+  if [[ -n $serial_output && -n ${serial:-} && -f $serial ]]; then
+    mkdir -p "$(dirname "$serial_output")"
+    cp -f "$serial" "$serial_output"
+  fi
   if [[ $status -ne 0 && -n $failure_dir ]]; then
     mkdir -p "$failure_dir"
     [[ -z $serial || ! -f $serial ]] || cp -f "$serial" "${failure_dir}/serial.log"
@@ -177,13 +203,13 @@ fail_marker=FREESENSE_RUNNER_JOB_FAILED_${nonce}
 
 code=""
 vars_template=""
-for firmware in /usr/share/OVMF/OVMF_CODE_4M.fd /usr/share/OVMF/OVMF_CODE.fd /usr/share/edk2/ovmf/OVMF_CODE.fd; do
+for firmware in "${firmware_codes[@]}"; do
   [[ -f $firmware ]] && { code=$firmware; break; }
 done
-for firmware in /usr/share/OVMF/OVMF_VARS_4M.fd /usr/share/OVMF/OVMF_VARS.fd /usr/share/edk2/ovmf/OVMF_VARS.fd; do
+for firmware in "${firmware_vars[@]}"; do
   [[ -f $firmware ]] && { vars_template=$firmware; break; }
 done
-[[ -n $code && -n $vars_template ]] || { echo "OVMF firmware was not found" >&2; exit 1; }
+[[ -n $code && -n $vars_template ]] || { echo "native UEFI firmware was not found" >&2; exit 1; }
 cp "$vars_template" "$vars"
 
 qemu-img create -q -f qcow2 -F qcow2 -b "$base_image" "$overlay"
@@ -235,16 +261,16 @@ cloud-localds "$seed" "${run_dir}/user-data" "${run_dir}/meta-data" >/dev/null
 rm -f "${run_dir}/user-data" "${run_dir}/meta-data"
 
 touch "$serial"
-qemu-system-x86_64 \
+"$qemu" \
   -name freesense-${nonce} \
-  -machine q35,accel=kvm \
+  -machine "$machine" \
   -cpu host \
   -smp "$vcpus" \
   -m "$memory_mib" \
   -drive if=pflash,format=raw,readonly=on,file="$code" \
   -drive if=pflash,format=raw,file="$vars" \
   -drive if=virtio,format=qcow2,cache=none,discard=unmap,file="$overlay" \
-  -drive if=ide,media=cdrom,format=raw,readonly=on,file="$seed" \
+  -drive if="$seed_interface",format=raw,readonly=on,file="$seed" \
   -device virtio-net-pci,netdev=net0 \
   -netdev user,id=net0 \
   -display none \

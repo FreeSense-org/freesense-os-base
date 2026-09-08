@@ -235,6 +235,7 @@ def read_catalog(lines: Iterable[str]) -> dict[str, Package]:
 
 def _dependency_order(
     packages: dict[str, Package], duplicate_names: set[str] | None = None,
+    roots: tuple[str, ...] = ROOT_NAMES,
 ) -> list[Package]:
     order: list[Package] = []
     state: dict[str, int] = {}
@@ -278,7 +279,7 @@ def _dependency_order(
         state[name] = 2
         order.append(package)
 
-    for root in ROOT_NAMES:
+    for root in roots:
         visit(root)
     return order
 
@@ -295,10 +296,33 @@ def _select_ports_commit(packages: Iterable[Package]) -> str:
     return next(iter(commits))
 
 
-def resolve_worker_tools(lines: Iterable[str]) -> dict[str, object]:
+def worker_profile(architecture: str | None) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    if architecture not in (None, "amd64", "arm64"):
+        raise ValueError("unsupported worker architecture")
+    if architecture == "arm64":
+        return (tuple(name for name in ROOT_NAMES if name != "qemu-user-static") + ("python311",),
+                tuple(command for command in COMMANDS if command != "qemu-aarch64-static") + ("python3.11",))
+    if architecture == "amd64":
+        return ROOT_NAMES + ("python311",), COMMANDS + ("python3.11",)
+    return ROOT_NAMES, COMMANDS
+
+
+def resolve_worker_tools(lines: Iterable[str], architecture: str | None = None) -> dict[str, object]:
+    roots, commands = worker_profile(architecture)
+    lines = list(lines)
+    native_abis = {}
+    if architecture is not None:
+        for line in lines:
+            if line.strip():
+                record = _load_json(line, "worker catalogue")
+                native_abis.setdefault(record.get("name"), set()).add(record.get("abi"))
     packages, all_packages, duplicate_names = _parse_catalog(lines)
     ports_sha = _select_ports_commit(all_packages)
-    order = _dependency_order(packages, duplicate_names)
+    order = _dependency_order(packages, duplicate_names, roots)
+    if architecture is not None:
+        abi = "FreeBSD:16:" + ("aarch64" if architecture == "arm64" else "amd64")
+        if any(native_abis.get(package.name) != {abi} for package in order):
+            raise ValueError("worker-tool closure contains a foreign or ambiguous ABI")
     osversions = {package.osversion for package in order if package.osversion is not None}
     if len(osversions) != 1:
         raise ValueError("worker-tool closure has inconsistent package OSVERSION values")
@@ -330,8 +354,9 @@ def resolve_worker_tools(lines: Iterable[str]) -> dict[str, object]:
         "schema_version": SCHEMA_VERSION,
         "ports_sha": ports_sha,
         "osversion": osversion,
-        "roots": list(ROOT_NAMES),
-        "commands": list(COMMANDS),
+        "roots": list(roots),
+        "commands": list(commands),
+        **({"architecture": architecture, "abi": abi} if architecture is not None else {}),
         "package_count": len(resolved),
         "packages": resolved,
         "install_order": install_order,
@@ -418,9 +443,14 @@ def verify_download(path: Path, checksum: str, expected_size: int | None = None)
 def verify_manifest_downloads(manifest: object, directory: Path) -> None:
     if not isinstance(manifest, dict) or manifest.get("schema_version") != SCHEMA_VERSION:
         raise ValueError("invalid worker-tool manifest schema")
-    if manifest.get("roots") != list(ROOT_NAMES):
+    roots, commands = worker_profile(manifest.get("architecture"))
+    if manifest.get("architecture") is not None:
+        expected_abi = "FreeBSD:16:" + ("aarch64" if manifest["architecture"] == "arm64" else "amd64")
+        if manifest.get("abi") != expected_abi:
+            raise ValueError("worker-tool manifest ABI mismatch")
+    if manifest.get("roots") != list(roots):
         raise ValueError("worker-tool manifest has unexpected roots")
-    if manifest.get("commands") != list(COMMANDS):
+    if manifest.get("commands") != list(commands):
         raise ValueError("worker-tool manifest has unexpected command checks")
     if not isinstance(manifest.get("ports_sha"), str) or not SHA1.fullmatch(manifest["ports_sha"]):
         raise ValueError("worker-tool manifest has an invalid ports commit")
@@ -486,6 +516,7 @@ def main(argv: list[str] | None = None) -> int:
     resolve = commands.add_parser("resolve", help="resolve the exact worker-tool closure")
     resolve.add_argument("--catalog", default="-", help="newline-JSON packagesite, or - for stdin")
     resolve.add_argument("--output", default="-", help="manifest path, or - for stdout")
+    resolve.add_argument("--architecture", choices=("amd64", "arm64"))
     verify = commands.add_parser("verify", help="verify already-downloaded package files")
     verify.add_argument("--manifest", required=True)
     verify.add_argument("--directory", required=True)
@@ -503,7 +534,7 @@ def main(argv: list[str] | None = None) -> int:
             else:
                 catalog = Path(args.catalog).open("r", encoding="utf-8")
             try:
-                manifest = resolve_worker_tools(catalog)
+                manifest = resolve_worker_tools(catalog, args.architecture)
             finally:
                 if catalog is not sys.stdin:
                     catalog.close()
