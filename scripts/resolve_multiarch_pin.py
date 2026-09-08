@@ -50,6 +50,7 @@ def resolve(previous: dict, directory: Path, metadata: dict, sources: dict,
     for arch, (dist_arch, package_arch) in TARGETS.items():
         target = directory / arch
         records = verify_catalogue(target / "packagesite.pkg", metadata["trusted_key_sha256"])
+        catalog_sha = hashlib.sha256((target / "packagesite.pkg").read_bytes()).hexdigest()
         worker = resolve_worker_tools((json.dumps(record) for record in records), arch)
         ports.add(worker["ports_sha"])
         catalog_osversion = worker["osversion"]
