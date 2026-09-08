@@ -258,6 +258,36 @@ class RequirementsCollectorTests(unittest.TestCase):
         self.assertIn("running_osversion + 1", script)
         self.assertIn("required_osversion + 1", script)
 
+    def test_collector_handles_origin_aliases_for_identical_package(self):
+        collector = object.__new__(package_requirements.Collector)
+        collector.abi, collector.knobs, collector.changed = "FreeBSD:16:amd64", set(), set()
+        collector.records, collector.by_origin = {}, {}
+        def values(origin, names):
+            result = {name: "" for name in names}
+            if origin in ("textproc/py-docutils", "textproc/py-docutils@py312"):
+                result.update(PKGBASE="py312-docutils", PKGVERSION="0.21.2", PKGORIGIN="textproc/py-docutils",
+                              COMPLETE_OPTIONS_LIST="", PORT_OPTIONS="", USES="python", EXTRA_PATCHES="", SUBPACKAGES="")
+            return result
+        collector.values = values
+        self.assertEqual(collector.visit("textproc/py-docutils"), "py312-docutils")
+        # Visiting the flavored alias should resolve without conflict
+        self.assertEqual(collector.visit("textproc/py-docutils@py312"), "py312-docutils")
+
+    def test_collector_rejects_conflicting_package_records(self):
+        collector = object.__new__(package_requirements.Collector)
+        collector.abi, collector.knobs, collector.changed = "FreeBSD:16:amd64", set(), set()
+        collector.records, collector.by_origin = {}, {}
+        def values(origin, names):
+            result = {name: "" for name in names}
+            pkgorigin = "textproc/py-docutils" if origin == "textproc/py-docutils" else "other/py-docutils"
+            result.update(PKGBASE="py312-docutils", PKGVERSION="0.21.2", PKGORIGIN=pkgorigin,
+                          COMPLETE_OPTIONS_LIST="", PORT_OPTIONS="", USES="python", EXTRA_PATCHES="", SUBPACKAGES="")
+            return result
+        collector.values = values
+        self.assertEqual(collector.visit("textproc/py-docutils"), "py312-docutils")
+        with self.assertRaisesRegex(ValueError, "conflicting package name across ports/flavors"):
+            collector.visit("other/py-docutils")
+
 
 class PinSealingTests(unittest.TestCase):
     def prepare(self, root):

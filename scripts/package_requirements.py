@@ -117,6 +117,16 @@ class Collector:
             "base_package": False,
         }
         if name in self.records:
+            existing = self.records[name]
+            if (existing["origin"] == record["origin"] and
+                existing["version"] == record["version"] and
+                existing["options"] == record["options"] and
+                existing["overlay"] == record["overlay"] and
+                existing["custom_patches"] == record["custom_patches"] and
+                existing["non_options_knobs"] == record["non_options_knobs"] and
+                existing["kernel_sensitive"] == record["kernel_sensitive"]):
+                self.by_origin[origin] = name
+                return name
             raise ValueError(f"conflicting package name across ports/flavors: {name}")
         self.by_origin[origin], self.records[name] = name, record
         for field in DEPENDENCY_FIELDS:
