@@ -34,14 +34,26 @@ done
 case "${host_architecture}:$(uname -m)" in
   amd64:x86_64)
     qemu=qemu-system-x86_64
-    machine=q35,accel=kvm
+    if [[ -r /dev/kvm && -w /dev/kvm ]]; then
+      machine=q35,accel=kvm
+      cpu=host
+    else
+      machine=q35
+      cpu=max
+    fi
     seed_interface=ide,media=cdrom
     firmware_codes=(/usr/share/OVMF/OVMF_CODE_4M.fd /usr/share/OVMF/OVMF_CODE.fd /usr/share/edk2/ovmf/OVMF_CODE.fd)
     firmware_vars=(/usr/share/OVMF/OVMF_VARS_4M.fd /usr/share/OVMF/OVMF_VARS.fd /usr/share/edk2/ovmf/OVMF_VARS.fd)
     ;;
   arm64:aarch64)
     qemu=qemu-system-aarch64
-    machine=virt,accel=kvm,gic-version=host
+    if [[ -r /dev/kvm && -w /dev/kvm ]]; then
+      machine=virt,accel=kvm,gic-version=host
+      cpu=host
+    else
+      machine=virt,gic-version=3
+      cpu=cortex-a57
+    fi
     seed_interface=virtio
     firmware_codes=(/usr/share/AAVMF/AAVMF_CODE.fd)
     firmware_vars=(/usr/share/AAVMF/AAVMF_VARS.fd)
@@ -63,7 +75,11 @@ done
 for tool in "$qemu" qemu-img cloud-localds curl sha256sum base64 awk; do
   command -v "$tool" >/dev/null || { echo "missing host dependency: $tool" >&2; exit 1; }
 done
-[[ -r /dev/kvm && -w /dev/kvm ]] || { echo "/dev/kvm is not available to the runner" >&2; exit 1; }
+if [[ -r /dev/kvm && -w /dev/kvm ]]; then
+  echo "Virtualization acceleration: /dev/kvm is available"
+else
+  echo "Virtualization acceleration: /dev/kvm is not available; falling back to software emulation" >&2
+fi
 if [[ $vcpus == auto ]]; then
   vcpus=$(nproc)
 fi
@@ -264,7 +280,7 @@ touch "$serial"
 "$qemu" \
   -name freesense-${nonce} \
   -machine "$machine" \
-  -cpu host \
+  -cpu "$cpu" \
   -smp "$vcpus" \
   -m "$memory_mib" \
   -drive if=pflash,format=raw,readonly=on,file="$code" \
@@ -306,8 +322,12 @@ while true; do
     exit 1
   fi
   if [[ $seen_begin == false ]] && grep -Fq "$begin_marker" "$serial"; then seen_begin=true; fi
-  if [[ $seen_begin == false ]] && (( now - start >= 300 )); then
-    echo "FreeBSD booted without executing nuageinit user-data within 300s" >&2
+  boot_timeout=300
+  if [[ ! -r /dev/kvm || ! -w /dev/kvm ]]; then
+    boot_timeout=900
+  fi
+  if [[ $seen_begin == false ]] && (( now - start >= boot_timeout )); then
+    echo "FreeBSD booted without executing nuageinit user-data within ${boot_timeout}s" >&2
     show_diagnostics
     exit 1
   fi
