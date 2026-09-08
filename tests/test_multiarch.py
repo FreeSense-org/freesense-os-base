@@ -246,6 +246,13 @@ class RequirementsCollectorTests(unittest.TestCase):
         self.assertEqual(set(packages), {"app", "lib", "rust", "pkg"})
         self.assertEqual(set(packages["app"]["deps"]), {"lib"})
 
+    def test_collector_allows_audited_mk_overlay_helper(self):
+        audited_mk = {"Mk/bsd.freesense-package.mk"}
+        allowed_paths = {"Mk/bsd.freesense-package.mk", "net/sample/Makefile"}
+        self.assertFalse(any(path.startswith(("Templates/", "Keywords/")) or (path.startswith("Mk/") and path not in audited_mk) for path in allowed_paths))
+        unauthorized_paths = {"Mk/bsd.unauthorized.mk"}
+        self.assertTrue(any(path.startswith(("Templates/", "Keywords/")) or (path.startswith("Mk/") and path not in audited_mk) for path in unauthorized_paths))
+
 
 class PinSealingTests(unittest.TestCase):
     def prepare(self, root):
