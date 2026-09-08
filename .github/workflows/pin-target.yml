@@ -135,6 +135,8 @@ jobs:
           sed -e 's,%%PRODUCT_NAME%%,FreeSense,g' -e 's,%%PRODUCT_VERSION%%,1.1.0,g' \
             -e 's,%%FREESENSE_PACKAGE_TRAIN%%,1.1,g' /root/source/tools/conf/pfPorts/make.conf \
             >/usr/local/etc/poudriere.d/FreeSense_main-make.conf
+          printf 'PRODUCT_NAME=FreeSense\nPRODUCT_VERSION=1.1.0\nFREESENSE_PACKAGE_TRAIN=1.1\nPOUDRIERE_PORTS_NAME=FreeSense_main\n' \
+            >>/usr/local/etc/poudriere.d/FreeSense_main-make.conf
           PIN_ARCH='${ARCH}' python3 - <<'PY' >/root/roots.json
           import json
           import os
