@@ -1,5 +1,13 @@
 # FreeSense OS build control plane
 
+The [unified Development multiarch pipeline](docs/development-multiarch.md) unites
+amd64 and ARM64 under a single daily orchestrator (`development-multiarch.yml`),
+native worker image probing, dual-architecture component farms, authoritative
+RSA-signed completion documents (`freesense.multiarch-release/v1`), and atomic
+publication (`development-multiarch-publish.yml`). It is implemented locally and
+remains publication-disabled until canary verification. The behavior described
+below is the existing release path until the verified Development cutover.
+
 This repository pins FreeBSD 16 and defines the complete FreeSense build. GitHub
 Actions plans and publishes while FreeBSD work runs in a fresh KVM guest.
 Rolling amd64 Development System builds use a GitHub-hosted build farm: one
@@ -48,9 +56,10 @@ after the ISO and both cloud variants pass their smoke checks and all five
 immutable files verify. Historical v1
 ISO-only documents remain readable. During a FreeBSD pin rollover, a newly
 published System remains pending until the new compatible Packages repository
-arrives. `pin.yml` checks daily at 02:00 UTC, performs the expensive validation
-only near the end of the active window, and advances the pin by exactly 14 days
-through its single reusable pull-request branch.
+arrives. `pin.yml` checks daily at 02:00 UTC, performs validation near the end
+of the active 14-day window, coordinates native amd64 and ARM64 target checks in
+parallel via `pin-target.yml`, assembles the verified v4 pin, and advances the pin
+by exactly 14 days through its single pull-request branch without force-pushing shared history.
 
 Retries reserve one generation per content fingerprint, reuse a valid
 `complete.json`, keep existing identical objects, and write the completion marker

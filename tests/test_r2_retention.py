@@ -1,6 +1,8 @@
 import base64
-import importlib.util
+import copy
 from datetime import datetime, timedelta, timezone
+import hashlib
+import importlib.util
 import json
 from pathlib import Path
 import shutil
@@ -145,6 +147,264 @@ def inventory(kind: str, bucket: str) -> dict:
 
 
 class RetentionPlanTests(unittest.TestCase):
+    def test_authoritative_multiarch_completion_protects_its_component_pair(self):
+        build = inventory("build", "builds")
+        downloads = inventory("downloads", "downloads")
+        system = system_marker(1, 1)
+        packages = packages_marker(2, 1, system["fingerprint"])
+        add_artifact(build, f"v1/artifacts/system/{system['fingerprint']}", system)
+        add_artifact(build, f"v1/artifacts/packages/1.1/{packages['fingerprint']}", packages)
+        manifest = {"channels": {"devel": {"package_train": "1.1"}}}
+        completion = {"architectures": {
+            "amd64": {"system_fingerprint": system["fingerprint"],
+                      "packages_fingerprint": packages["fingerprint"]},
+            "arm64": {"system_fingerprint": fingerprint(3),
+                      "packages_fingerprint": fingerprint(4)},
+        }}
+        report = retention.plan_retention(
+            build, downloads, manifest, set(), NOW, keep_devel=1,
+            grace=timedelta(0), completed_grace=timedelta(0),
+            multiarch=completion,
+        )
+        candidates = {item["prefix"] for item in report["candidates"]}
+        self.assertNotIn(f"v1/artifacts/system/{system['fingerprint']}/", candidates)
+        self.assertNotIn(f"v1/artifacts/packages/1.1/{packages['fingerprint']}/", candidates)
+
+    def test_multiarch_envelope_validation_rejects_malformed_input(self):
+        pub_path = ROOT / "config" / "channel-signing-public.pem"
+        # Bad envelope schema
+        with self.assertRaises(SystemExit):
+            retention.verify_multiarch({"schema_version": "invalid"}, pub_path)
+        # Bad base64
+        with self.assertRaises(SystemExit):
+            retention.verify_multiarch({
+                "schema_version": "freesense.multiarch-release/v1",
+                "payload": "not-base64!",
+                "signature": "not-base64!",
+            }, pub_path)
+        # Non-JSON payload
+        with self.assertRaises(SystemExit):
+            retention.verify_multiarch({
+                "schema_version": "freesense.multiarch-release/v1",
+                "payload": base64.b64encode(b"not json").decode(),
+                "signature": base64.b64encode(b"sig").decode(),
+            }, pub_path)
+
+    @unittest.skipUnless(shutil.which("openssl"), "OpenSSL is required")
+    def test_multiarch_signature_rejection_for_malformed_document(self):
+        with tempfile.NamedTemporaryFile(delete=False) as key_file:
+            key_path = Path(key_file.name)
+        try:
+            subprocess.run(
+                ["openssl", "genrsa", "-out", str(key_path), "2048"],
+                check=True, capture_output=True
+            )
+            pub_path = key_path.with_suffix(".pub")
+            subprocess.run(
+                ["openssl", "rsa", "-in", str(key_path), "-pubout", "-out", str(pub_path)],
+                check=True, capture_output=True
+            )
+            payload = {
+                "schema_version": "freesense.multiarch-release/v1",
+                "channel": "devel",
+                "generation": 1,
+                "architectures": {
+                    "amd64": {
+                        "system_fingerprint": fingerprint(1),
+                        "packages_fingerprint": fingerprint(2),
+                        "repository_document_sha256": fingerprint(3),
+                        "release_document_sha256": fingerprint(4),
+                    },
+                    "arm64": {
+                        "system_fingerprint": fingerprint(5),
+                        "packages_fingerprint": fingerprint(6),
+                        "repository_document_sha256": fingerprint(7),
+                        "release_document_sha256": fingerprint(8),
+                    },
+                },
+            }
+            raw_payload = json.dumps(payload).encode()
+            sig = subprocess.run(
+                ["openssl", "dgst", "-sha256", "-sign", str(key_path)],
+                input=raw_payload, check=True, capture_output=True
+            ).stdout
+            envelope = {
+                "schema_version": "freesense.multiarch-release/v1",
+                "payload": base64.b64encode(raw_payload).decode(),
+                "signature": base64.b64encode(sig).decode(),
+            }
+            decoded = retention.verify_multiarch(envelope, pub_path)
+            self.assertEqual(decoded["generation"], 1)
+
+            # Tampered payload fails
+            tampered_payload = dict(payload, generation=2)
+            tampered_envelope = dict(
+                envelope, payload=base64.b64encode(json.dumps(tampered_payload).encode()).decode()
+            )
+            with self.assertRaises(SystemExit):
+                retention.verify_multiarch(tampered_envelope, pub_path)
+
+            # Tampered signature fails
+            bad_sig_envelope = dict(
+                envelope, signature=base64.b64encode(b"invalid-signature").decode()
+            )
+            with self.assertRaises(SystemExit):
+                retention.verify_multiarch(bad_sig_envelope, pub_path)
+
+            # Missing architecture fails
+            bad_arch_payload = copy.deepcopy(payload)
+            del bad_arch_payload["architectures"]["arm64"]
+            bad_raw = json.dumps(bad_arch_payload).encode()
+            bad_sig = subprocess.run(
+                ["openssl", "dgst", "-sha256", "-sign", str(key_path)],
+                input=bad_raw, check=True, capture_output=True
+            ).stdout
+            with self.assertRaises(SystemExit):
+                retention.verify_multiarch({
+                    "schema_version": "freesense.multiarch-release/v1",
+                    "payload": base64.b64encode(bad_raw).decode(),
+                    "signature": base64.b64encode(bad_sig).decode(),
+                }, pub_path)
+        finally:
+            key_path.unlink(missing_ok=True)
+            if 'pub_path' in locals():
+                pub_path.unlink(missing_ok=True)
+
+    def test_committed_pair_remains_protected_when_older_than_four_generations(self):
+        build = inventory("build", "builds")
+        downloads = inventory("downloads", "downloads")
+        old_system = system_marker(1, 1)
+        old_packages = packages_marker(2, 1, old_system["fingerprint"])
+        add_artifact(build, f"v1/artifacts/system/{old_system['fingerprint']}", old_system)
+        add_artifact(build, f"v1/artifacts/packages/1.1/{old_packages['fingerprint']}", old_packages)
+        for gen in range(2, 7):
+            sys_item = system_marker(10 + gen, gen)
+            pkg_item = packages_marker(20 + gen, gen, sys_item["fingerprint"])
+            add_artifact(build, f"v1/artifacts/system/{sys_item['fingerprint']}", sys_item)
+            add_artifact(build, f"v1/artifacts/packages/1.1/{pkg_item['fingerprint']}", pkg_item)
+
+        manifest = {"channels": {"devel": {"package_train": "1.1"}}}
+        completion = {"architectures": {
+            "amd64": {"system_fingerprint": old_system["fingerprint"],
+                      "packages_fingerprint": old_packages["fingerprint"]},
+            "arm64": {"system_fingerprint": fingerprint(91),
+                      "packages_fingerprint": fingerprint(92)},
+        }}
+        report = retention.plan_retention(
+            build, downloads, manifest, set(), NOW, keep_devel=4,
+            grace=timedelta(0), completed_grace=timedelta(0),
+            multiarch=completion,
+        )
+        candidates = {item["prefix"] for item in report["candidates"]}
+        self.assertNotIn(f"v1/artifacts/system/{old_system['fingerprint']}/", candidates)
+        self.assertNotIn(f"v1/artifacts/packages/1.1/{old_packages['fingerprint']}/", candidates)
+        gen2_system = fingerprint(12)
+        self.assertIn(f"v1/artifacts/system/{gen2_system}/", candidates)
+
+    def test_protects_all_six_image_artifact_families_referenced_by_completion(self):
+        build = inventory("build", "builds")
+        downloads = inventory("downloads", "downloads")
+        system_amd = system_marker(101, 1)
+        pkg_amd = packages_marker(102, 1, system_amd["fingerprint"])
+        add_artifact(build, f"v1/artifacts/system/{system_amd['fingerprint']}", system_amd)
+        add_artifact(build, f"v1/artifacts/packages/1.1/{pkg_amd['fingerprint']}", pkg_amd)
+
+        iso_amd = iso_marker(111, 1, system_amd["fingerprint"], packages=pkg_amd["fingerprint"])
+        cloud_ufs = cloud_marker(112, 1, system_amd["fingerprint"], pkg_amd["fingerprint"])
+        cloud_zfs = cloud_marker(113, 1, system_amd["fingerprint"], pkg_amd["fingerprint"])
+        add_artifact(build, f"v1/artifacts/iso/{iso_amd['fingerprint']}", iso_amd)
+        add_artifact(build, f"v1/artifacts/cloud/{cloud_ufs['fingerprint']}", cloud_ufs)
+        add_artifact(build, f"v1/artifacts/cloud/{cloud_zfs['fingerprint']}", cloud_zfs)
+
+        system_arm = system_marker(201, 1)
+        pkg_arm = packages_marker(202, 1, system_arm["fingerprint"])
+        add_artifact(build, f"v1/artifacts/system/{system_arm['fingerprint']}", system_arm)
+        add_artifact(build, f"v1/artifacts/packages/1.1/{pkg_arm['fingerprint']}", pkg_arm)
+        iso_arm = iso_marker(211, 1, system_arm["fingerprint"], packages=pkg_arm["fingerprint"])
+        rpi4 = appliance_marker(212, 1, system_arm["fingerprint"], pkg_arm["fingerprint"], fingerprint(4001))
+        rpi5 = appliance_marker(213, 1, system_arm["fingerprint"], pkg_arm["fingerprint"], fingerprint(4002))
+        add_artifact(build, f"v1/artifacts/iso/{iso_arm['fingerprint']}", iso_arm)
+        add_artifact(build, f"v1/artifacts/appliance/{rpi4['fingerprint']}", rpi4)
+        add_artifact(build, f"v1/artifacts/appliance/{rpi5['fingerprint']}", rpi5)
+
+        release_amd = {
+            "channel": "devel", "architecture": "amd64", "generation": 1,
+            "artifacts": [
+                {"kind": "installer", "artifact_fingerprint": iso_amd["fingerprint"], "file": "FreeSense.iso"},
+                {"kind": "cloud", "artifact_fingerprint": cloud_ufs["fingerprint"], "filesystem": "ufs", "file": "cloud-ufs.qcow2"},
+                {"kind": "cloud", "artifact_fingerprint": cloud_zfs["fingerprint"], "filesystem": "zfs", "file": "cloud-zfs.qcow2"},
+            ]
+        }
+        release_arm = {
+            "channel": "devel", "architecture": "arm64", "generation": 1,
+            "artifacts": [
+                {"kind": "installer", "artifact_fingerprint": iso_arm["fingerprint"], "file": "FreeSense-arm64.iso"},
+                {"kind": "appliance", "artifact_fingerprint": rpi4["fingerprint"], "platform": "arm64-rpi4b", "file": "rpi4.img"},
+                {"kind": "appliance", "artifact_fingerprint": rpi5["fingerprint"], "platform": "arm64-rpi5-d0", "file": "rpi5.img"},
+            ]
+        }
+        bytes_amd = json.dumps(release_amd).encode()
+        bytes_arm = json.dumps(release_arm).encode()
+
+        completion = {
+            "schema_version": "freesense.multiarch-release/v1", "channel": "devel", "generation": 1,
+            "architectures": {
+                "amd64": {
+                    "system_fingerprint": system_amd["fingerprint"],
+                    "packages_fingerprint": pkg_amd["fingerprint"],
+                    "repository_document_sha256": fingerprint(301),
+                    "release_document_sha256": hashlib.sha256(bytes_amd).hexdigest(),
+                },
+                "arm64": {
+                    "system_fingerprint": system_arm["fingerprint"],
+                    "packages_fingerprint": pkg_arm["fingerprint"],
+                    "repository_document_sha256": fingerprint(302),
+                    "release_document_sha256": hashlib.sha256(bytes_arm).hexdigest(),
+                },
+            }
+        }
+        report = retention.plan_retention(
+            build, downloads, {"channels": {"devel": {"package_train": "1.1"}}},
+            set(), NOW, keep_devel=1, grace=timedelta(0), completed_grace=timedelta(0),
+            multiarch=completion,
+            release_documents={"amd64": bytes_amd, "arm64": bytes_arm},
+        )
+        candidates = {item["prefix"] for item in report["candidates"]}
+        self.assertNotIn(f"v1/artifacts/iso/{iso_amd['fingerprint']}/", candidates)
+        self.assertNotIn(f"v1/artifacts/cloud/{cloud_ufs['fingerprint']}/", candidates)
+        self.assertNotIn(f"v1/artifacts/cloud/{cloud_zfs['fingerprint']}/", candidates)
+        self.assertNotIn(f"v1/artifacts/iso/{iso_arm['fingerprint']}/", candidates)
+        self.assertNotIn(f"v1/artifacts/appliance/{rpi4['fingerprint']}/", candidates)
+        self.assertNotIn(f"v1/artifacts/appliance/{rpi5['fingerprint']}/", candidates)
+
+    def test_multiarch_mismatched_release_document_hash_fails(self):
+        build = inventory("build", "builds")
+        downloads = inventory("downloads", "downloads")
+        completion = {
+            "schema_version": "freesense.multiarch-release/v1", "channel": "devel", "generation": 1,
+            "architectures": {
+                "amd64": {
+                    "system_fingerprint": fingerprint(1),
+                    "packages_fingerprint": fingerprint(2),
+                    "repository_document_sha256": fingerprint(3),
+                    "release_document_sha256": fingerprint(4),
+                },
+                "arm64": {
+                    "system_fingerprint": fingerprint(5),
+                    "packages_fingerprint": fingerprint(6),
+                    "repository_document_sha256": fingerprint(7),
+                    "release_document_sha256": fingerprint(8),
+                },
+            }
+        }
+        with self.assertRaises(SystemExit):
+            retention.plan_retention(
+                build, downloads, {"channels": {"devel": {"package_train": "1.1"}}},
+                set(), NOW, keep_devel=1, grace=timedelta(0), completed_grace=timedelta(0),
+                multiarch=completion,
+                release_documents={"amd64": b"corrupted-release-document-bytes"},
+            )
+
     def test_latest_four_development_bundles_keep_iso_and_cloud(self):
         build = inventory("build", "builds")
         downloads = inventory("downloads", "downloads")

@@ -23,9 +23,10 @@ def require(condition: bool, message: str) -> None:
 
 
 expected_workflows = {
+    "development-multiarch.yml", "development-multiarch-publish.yml", "component-farm.yml",
     "github-hosted-experiment.yml",
     "github-hosted-system.yml",
-    "arm64-experimental.yml", "broker.yml", "ci.yml", "packages.yml", "pin.yml", "release.yml",
+    "arm64-experimental.yml", "broker.yml", "ci.yml", "packages.yml", "pin.yml", "pin-target.yml", "release.yml",
     "retention.yml", "runner-build.yml", "stable.yml", "system.yml",
 }
 workflow_paths = sorted(WORKFLOWS.glob("*.yml"))
@@ -39,7 +40,7 @@ for workflow in workflow_paths:
         require(bool(re.fullmatch(r"[0-9a-f]{40}", reference)),
                 f"{workflow.name} has an unpinned action: {reference}")
     if "runs-on: [self-hosted, build-runner]" in text:
-        require(workflow.name in {"pin.yml", "runner-build.yml"},
+        require(workflow.name in {"pin.yml", "pin-target.yml", "runner-build.yml"},
                 f"{workflow.name} bypasses the supported build-runner entry points")
 
 reusable = read(".github/workflows/runner-build.yml")
@@ -47,11 +48,15 @@ system_workflow = read(".github/workflows/system.yml")
 system_stage = read("scripts/runner/stages/system.sh")
 common = read("scripts/runner/worker-common.sh")
 pin_workflow = read(".github/workflows/pin.yml")
+for value in ("security_rollover:", "SECURITY_REFERENCE", "Early security rollover requires"):
+    require(value in pin_workflow, f"Pin FreeBSD security rollover contract is missing {value!r}")
+require("force:" not in pin_workflow and "FORCE_PIN" not in pin_workflow,
+        "Pin FreeBSD retains a generic early-force escape hatch")
 require("apt-get" not in pin_workflow,
         "the dedicated pin runner must be provisioned outside workflows")
 for value in ("build_host", "ubuntu-24.04", "Prepare disposable GitHub build host",
-              "if: inputs.build_host == 'github-hosted'", "BUILD_VCPUS", "BUILD_MEMORY_MIB",
-              "freesense-github-hosted-build", "freesense-kvm-host"):
+              "if: inputs.build_host != 'dedicated'", "BUILD_VCPUS", "BUILD_MEMORY_MIB",
+              "freesense-hosted-", "freesense-kvm-host"):
     require(value in reusable, f"reusable runner routing is missing {value!r}")
 for name in ("system.yml", "packages.yml", "release.yml", "stable.yml"):
     require("uses: ./.github/workflows/runner-build.yml" in read(f".github/workflows/{name}"),
@@ -73,7 +78,7 @@ for value in ('max-parallel: 20',
               "needs.build_finalize.result == 'success'"):
     require(value in system_workflow,
             f"AMD64 System farm orchestration is missing {value!r}")
-for value in ("freesense-github-hosted-build-{0}-{1}",
+for value in ("freesense-hosted-{0}-{1}-{2}-{3}-{4}",
               "Reuse completed System farm checkpoint",
               "Render credential-free System farm worker",
               "FREESENSE_REPO_SIGNING_KEY: ''",
@@ -165,21 +170,16 @@ for value in ("Reserve immutable release generation", "system_generation",
 require("if: always() && needs.iso-plan.result == 'success'" in release_workflow,
         "manual installer jobs do not survive the intentionally skipped release gate")
 for value in (
-        "if: always() && needs.iso-plan.outputs.target == 'arm64' && needs.iso.result == 'success'",
-        "if: always() && needs.iso-plan.outputs.target == 'arm64' && needs.appliance-rpi4b.result == 'success'"):
+        "if: always() && needs.iso-plan.result == 'success' && needs.iso-plan.outputs.target == 'arm64'",):
     require(value in release_workflow,
             "Raspberry Pi appliance jobs do not survive the intentionally skipped release gate")
 for value in (
-        "if: always() && needs.iso-plan.result == 'success' && needs.iso.result == 'success' && needs.iso-plan.outputs.cloud_enabled == 'true'",
-        "if: always() && needs.iso-plan.result == 'success' && needs.cloud-ufs.result == 'success' && needs.iso-plan.outputs.cloud_enabled == 'true'"):
+        "if: always() && needs.iso-plan.result == 'success' && needs.iso-plan.outputs.cloud_enabled == 'true'",):
     require(value in release_workflow,
             "cloud jobs do not survive the intentionally skipped release gate")
-require("needs.iso.result == 'success' && needs.iso-plan.outputs.cloud_enabled == 'true'" in release_workflow and
-        "needs.cloud-ufs.result == 'success' && needs.iso-plan.outputs.cloud_enabled == 'true'" in release_workflow,
-        "cloud jobs are not gated by installer verification and profile capability")
-for value in ("needs: [iso-plan, iso]", "needs: [iso-plan, cloud-ufs]"):
-    require(value in release_workflow,
-            f"release KVM jobs are not serialized by {value!r}")
+require("needs.iso.result == 'success'" in release_workflow and
+        "needs.cloud-ufs.result == 'success' && needs.cloud-zfs.result == 'success'" in release_workflow,
+        "release publication must wait for installer and both cloud checks")
 for value in ("needs: [plan, iso-plan, iso]",
               "needs: [plan, iso-plan, cloud-ufs]"):
     require(value in stable_workflow,
@@ -453,9 +453,9 @@ lock = json.loads(read("config/freebsd-16.json"))
 require(all(target.get("kernel") == "FreeSense" for target in policy["targets"].values()) and
         "default: FreeSense" in reusable,
         "build descriptors do not select the post-rebrand FreeSense kernel")
-require(lock.get("schema_version") == "freesense.freebsd-pin/v3" and
+require(lock.get("schema_version") in {"freesense.freebsd-pin/v3", "freesense.freebsd-pin/v4"} and
         lock.get("targets", {}).get("amd64", {}).get("ready") is True,
-        "FreeBSD lock has no ready amd64 target in schema v3")
+        "FreeBSD lock has no ready amd64 target in supported schema v3 or v4")
 for name in ("freebsd_source", "freebsd_ports"):
     require(bool(re.fullmatch(r"[0-9a-f]{40}", lock.get(name, {}).get("commit", ""))),
             f"{name} is not pinned to a full Git commit")
@@ -464,32 +464,81 @@ osversion = lock.get("freebsd_source", {}).get("osversion")
 require(isinstance(osversion, int) and
         abi_major * 100000 <= osversion < (abi_major + 1) * 100000,
         "FreeBSD source is not pinned to an exact OSVERSION matching the ABI")
-for name, item in (
-    ("amd64 jail_seed", lock.get("targets", {}).get("amd64", {}).get("jail_seed", {})),
-    ("worker_image", lock.get("worker_image", {})),
-    ("worker_tools", lock.get("worker_tools", {})),
-):
-    sha = item.get("sha256", "")
-    require(bool(re.fullmatch(r"[0-9a-f]{64}", sha)) and
-            item.get("object") == f"inputs/sha256/{sha}" and
-            isinstance(item.get("size"), int) and item["size"] > 0,
-            f"{name} is not a complete content-addressed pin")
-arm_pin = lock.get("targets", {}).get("arm64", {})
-require(isinstance(arm_pin, dict) and
-        arm_pin.get("jail_seed", {}).get("url", "").endswith("/arm64/16.0-CURRENT/base.txz") and
-        arm_pin.get("package_catalog", {}).get("url", "").startswith("https://pkg.freebsd.org/FreeBSD:16:aarch64/"),
-        "FreeBSD lock has no canonical aarch64 inputs")
 
-pin_contract = pin_workflow + read("scripts/pin-worker-tools.sh")
+if lock.get("schema_version") == "freesense.freebsd-pin/v4":
+    require(lock.get("targets", {}).get("arm64", {}).get("ready") is True,
+            "FreeBSD v4 lock has no ready arm64 target")
+    for arch in ("amd64", "arm64"):
+        target = lock["targets"][arch]
+        for item_name in ("jail_seed", "package_catalog", "binary_seed", "worker_image", "worker_tools"):
+            item = target.get(item_name, {})
+            sha = item.get("sha256", "")
+            require(bool(re.fullmatch(r"[0-9a-f]{64}", sha)) and
+                    item.get("object") == f"inputs/sha256/{sha}" and
+                    isinstance(item.get("size"), int) and item["size"] > 0,
+                    f"{arch} {item_name} is not a complete content-addressed pin")
+else:
+    for name, item in (
+        ("amd64 jail_seed", lock.get("targets", {}).get("amd64", {}).get("jail_seed", {})),
+        ("worker_image", lock.get("worker_image", {})),
+        ("worker_tools", lock.get("worker_tools", {})),
+    ):
+        sha = item.get("sha256", "")
+        require(bool(re.fullmatch(r"[0-9a-f]{64}", sha)) and
+                item.get("object") == f"inputs/sha256/{sha}" and
+                isinstance(item.get("size"), int) and item["size"] > 0,
+                f"{name} is not a complete content-addressed pin")
+    arm_pin = lock.get("targets", {}).get("arm64", {})
+    require(isinstance(arm_pin, dict) and
+            arm_pin.get("jail_seed", {}).get("url", "").endswith("/arm64/16.0-CURRENT/base.txz") and
+            arm_pin.get("package_catalog", {}).get("url", "").startswith("https://pkg.freebsd.org/FreeBSD:16:aarch64/"),
+            "FreeBSD lock has no canonical aarch64 inputs")
+
+pin_target_workflow = read(".github/workflows/pin-target.yml")
+resolve_multiarch_pin = read("scripts/resolve_multiarch_pin.py")
+assemble_multiarch_pin = read("scripts/assemble_multiarch_pin.py")
+multiarch_pin_module = read("scripts/multiarch_pin.py")
+pin_contract = (pin_workflow + pin_target_workflow + resolve_multiarch_pin +
+                assemble_multiarch_pin + multiarch_pin_module + read("scripts/pin-worker-tools.sh"))
 for value in ("scripts/resolve_worker_tools.py", "packagesite.yaml.sig",
               "packagesite.yaml.pub", "install_worker_tools"):
     require(value in pin_contract, f"Pin FreeBSD trust contract is missing {value!r}")
 require("bootstrap_snapshot" in pin_contract and "bootstrap_osversion" in pin_contract,
         "Pin FreeBSD does not record its bounded bootstrap snapshot")
-require("arm_catalog_osversion" in pin_contract and
-        "max_bootstrap_osversion_delta=2" in pin_contract and
-        "aarch64 catalog OSVERSION is outside the bounded bootstrap window" in pin_contract,
+require("max_bootstrap_osversion_delta = 2" in pin_contract and
+        "catalog OSVERSION is outside the bounded bootstrap window" in pin_contract,
         "Pin FreeBSD does not validate the target catalog bootstrap window")
+for value in ("target_amd64:", "target_arm64:",
+              "needs: [resolve, target_amd64, target_arm64]",
+              "scripts/assemble_multiarch_pin.py"):
+    require(value in pin_workflow, f"Pin v4 workflow orchestrator contract is missing {value!r}")
+require("git push origin" in pin_workflow and "--force" not in pin_workflow,
+        "Pin PR automation must not force-push shared history")
+
+publish_workflow = read(".github/workflows/development-multiarch-publish.yml")
+for value in (
+    "Publish qualified documents before the authoritative commit point",
+    "Commit the complete pair atomically",
+    "Refresh legacy amd64 aliases after the commit point",
+    "multiarch verify",
+    "multiarch commit",
+    "scripts/verify_multiarch_publication.py",
+):
+    require(value in publish_workflow, f"Development multiarch publication workflow is missing {value!r}")
+
+idx_qualified = publish_workflow.index("Publish qualified documents before the authoritative commit point")
+idx_commit = publish_workflow.index("Commit the complete pair atomically")
+idx_legacy = publish_workflow.index("Refresh legacy amd64 aliases after the commit point")
+require(idx_qualified < idx_commit < idx_legacy,
+        "multiarch publication commit ordering violation: qualified documents must precede commit, and legacy aliases must follow commit")
+
+retention_script = read("scripts/r2_retention.py")
+for value in (
+    "v1/releases/devel.multiarch.json",
+    "verify_multiarch(completion_envelope",
+    "release_documents",
+):
+    require(value in retention_script, f"r2_retention.py is missing multiarch binding {value!r}")
 
 broker = read("broker/src/index.js")
 for role in ("coordinator", "artifact-writer", "pin-writer", "channel-writer",
