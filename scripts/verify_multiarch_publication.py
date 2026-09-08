@@ -65,4 +65,3 @@ if __name__ == "__main__":
     verify(completion_payload, repositories, releases)
     if args.public_base_url:
         verify_public(args.public_base_url, completion_payload)
-
