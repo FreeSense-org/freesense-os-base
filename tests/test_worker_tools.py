@@ -74,6 +74,9 @@ class WorkerToolResolutionTests(unittest.TestCase):
         self.assertNotIn("qemu-aarch64-static", result["commands"])
         self.assertIn("python3.11", commands)
         self.assertEqual(result["abi"], "FreeBSD:16:aarch64")
+        records[0]["abi"] = "FreeBSD:16:*"
+        result_wildcard = worker_tools.resolve_worker_tools(map(json.dumps, records), "arm64")
+        self.assertEqual(result_wildcard["abi"], "FreeBSD:16:aarch64")
         records[0]["abi"] = "FreeBSD:16:amd64"
         with self.assertRaisesRegex(ValueError, "foreign or ambiguous ABI"):
             worker_tools.resolve_worker_tools(map(json.dumps, records), "arm64")
