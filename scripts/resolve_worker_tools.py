@@ -321,8 +321,11 @@ def resolve_worker_tools(lines: Iterable[str], architecture: str | None = None) 
     order = _dependency_order(packages, duplicate_names, roots)
     if architecture is not None:
         abi = "FreeBSD:16:" + ("aarch64" if architecture == "arm64" else "amd64")
-        if any(native_abis.get(package.name) != {abi} for package in order):
-            raise ValueError("worker-tool closure contains a foreign or ambiguous ABI")
+        allowed_abis = {abi, "FreeBSD:16:*"}
+        for package in order:
+            package_abis = native_abis.get(package.name, set())
+            if not package_abis or not package_abis.issubset(allowed_abis):
+                raise ValueError("worker-tool closure contains a foreign or ambiguous ABI")
     osversions = {package.osversion for package in order if package.osversion is not None}
     if len(osversions) != 1:
         raise ValueError("worker-tool closure has inconsistent package OSVERSION values")
