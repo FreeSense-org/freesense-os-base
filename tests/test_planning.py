@@ -164,7 +164,7 @@ def system_closure(*, channel_name: str = "devel", target_arch: str = "amd64"):
         policy = json.loads((ROOT / "config/build-policy.json").read_text())
         selected_target = policy["targets"][target_arch]
         target_pin = lock["targets"][target_arch]
-        execution_inputs = worker(lock, target_arch, "github-amd64" if target_arch == "amd64" else "dedicated")
+        execution_inputs = worker(lock, target_arch, "github-amd64")
         freebsd_sha = lock["freebsd_source"]["commit"]
         ports_sha = lock["freebsd_ports"]["commit"]
         image_sha256 = execution_inputs["worker_image"]["sha256"]

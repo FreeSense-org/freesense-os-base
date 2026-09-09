@@ -289,7 +289,7 @@ def main() -> int:
     worker_tools = lock.get("worker_tools", {})
     if lock.get("schema_version") == "freesense.freebsd-pin/v4":
         from multiarch_pin import worker
-        build_host = args.build_host or ("github-amd64" if args.target == "amd64" else "dedicated")
+        build_host = args.build_host or "github-amd64"
         execution_inputs = worker(lock, args.target, build_host)
         worker_image = execution_inputs["worker_image"]
         worker_tools = execution_inputs["worker_tools"]
@@ -668,7 +668,7 @@ def main() -> int:
         "ports_sha": ports_sha,
         "image_sha256": image_sha256,
         "worker_tools_sha256": worker_tools_sha256,
-        "build_host": execution_inputs.get("host", "dedicated"),
+        "build_host": execution_inputs.get("host", "github-amd64"),
         "host_architecture": execution_inputs.get("host_architecture", "amd64"),
         "binary_seed_object": execution_inputs.get("binary_seed", {}).get("object", ""),
         "binary_seed_provenance_sha256": execution_inputs.get("binary_seed", {}).get("provenance_sha256", ""),

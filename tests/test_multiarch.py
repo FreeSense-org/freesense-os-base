@@ -157,6 +157,8 @@ class MultiarchPinTests(unittest.TestCase):
         pin = pin_fixture()
         multiarch_pin.validate(pin, now=datetime(2026, 9, 6, tzinfo=timezone.utc))
         self.assertEqual(multiarch_pin.worker(pin, "arm64", "dedicated")["worker_image"]["architecture"], "amd64")
+        self.assertEqual(multiarch_pin.worker(pin, "arm64", "github-amd64")["worker_image"]["architecture"], "amd64")
+        self.assertEqual(multiarch_pin.worker(pin, "arm64", "github-amd64")["executor"], "amd64-cross-qemu-user")
         self.assertEqual(multiarch_pin.worker(pin, "arm64", "github-arm64")["executor"], "native-arm64")
         with self.assertRaises(ValueError):
             multiarch_pin.worker(pin, "amd64", "github-arm64")
@@ -193,7 +195,7 @@ class MultiarchPinTests(unittest.TestCase):
         self.assertEqual(multiarch_pin.select_arm_host(probe, pin, force_dedicated=True), "dedicated")
         for key in ("kvm", "memory", "disk", "qemu", "firmware", "boot", "image_sha256"):
             with self.subTest(key=key):
-                self.assertEqual(multiarch_pin.select_arm_host({**probe, key: False}, pin), "dedicated")
+                self.assertEqual(multiarch_pin.select_arm_host({**probe, key: False}, pin), "github-amd64")
         fps = {arch: {"system": "a" * 64, "packages": "b" * 64} for arch in multiarch_pin.ARCHES}
         native = multiarch_plan.plan(pin, probe, fps)
         fallback = multiarch_plan.plan(pin, probe, fps, force_dedicated=True)
