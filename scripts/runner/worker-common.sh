@@ -601,7 +601,7 @@ fetch_system_checkpoint() {
       .inputs.signing_public_key == $signing_public_key and
       (.packages | type == "array" and length > 0) and
       all(.packages[];
-        (.file | type == "string" and test("^[A-Za-z0-9][A-Za-z0-9+_.-]*[.]pkg$")) and
+        (.file | type == "string" and test("^[A-Za-z0-9][A-Za-z0-9+,.@_~-]*[.]pkg$")) and
         (.sha256 | type == "string" and test("^[0-9a-f]{64}$")) and
         (.size | type == "number" and . > 0 and floor == .) and
         (.name | type == "string" and length > 0) and
@@ -610,6 +610,7 @@ fetch_system_checkpoint() {
         (.flavor | type == "string") and (.subpackage | type == "string"))
     ' "${marker}" >/dev/null || {
     echo "invalid System checkpoint marker: ${checkpoint_kind}/${checkpoint_id}" >&2
+    cat "${marker}" >&2
     return 1
   }
   jq -r '.packages[] | [.file,.sha256,(.size|tostring),.name,.version,.origin,.flavor,.subpackage] | @tsv' \
