@@ -109,7 +109,8 @@ EOF
       ;;
     shard)
       if [ "${FARM_LAYOUT}" = delta-v1 ]; then
-        python3 /root/os-definition/scripts/partition_roots.py \
+        python_bin=$(command -v python3 || command -v python3.11)
+        "${python_bin}" /root/os-definition/scripts/partition_roots.py \
           --config /root/os-definition/config/multiarch-shards.json --component system \
           --shard "${SYSTEM_SHARD_INDEX}" --roots "${all_roots}.sorted" --output "${shard_roots}"
       else

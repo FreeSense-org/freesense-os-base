@@ -55,7 +55,8 @@ if [ "${FARM_LAYOUT}" = delta-v1 ]; then
   else
     sed -e '/^[[:space:]]*#/d' -e '/^[[:space:]]*$/d' tools/conf/pfPorts/poudriere_bulk \
       | LC_ALL=C sort -u >/tmp/optional-all-roots
-    python3 /root/os-definition/scripts/partition_roots.py \
+    python_bin=$(command -v python3 || command -v python3.11)
+    "${python_bin}" /root/os-definition/scripts/partition_roots.py \
       --config /root/os-definition/config/multiarch-shards.json --component packages \
       --shard "${SYSTEM_SHARD_INDEX}" --roots /tmp/optional-all-roots \
       --output tools/conf/pfPorts/poudriere_bulk
