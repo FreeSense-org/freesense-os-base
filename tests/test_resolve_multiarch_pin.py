@@ -91,6 +91,8 @@ class ResolvePinTests(unittest.TestCase):
                  patch.object(module, "resolve_worker_tools", side_effect=fake_worker):
                 res = module.resolve(prev, root, meta, sources, security_rollover=True, now=datetime(2026, 9, 7, 12, 0, 0, tzinfo=timezone.utc))
                 self.assertEqual(res["freebsd_ports"]["commit"], "a" * 40)
+                self.assertEqual(res["targets"]["amd64"]["ports_commit"], "a" * 40)
+                self.assertEqual(res["targets"]["arm64"]["ports_commit"], "b" * 40)
 
 
 if __name__ == "__main__": unittest.main()

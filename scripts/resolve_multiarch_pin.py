@@ -60,6 +60,7 @@ def resolve(previous: dict, directory: Path, metadata: dict, sources: dict,
             raise ValueError(f"{arch} catalog OSVERSION is outside the bounded bootstrap window")
         reports[arch] = {
             "abi": f"FreeBSD:16:{package_arch}",
+            "ports_commit": ports[arch],
             "jail_seed": {
                 "url": metadata["dist_urls"][arch].rstrip("/") + "/base.txz",
                 "sha256": manifest_sha(target / "MANIFEST", "base.txz"),
