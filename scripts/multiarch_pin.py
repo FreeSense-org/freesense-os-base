@@ -24,10 +24,13 @@ def blob(value: object, label: str) -> dict:
         raise ValueError(f"missing {label}")
     sha = value.get("sha256")
     size = value.get("size")
+    obj = value.get("object") or value.get("key")
     if (not isinstance(sha, str) or not SHA256.fullmatch(sha)
-            or value.get("object") != f"inputs/sha256/{sha}"
+            or obj != f"inputs/sha256/{sha}"
             or type(size) is not int or size <= 0):
         raise ValueError(f"invalid immutable {label}")
+    if value.get("object") != obj:
+        value["object"] = obj
     return value
 
 

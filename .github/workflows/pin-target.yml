@@ -204,12 +204,13 @@ jobs:
             --slurpfile image "${target}/worker.qcow2.blob.json" \
             --slurpfile tools "${target}/worker-tools.tar.blob.json" \
             --slurpfile toolmeta "${target}/worker-tools.json" '
+            def as_blob(b): b + {object: (b.object // b.key // ("inputs/sha256/" + b.sha256))};
             {schema_version:"freesense.freebsd-pin-target/v1",architecture:$arch,abi:$abi,ready:true,
-             jail_seed:($jail[0]),
-             package_catalog:($catalog[0]+{signature_verified:true,trusted_key_sha256:$toolmeta[0].trusted_key_sha256}),
-             binary_seed:($seedblob[0]+$seed[0]),
-             worker_image:($image[0]+{architecture:$arch,boot_verified:true}),
-             worker_tools:($tools[0]+{architecture:$arch,boot_verified:true}),
+             jail_seed:as_blob($jail[0]),
+             package_catalog:(as_blob($catalog[0])+{signature_verified:true,trusted_key_sha256:$toolmeta[0].trusted_key_sha256}),
+             binary_seed:(as_blob($seedblob[0])+$seed[0]+{object:(as_blob($seedblob[0]).object)}),
+             worker_image:(as_blob($image[0])+{architecture:$arch,boot_verified:true}),
+             worker_tools:(as_blob($tools[0])+{architecture:$arch,boot_verified:true}),
              evidence:{schema_version:"freesense.worker-evidence/v1",architecture:$arch,boot:true,tools:true,
               worker_image_sha256:$image[0].sha256,worker_tools_sha256:$tools[0].sha256,
               requirements_sha256:$seed[0].requirements_sha256}}' >"${target}/report.json"

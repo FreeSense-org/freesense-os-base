@@ -304,7 +304,7 @@ jobs:
             echo "Updated pin PR #${number}"
           fi
           gh workflow run ci.yml --ref "${branch}"
-          gh pr merge "${number}" --auto --squash
+          gh pr merge "${number}" --auto --squash || echo "Auto-merge could not be enabled; PR #${number} remains open for review."
           echo "Dispatched required CI and configured auto-merge for PR #${number}."
 
       - name: Clean pinning downloads
