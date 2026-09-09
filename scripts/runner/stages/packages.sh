@@ -7,6 +7,11 @@ export REPO_KIND=packages OVERLAY_DIR=/root/freesense-packages
 export FREESENSE_SYSTEM_OVERLAY_DIR=/root/freesense-system-ports
 phase optional-ports-tree
 ./build.sh --update-poudriere-ports
+mkdir -p /usr/local/etc/poudriere.d
+cat >>/usr/local/etc/poudriere.d/FreeSense_main-make.conf <<'EOF'
+IGNORE_OSVERSION=yes
+PKG_ENV+= IGNORE_OSVERSION=yes
+EOF
 cp tools/conf/pfPorts/poudriere_packages tools/conf/pfPorts/poudriere_bulk
 policy=/root/freesense-packages/architecture-policy.json
 jq -e --arg arch "${PACKAGE_ARCH}" '
@@ -74,7 +79,7 @@ phase optional-system-seed-ready
 
 create_source_archive
 phase optional-packages-build
-run_poudriere_build env NOLINUX=yes ./build.sh --update-pkg-repo
+run_poudriere_build env NOLINUX=yes IGNORE_OSVERSION=yes ASSUME_ALWAYS_YES=yes ./build.sh --update-pkg-repo
 phase optional-packages-ready
 latest=$(poudriere_latest_repository)
 if [ "${FARM_LAYOUT}:${SYSTEM_PART}" = delta-v1:shard ]; then
