@@ -116,7 +116,7 @@ jobs:
             ln -s "\$(command -v python3.11)" /usr/local/bin/python3
           fi
           git clone https://github.com/freebsd/freebsd-ports.git /root/ports
-          git -C /root/ports checkout --detach '$(jq -er .freebsd_ports.commit "${common}")'
+          git -C /root/ports checkout --detach '$(jq -er --arg arch "${ARCH}" '.targets[$arch].ports_commit // .freebsd_ports.commit' "${common}")'
           for spec in \
             'FreeSense-org/freesense:$(jq -er .sources.freesense "${common}"):source' \
             'FreeSense-org/freesense-system-ports:$(jq -er .sources.system_ports "${common}"):system' \
@@ -164,7 +164,7 @@ jobs:
           PY
           python3 /root/os-definition/scripts/package_requirements.py \
             --ports /root/ports --make-conf /usr/local/etc/poudriere.d/FreeSense_main-make.conf \
-            --architecture '${ARCH}' --ports-sha '$(jq -er .freebsd_ports.commit "${common}")' \
+            --architecture '${ARCH}' --ports-sha '$(jq -er --arg arch "${ARCH}" '.targets[$arch].ports_commit // .freebsd_ports.commit' "${common}")' \
             --roots /root/roots.json --output /root/requirements.json
           echo PIN_REQUIREMENTS_BEGIN
           base64 /root/requirements.json
