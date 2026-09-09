@@ -107,5 +107,8 @@ install_worker_tools() (
       exit 1
     }
   done <"${worker_tools}/required-tools"
+  if ! command -v python3 >/dev/null 2>&1 && command -v python3.11 >/dev/null 2>&1; then
+    ln -sf "$(command -v python3.11)" /usr/local/bin/python3
+  fi
   phase tools-ready
 )
