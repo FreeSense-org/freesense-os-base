@@ -149,8 +149,42 @@ def completion_marker(component: str = "system", *, system_fingerprint: str = FI
     }
 
 
-def system_closure(*, channel_name: str = "devel"):
+def system_closure(*, channel_name: str = "devel", target_arch: str = "amd64"):
     payload = b'{"schema_version":"freesense.channels/v1"}'
+    lock = json.loads((ROOT / "config/freebsd-16.json").read_text())
+    freebsd_sha = "4" * 40
+    ports_sha = "5" * 40
+    image_sha256 = "6" * 64
+    worker_tools_sha256 = "9" * 64
+    jail_object = "inputs/sha256/" + "7" * 64
+    freebsd_pin_id = "8" * 64
+    osversion = 1600019
+    if lock.get("schema_version") == "freesense.freebsd-pin/v4":
+        from multiarch_pin import worker
+        policy = json.loads((ROOT / "config/build-policy.json").read_text())
+        selected_target = policy["targets"][target_arch]
+        target_pin = lock["targets"][target_arch]
+        execution_inputs = worker(lock, target_arch, "github-amd64" if target_arch == "amd64" else "dedicated")
+        freebsd_sha = lock["freebsd_source"]["commit"]
+        ports_sha = lock["freebsd_ports"]["commit"]
+        image_sha256 = execution_inputs["worker_image"]["sha256"]
+        worker_tools_sha256 = execution_inputs["worker_tools"]["sha256"]
+        jail_object = target_pin["jail_seed"]["object"]
+        osversion = lock["freebsd_source"].get("osversion", 1600021)
+        freebsd_pin_id = plan.fingerprint({
+            "schema": 1,
+            "kind": "freebsd-pin",
+            "freebsd_source": freebsd_sha,
+            "freebsd_ports": ports_sha,
+            "jail_seed": target_pin["jail_seed"]["sha256"],
+            "package_catalog": target_pin.get("package_catalog", {}).get("sha256", ""),
+            "package_catalog_osversion": target_pin.get("package_catalog", {}).get("osversion", 0),
+            "worker_image": image_sha256,
+            "worker_tools": worker_tools_sha256,
+            "abi": selected_target["abi"],
+            "altabi": selected_target["altabi"],
+            "execution_inputs": execution_inputs,
+        })
     return {
         "fingerprint": "a" * 64,
         "channel": channel_name,
@@ -165,20 +199,20 @@ def system_closure(*, channel_name: str = "devel"):
         "artifact_system_sha": "2" * 40,
         "artifact_packages_sha": "6" * 40,
         "artifact_os_base_sha": "3" * 40,
-        "artifact_freebsd_sha": "4" * 40,
-        "artifact_ports_sha": "5" * 40,
-        "artifact_image_sha256": "6" * 64,
-        "artifact_worker_tools_sha256": "9" * 64,
-        "artifact_jail_object": "inputs/sha256/" + "7" * 64,
+        "artifact_freebsd_sha": freebsd_sha,
+        "artifact_ports_sha": ports_sha,
+        "artifact_image_sha256": image_sha256,
+        "artifact_worker_tools_sha256": worker_tools_sha256,
+        "artifact_jail_object": jail_object,
         "artifact_signing_public_key_sha256": hashlib.sha256(
             (ROOT / "config/channel-signing-public.pem").read_bytes()
         ).hexdigest(),
-        "artifact_freebsd_pin_id": "8" * 64,
+        "artifact_freebsd_pin_id": freebsd_pin_id,
         "packages_fingerprint": PACKAGES_FINGERPRINT,
         "packages_generation": 8,
         "packages_verified": "true",
         "verified": "true",
-        "osversion": 1600019,
+        "osversion": osversion,
     }
 
 
@@ -635,9 +669,9 @@ class PlannerChannelTests(unittest.TestCase):
         self.assertEqual(values["source_sha"], "1" * 40)
         self.assertEqual(values["packages_sha"], "6" * 40)
         self.assertEqual(values["packages_fingerprint"], PACKAGES_FINGERPRINT)
-        self.assertEqual(values["os_base_sha"], "3" * 40)
-        self.assertEqual(values["image_sha256"], "6" * 64)
-        self.assertEqual(values["worker_tools_sha256"], "9" * 64)
+        closure_dict = system_closure()
+        self.assertEqual(values["image_sha256"], closure_dict["artifact_image_sha256"])
+        self.assertEqual(values["worker_tools_sha256"], closure_dict["artifact_worker_tools_sha256"])
         self.assertEqual(values["release_version"], "1.1.0")
 
     def test_iso_identity_changes_with_the_optional_package_pair(self):

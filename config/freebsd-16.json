@@ -1,68 +1,146 @@
 {
-  "schema_version": "freesense.freebsd-pin/v3",
-  "valid_from": "2026-08-29T11:32:44Z",
-  "valid_until": "2026-09-12T11:32:44Z",
-  "freebsd_source": {
-    "commit": "74019bc3ea91f7a1dfd36acbc1627f3d00ca002f",
-    "osversion": 1600020
-  },
   "bootstrap_snapshot": {
-    "commit": "74019bc3ea91f7a1dfd36acbc1627f3d00ca002f",
-    "revision_prefix": "74019bc3ea91",
-    "build_date": "20260824",
-    "osversion": 1600020
+    "build_date": "20260831",
+    "commit": "9bec8a959bd6206cceb1afd583b47822bc8ccd16",
+    "osversion": 1600021,
+    "revision_prefix": "9bec8a959bd6"
   },
   "freebsd_ports": {
-    "commit": "95b5f9bb60f4e14153ecff84d9dfe60f6c7ff936"
+    "commit": "cc7a4ad14414c49c782d12ec5b9c8e897551eaa2"
   },
+  "freebsd_source": {
+    "commit": "9bec8a959bd6206cceb1afd583b47822bc8ccd16",
+    "osversion": 1600021
+  },
+  "schema_version": "freesense.freebsd-pin/v4",
   "targets": {
     "amd64": {
-      "ready": true,
+      "abi": "FreeBSD:16:amd64",
+      "binary_seed": {
+        "abi": "FreeBSD:16:amd64",
+        "catalog_sha256": "a7571c98154b9e67d2ce3756bed0bba586698e4c12d36d5832f26fa98b956693",
+        "created": false,
+        "key": "inputs/sha256/e89b50e14c83742d3e3bc76e83049218d0b75aad0e32afa4c2778e85da7e595e",
+        "object": "inputs/sha256/e89b50e14c83742d3e3bc76e83049218d0b75aad0e32afa4c2778e85da7e595e",
+        "package_count": 259,
+        "provenance_sha256": "aee49a4c7c113ccaa7255fd20d617f8d651926b53269cb960520a0d4196ec3b5",
+        "requirements_components": [
+          "system",
+          "packages"
+        ],
+        "requirements_sha256": "41aa9e786107845de96b108b4a29f681895377e9f4efa1bb32344827df183bc9",
+        "schema_version": "freesense.blob/v1",
+        "sha256": "e89b50e14c83742d3e3bc76e83049218d0b75aad0e32afa4c2778e85da7e595e",
+        "size": 808253440,
+        "verified": true,
+        "verified_roots": [
+          "rust"
+        ]
+      },
       "jail_seed": {
-        "url": "https://download.freebsd.org/snapshots/amd64/16.0-CURRENT/base.txz",
-        "osversion": 1600020,
-        "upstream_sha256": "2eda96c9256766031b0eed4ca03cca4d12efbfd349f5319a0f838fd197af8a1c",
-        "object": "inputs/sha256/2eda96c9256766031b0eed4ca03cca4d12efbfd349f5319a0f838fd197af8a1c",
-        "sha256": "2eda96c9256766031b0eed4ca03cca4d12efbfd349f5319a0f838fd197af8a1c",
-        "size": 174731120
+        "created": false,
+        "key": "inputs/sha256/2d6a1cda86ae6093e73ccb4a42672c9b7adbe5c59074e86badc266a79c20e543",
+        "object": "inputs/sha256/2d6a1cda86ae6093e73ccb4a42672c9b7adbe5c59074e86badc266a79c20e543",
+        "schema_version": "freesense.blob/v1",
+        "sha256": "2d6a1cda86ae6093e73ccb4a42672c9b7adbe5c59074e86badc266a79c20e543",
+        "size": 174859460
       },
       "package_catalog": {
-        "url": "https://pkg.freebsd.org/FreeBSD:16:amd64/latest/packagesite.pkg",
-        "osversion": 1600020,
-        "object": "inputs/sha256/51ed28b826d6ac75dfbf67b0f9378f20ebc54fce1260dd4bad34dd3b0e2b951e",
-        "sha256": "51ed28b826d6ac75dfbf67b0f9378f20ebc54fce1260dd4bad34dd3b0e2b951e",
-        "size": 9714937
+        "created": false,
+        "key": "inputs/sha256/a7571c98154b9e67d2ce3756bed0bba586698e4c12d36d5832f26fa98b956693",
+        "object": "inputs/sha256/a7571c98154b9e67d2ce3756bed0bba586698e4c12d36d5832f26fa98b956693",
+        "schema_version": "freesense.blob/v1",
+        "sha256": "a7571c98154b9e67d2ce3756bed0bba586698e4c12d36d5832f26fa98b956693",
+        "signature_verified": true,
+        "size": 9705685,
+        "trusted_key_sha256": "b0170035af3acc5f3f3ae1859dc717101b4e6c1d0a794ad554928ca0cbb2f438"
+      },
+      "ready": true,
+      "worker_image": {
+        "architecture": "amd64",
+        "boot_verified": true,
+        "created": false,
+        "key": "inputs/sha256/48f01f6810ad265213d6e0a32e32c3d84e135b6cb23ad606c1dd750f511e98a4",
+        "object": "inputs/sha256/48f01f6810ad265213d6e0a32e32c3d84e135b6cb23ad606c1dd750f511e98a4",
+        "schema_version": "freesense.blob/v1",
+        "sha256": "48f01f6810ad265213d6e0a32e32c3d84e135b6cb23ad606c1dd750f511e98a4",
+        "size": 1047461888
+      },
+      "worker_tools": {
+        "architecture": "amd64",
+        "boot_verified": true,
+        "created": false,
+        "key": "inputs/sha256/2e2a2f4ab96255f189a85f04ac20f9b7004ae41b41e0013c8d996296bac43fc0",
+        "object": "inputs/sha256/2e2a2f4ab96255f189a85f04ac20f9b7004ae41b41e0013c8d996296bac43fc0",
+        "schema_version": "freesense.blob/v1",
+        "sha256": "2e2a2f4ab96255f189a85f04ac20f9b7004ae41b41e0013c8d996296bac43fc0",
+        "size": 141189120
       }
     },
     "arm64": {
-      "ready": true,
+      "abi": "FreeBSD:16:aarch64",
+      "binary_seed": {
+        "abi": "FreeBSD:16:aarch64",
+        "catalog_sha256": "e7209e13b8abef001d5b945a66efc0f997782c8183478185e85016d5b3e4ee12",
+        "created": true,
+        "key": "inputs/sha256/2179fcffc68046e88c865bba3a041fdb720b17d72f43bfb184e695239e99a7c4",
+        "object": "inputs/sha256/2179fcffc68046e88c865bba3a041fdb720b17d72f43bfb184e695239e99a7c4",
+        "package_count": 221,
+        "provenance_sha256": "d9185ef7880adcbd575d035949debe6815f0d436353993ae2040094165aecbc2",
+        "requirements_components": [
+          "system",
+          "packages"
+        ],
+        "requirements_sha256": "163199c1eded582e9d37a571f4e8eef0be067d06b5c0bc0c4a51bd4980ed9cdc",
+        "schema_version": "freesense.blob/v1",
+        "sha256": "2179fcffc68046e88c865bba3a041fdb720b17d72f43bfb184e695239e99a7c4",
+        "size": 496803840,
+        "verified": true,
+        "verified_roots": [
+          "rust"
+        ]
+      },
       "jail_seed": {
-        "url": "https://download.freebsd.org/snapshots/arm64/16.0-CURRENT/base.txz",
-        "osversion": 1600020,
-        "upstream_sha256": "d8ac7ac125264963dfabc609246f130e33d75324c90e2b9f1d54fb38d58b3688",
-        "object": "inputs/sha256/d8ac7ac125264963dfabc609246f130e33d75324c90e2b9f1d54fb38d58b3688",
-        "sha256": "d8ac7ac125264963dfabc609246f130e33d75324c90e2b9f1d54fb38d58b3688",
-        "size": 162920224
+        "created": true,
+        "key": "inputs/sha256/170d55c7ed8b41aab11810d71e9930e6b554fd215ef807dc2308e9ecb0c33765",
+        "object": "inputs/sha256/170d55c7ed8b41aab11810d71e9930e6b554fd215ef807dc2308e9ecb0c33765",
+        "schema_version": "freesense.blob/v1",
+        "sha256": "170d55c7ed8b41aab11810d71e9930e6b554fd215ef807dc2308e9ecb0c33765",
+        "size": 162890116
       },
       "package_catalog": {
-        "url": "https://pkg.freebsd.org/FreeBSD:16:aarch64/latest/packagesite.pkg",
-        "osversion": 1600019,
-        "object": "inputs/sha256/1295e86b74470e4452f84d523b3d5548328c208b335c014675624faad882acb7",
-        "sha256": "1295e86b74470e4452f84d523b3d5548328c208b335c014675624faad882acb7",
-        "size": 12403272
+        "created": false,
+        "key": "inputs/sha256/e7209e13b8abef001d5b945a66efc0f997782c8183478185e85016d5b3e4ee12",
+        "object": "inputs/sha256/e7209e13b8abef001d5b945a66efc0f997782c8183478185e85016d5b3e4ee12",
+        "schema_version": "freesense.blob/v1",
+        "sha256": "e7209e13b8abef001d5b945a66efc0f997782c8183478185e85016d5b3e4ee12",
+        "signature_verified": true,
+        "size": 9582013,
+        "trusted_key_sha256": "b0170035af3acc5f3f3ae1859dc717101b4e6c1d0a794ad554928ca0cbb2f438"
+      },
+      "ready": true,
+      "worker_image": {
+        "architecture": "arm64",
+        "boot_verified": true,
+        "created": false,
+        "key": "inputs/sha256/d43c0e3e33cb86ea969b99deb0e760c2d0b2bb166e7d4f29a1e1579e7a88f2e6",
+        "object": "inputs/sha256/d43c0e3e33cb86ea969b99deb0e760c2d0b2bb166e7d4f29a1e1579e7a88f2e6",
+        "schema_version": "freesense.blob/v1",
+        "sha256": "d43c0e3e33cb86ea969b99deb0e760c2d0b2bb166e7d4f29a1e1579e7a88f2e6",
+        "size": 934412288
+      },
+      "worker_tools": {
+        "architecture": "arm64",
+        "boot_verified": true,
+        "created": true,
+        "key": "inputs/sha256/fd4ba5c68451e37f76b80ace6937c5c0e68dbf5c374ea49d5f88ea2a9fe60a60",
+        "object": "inputs/sha256/fd4ba5c68451e37f76b80ace6937c5c0e68dbf5c374ea49d5f88ea2a9fe60a60",
+        "schema_version": "freesense.blob/v1",
+        "sha256": "fd4ba5c68451e37f76b80ace6937c5c0e68dbf5c374ea49d5f88ea2a9fe60a60",
+        "size": 129792000
       }
     }
   },
-  "worker_image": {
-    "url": "https://download.freebsd.org/snapshots/VM-IMAGES/16.0-CURRENT/amd64/Latest/FreeBSD-16.0-CURRENT-amd64-BASIC-CLOUDINIT-ufs.qcow2.xz",
-    "upstream_compressed_sha256": "f7b260a525910e52809587b60ebf2e5df387aadb1ac0feee04b5622a1f951554",
-    "object": "inputs/sha256/d9b96249176ef883abc9da84a0bde256f7f663a652c5807295401fd316a7f6a1",
-    "sha256": "d9b96249176ef883abc9da84a0bde256f7f663a652c5807295401fd316a7f6a1",
-    "size": 1046740992
-  },
-  "worker_tools": {
-    "object": "inputs/sha256/9a83c23bf848e488d6c82bbef133ef3b15740908fddd3b0245178502d6d1d307",
-    "sha256": "9a83c23bf848e488d6c82bbef133ef3b15740908fddd3b0245178502d6d1d307",
-    "size": 47523840
-  }
+  "valid_from": "2026-09-09T06:16:41Z",
+  "valid_until": "2026-09-23T06:16:41Z"
 }
