@@ -147,7 +147,7 @@ jobs:
           SELECTED_TARGET: ${{ inputs.target }}
         run: |
           case "${SELECTED_HOST}:${SELECTED_TARGET}:${SELECTED_EXECUTOR}" in
-            github-hosted:amd64:native-amd64|github-amd64:amd64:native-amd64|github-arm64:arm64:native-arm64|dedicated:amd64:native-amd64|dedicated:arm64:amd64-cross-qemu-user) ;;
+            github-hosted:amd64:native-amd64|github-amd64:amd64:native-amd64|github-amd64:arm64:amd64-cross-qemu-user|github-arm64:arm64:native-arm64|dedicated:amd64:native-amd64|dedicated:arm64:amd64-cross-qemu-user) ;;
             *) echo 'Invalid host/target/executor combination' >&2; exit 1 ;;
           esac
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0

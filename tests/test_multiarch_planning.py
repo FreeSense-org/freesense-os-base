@@ -52,7 +52,7 @@ class FrozenPlanningTests(unittest.TestCase):
         return json.loads(rendered.getvalue())
 
     def test_system_only_changes_preserve_optional_fingerprint_on_both_architectures(self):
-        for arch, host in (("amd64", "github-amd64"), ("arm64", "github-arm64"), ("arm64", "dedicated")):
+        for arch, host in (("amd64", "github-amd64"), ("arm64", "github-arm64"), ("arm64", "github-amd64"), ("arm64", "dedicated")):
             with self.subTest(arch=arch, host=host):
                 before = self.run_plan("system", arch, host)
                 optional = self.run_plan("packages", arch, host, planning_closure(before))
@@ -77,8 +77,10 @@ class FrozenPlanningTests(unittest.TestCase):
     def test_cannot_switch_executor_after_system_planning(self):
         native = self.run_plan("system", "arm64", "github-arm64")
         with self.assertRaisesRegex(SystemExit, "frozen v4 pin or executor"):
+            self.run_plan("packages", "arm64", "github-amd64", planning_closure(native))
+        with self.assertRaisesRegex(SystemExit, "frozen v4 pin or executor"):
             self.run_plan("packages", "arm64", "dedicated", planning_closure(native))
-        fallback = self.run_plan("system", "arm64", "dedicated")
+        fallback = self.run_plan("system", "arm64", "github-amd64")
         self.assertNotEqual(native["system"], fallback["system"])
         with self.assertRaisesRegex(SystemExit, "frozen v4 pin or executor"):
             self.run_plan("packages", "arm64", "github-arm64", planning_closure(fallback))

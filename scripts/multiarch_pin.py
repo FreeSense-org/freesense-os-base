@@ -75,10 +75,13 @@ def validate(pin: dict, *, now: datetime | None = None) -> None:
 
 def worker(pin: dict, target: str, host: str) -> dict:
     validate(pin)
-    allowed = {"amd64": {"github-amd64", "dedicated"}, "arm64": {"github-arm64", "dedicated"}}
+    allowed = {
+        "amd64": {"github-amd64", "dedicated"},
+        "arm64": {"github-arm64", "github-amd64", "dedicated"},
+    }
     if host not in allowed.get(target, set()):
         raise ValueError("host does not support selected target")
-    native_arch = "amd64" if host == "dedicated" else target
+    native_arch = "amd64" if host in {"dedicated", "github-amd64"} else target
     inputs = pin["targets"][native_arch]
     return {
         "host": host,
@@ -98,7 +101,9 @@ def select_arm_host(probe: dict, pin: dict, *, force_dedicated: bool = False) ->
         and probe.get("image_sha256") == expected
         and all(probe.get(key) is True for key in ("kvm", "memory", "disk", "qemu", "firmware", "boot"))
     )
-    return "github-arm64" if passed and not force_dedicated else "dedicated"
+    if force_dedicated:
+        return "dedicated"
+    return "github-arm64" if passed else "github-amd64"
 
 
 def rollover(previous: dict, candidate: dict, *, security_rollover: bool = False) -> dict:
