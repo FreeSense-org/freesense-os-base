@@ -651,7 +651,7 @@ func commandBlob(ctx context.Context, args []string) error {
 		}
 		return writeJSON(*output, map[string]any{
 			"schema_version": "freesense.blob/v1",
-			"key":            key, "sha256": info.SHA256, "size": info.Size, "created": false,
+			"key":            key, "object": key, "sha256": info.SHA256, "size": info.Size, "created": false,
 		})
 	}
 	if args[0] == "url" {
@@ -717,7 +717,7 @@ func commandBlob(ctx context.Context, args []string) error {
 	}
 	return writeJSON(*output, map[string]any{
 		"schema_version": "freesense.blob/v1",
-		"key":            key, "sha256": content.SHA256, "size": content.Size, "created": created,
+		"key":            key, "object": key, "sha256": content.SHA256, "size": content.Size, "created": created,
 	})
 }
 

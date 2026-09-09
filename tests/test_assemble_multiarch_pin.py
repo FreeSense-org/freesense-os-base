@@ -62,5 +62,18 @@ class AssembleTests(unittest.TestCase):
             else: changed["arm64"]["evidence"]["worker_image_sha256"] = sha("f")
             with self.assertRaises(ValueError): module.assemble(common, changed)
 
+    def test_accepts_reports_with_key_instead_of_object(self):
+        common, reports = fixture()
+        for arch in module.ARCHES:
+            for field in ("jail_seed", "package_catalog", "binary_seed", "worker_image", "worker_tools"):
+                entry = reports[arch][field]
+                entry["key"] = entry.pop("object")
+        candidate = module.assemble(common, reports)
+        for arch in module.ARCHES:
+            for field in ("jail_seed", "package_catalog", "binary_seed", "worker_image", "worker_tools"):
+                self.assertIn("object", candidate["targets"][arch][field])
+                self.assertEqual(candidate["targets"][arch][field]["object"],
+                                 "inputs/sha256/" + candidate["targets"][arch][field]["sha256"])
+
 
 if __name__ == "__main__": unittest.main()

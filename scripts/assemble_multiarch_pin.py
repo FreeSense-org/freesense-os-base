@@ -54,7 +54,7 @@ def verify_mirrors(candidate: dict, fsbuild: str) -> None:
                 [fsbuild, "blob", "check", "--sha256", expected["sha256"]], text=True
             )
             actual = json.loads(raw)
-            if (actual.get("key") != expected["object"]
+            if ((actual.get("key") != expected["object"] and actual.get("object") != expected["object"])
                     or actual.get("sha256") != expected["sha256"]
                     or actual.get("size") != expected["size"]):
                 raise ValueError(f"mirrored {arch} {field} differs from its report")
