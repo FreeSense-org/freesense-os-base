@@ -288,6 +288,8 @@ export TARGET="${FREEBSD_TARGET}"
 export TARGET_ARCH="${FREEBSD_TARGET_ARCH}"
 export ARCH_LIST="${POUDRIERE_ARCH}"
 export BUILD_KERNELS="${KERNEL}"
+export IGNORE_OSVERSION=yes
+export ASSUME_ALWAYS_YES=yes
 EOF
   phase source-ready
 }
@@ -325,11 +327,23 @@ BUILDER_HOSTNAME=freesense-builder
 EOF
   chmod 644 "${temporary}"
   mv -f "${temporary}" "${config}"
+
+  mkdir -p /usr/local/etc/poudriere.d /etc/pkg
+  cat >/usr/local/etc/poudriere.d/pkg.conf <<'EOF'
+IGNORE_OSVERSION: true
+ASSUME_ALWAYS_YES: true
+EOF
+  cat >/usr/local/etc/poudriere.d/make.conf <<'EOF'
+IGNORE_OSVERSION=yes
+PKG_ENV+= IGNORE_OSVERSION=yes
+EOF
+  cp -f /usr/local/etc/poudriere.d/pkg.conf /usr/local/etc/pkg.conf
+  cp -f /usr/local/etc/poudriere.d/pkg.conf /etc/pkg.conf
 }
 
 run_poudriere_build() {
   set +e
-  "$@"
+  env IGNORE_OSVERSION=yes ASSUME_ALWAYS_YES=yes "$@"
   status=$?
   set -e
   [ "${status}" -eq 0 ] && return 0
@@ -735,8 +749,17 @@ create_jail() {
     poudriere jail -c -j "FreeSense_main_${FREEBSD_TARGET_ARCH}" -a "${POUDRIERE_ARCH}" \
       -v 16.0-CURRENT -m tar=/root/jail-base.txz
   fi
+  jail_root="/usr/local/poudriere/jails/FreeSense_main_${FREEBSD_TARGET_ARCH}"
+  if [ -d "${jail_root}" ]; then
+    mkdir -p "${jail_root}/usr/local/etc" "${jail_root}/etc"
+    cp -f /usr/local/etc/poudriere.d/pkg.conf "${jail_root}/usr/local/etc/pkg.conf"
+    cp -f /usr/local/etc/poudriere.d/pkg.conf "${jail_root}/etc/pkg.conf"
+    cat >>"${jail_root}/etc/make.conf" <<'EOF'
+IGNORE_OSVERSION=yes
+PKG_ENV+= IGNORE_OSVERSION=yes
+EOF
+  fi
   if [ "${FREEBSD_TARGET_ARCH}" = aarch64 ]; then
-    jail_root="/usr/local/poudriere/jails/FreeSense_main_${FREEBSD_TARGET_ARCH}"
     probe="${jail_root}/bin/echo"
     file "${probe}" | grep -q 'ARM aarch64' || { echo "aarch64 jail probe has wrong architecture" >&2; return 1; }
     if [ "${EXECUTOR}" = native-arm64 ]; then

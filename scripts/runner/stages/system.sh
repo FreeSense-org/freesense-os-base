@@ -71,6 +71,8 @@ PRODUCT_NAME=FreeSense
 PRODUCT_VERSION=${PRODUCT_VERSION}
 FREESENSE_PACKAGE_TRAIN=${PACKAGE_TRAIN}
 POUDRIERE_PORTS_NAME=FreeSense_main
+IGNORE_OSVERSION=yes
+PKG_ENV+= IGNORE_OSVERSION=yes
 EOF
   sed 's/%%PRODUCT_NAME%%/FreeSense/g' tools/conf/pfPorts/poudriere_bulk \
     | sed -e '/^[[:space:]]*#/d' -e '/^[[:space:]]*$/d' >"${all_roots}"
@@ -176,7 +178,7 @@ prepare_system_ports() {
 
 build_system_packages() {
   phase system-packages-build
-  run_poudriere_build env NOLINUX=yes ./build.sh --update-pkg-repo
+  run_poudriere_build env NOLINUX=yes IGNORE_OSVERSION=yes ASSUME_ALWAYS_YES=yes ./build.sh --update-pkg-repo
   phase system-packages-ready
   latest=$(poudriere_latest_repository)
 }
