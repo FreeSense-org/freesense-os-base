@@ -732,10 +732,10 @@ create_jail() {
     }
     service qemu_user_static forcestart >/dev/null
     binmiscctl lookup aarch64 >/dev/null || { echo "aarch64 binmisc registration is missing" >&2; return 1; }
-    poudriere_cross_args="-x /usr/local/bin/qemu-aarch64-static"
+    poudriere_cross_args="-X"
   fi
   poudriere jail -c -j "FreeSense_main_${FREEBSD_TARGET_ARCH}" -a "${POUDRIERE_ARCH}" \
-    ${poudriere_cross_args} -v 16.0-CURRENT -m tar=/root/jail-base.txz
+    -v 16.0-CURRENT -m tar=/root/jail-base.txz ${poudriere_cross_args}
   jail_root="/usr/local/poudriere/jails/FreeSense_main_${FREEBSD_TARGET_ARCH}"
   if [ -d "${jail_root}" ]; then
     mkdir -p "${jail_root}/usr/local/etc" "${jail_root}/etc"

@@ -89,7 +89,7 @@ class WorkerVersionValidationTests(unittest.TestCase):
         )
         self.assertIn('service qemu_user_static forcestart', create_jail)
         self.assertIn('binmiscctl lookup aarch64', create_jail)
-        self.assertIn('poudriere_cross_args="-x /usr/local/bin/qemu-aarch64-static"', create_jail)
+        self.assertIn('poudriere_cross_args="-X"', create_jail)
         self.assertIn('-v 16.0-CURRENT -m tar=/root/jail-base.txz', create_jail)
         self.assertIn('cp -f /usr/local/bin/qemu-aarch64-static "${jail_root}/usr/local/bin/"', create_jail)
         self.assertIn(
