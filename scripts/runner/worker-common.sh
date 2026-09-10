@@ -723,6 +723,8 @@ poudriere_latest_repository() {
 
 create_jail() {
   phase poudriere-jail
+  [ -s /root/jail-base.txz ] || fetch_input "${JAIL_OBJECT}" /root/jail-base.txz
+  poudriere_cross_args=
   if [ "${FREEBSD_TARGET_ARCH}" = aarch64 ] && [ "${EXECUTOR}" = amd64-cross-qemu-user ]; then
     command -v qemu-aarch64-static >/dev/null || {
       echo "the pinned worker-tools bundle is missing qemu-aarch64-static" >&2
@@ -730,31 +732,20 @@ create_jail() {
     }
     service qemu_user_static forcestart >/dev/null
     binmiscctl lookup aarch64 >/dev/null || { echo "aarch64 binmisc registration is missing" >&2; return 1; }
-    poudriere_source=/root/freesense-src/tmp/FreeBSD-src
-    if [ ! -f "${poudriere_source}/Makefile.inc1" ]; then
-      phase clone-freebsd-source
-      poudriere_source=/root/poudriere-freebsd-src
-      clone_exact https://github.com/freebsd/freebsd-src.git \
-        "${poudriere_source}" "${FREEBSD_SHA}"
-    fi
-    test "$(git -C "${poudriere_source}" rev-parse HEAD)" = "${FREEBSD_SHA}" || {
-      echo "Poudriere source does not match the pinned FreeBSD commit" >&2
-      return 1
-    }
-    # Poudriere's supported cross-build path builds native amd64 tools in the
-    # ARM jail. QEMU remains available for target programs that must execute.
-    poudriere jail -c -j "FreeSense_main_${FREEBSD_TARGET_ARCH}" -a "${POUDRIERE_ARCH}" \
-      -b -J 4 -v 16.0-CURRENT -m "src=${poudriere_source}"
-  else
-    [ -s /root/jail-base.txz ] || fetch_input "${JAIL_OBJECT}" /root/jail-base.txz
-    poudriere jail -c -j "FreeSense_main_${FREEBSD_TARGET_ARCH}" -a "${POUDRIERE_ARCH}" \
-      -v 16.0-CURRENT -m tar=/root/jail-base.txz
+    poudriere_cross_args="-x /usr/local/bin/qemu-aarch64-static"
   fi
+  poudriere jail -c -j "FreeSense_main_${FREEBSD_TARGET_ARCH}" -a "${POUDRIERE_ARCH}" \
+    ${poudriere_cross_args} -v 16.0-CURRENT -m tar=/root/jail-base.txz
   jail_root="/usr/local/poudriere/jails/FreeSense_main_${FREEBSD_TARGET_ARCH}"
   if [ -d "${jail_root}" ]; then
     mkdir -p "${jail_root}/usr/local/etc" "${jail_root}/etc"
     cp -f /usr/local/etc/poudriere.d/pkg.conf "${jail_root}/usr/local/etc/pkg.conf"
     cp -f /usr/local/etc/poudriere.d/pkg.conf "${jail_root}/etc/pkg.conf"
+    if [ "${FREEBSD_TARGET_ARCH}" = aarch64 ]; then
+      mkdir -p "${jail_root}/usr/local/bin" "${jail_root}/bin"
+      cp -f /usr/local/bin/qemu-aarch64-static "${jail_root}/usr/local/bin/"
+      cp -f /usr/local/bin/qemu-aarch64-static "${jail_root}/bin/"
+    fi
     cat >>"${jail_root}/etc/make.conf" <<'EOF'
 IGNORE_OSVERSION=yes
 PKG_ENV+= IGNORE_OSVERSION=yes
