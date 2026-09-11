@@ -496,6 +496,8 @@ else:
             "FreeBSD lock has no canonical aarch64 inputs")
 
 pin_target_workflow = read(".github/workflows/pin-target.yml")
+require(r"{commit:\$commit,committed_at:\$committed_at,requirements:\$requirements[0]}" in pin_target_workflow,
+        "pin-target guest jq filter must not expand host $commit under set -u")
 resolve_multiarch_pin = read("scripts/resolve_multiarch_pin.py")
 assemble_multiarch_pin = read("scripts/assemble_multiarch_pin.py")
 multiarch_pin_module = read("scripts/multiarch_pin.py")

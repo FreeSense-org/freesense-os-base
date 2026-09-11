@@ -172,7 +172,7 @@ jobs:
               --roots /root/roots.json --output /root/requirements.json
             jq -cn --arg commit "\${candidate}" --arg committed_at "\${committed_at}" \
               --slurpfile requirements /root/requirements.json \
-              '{commit:$commit,committed_at:$committed_at,requirements:$requirements[0]}' \
+              '{commit:\$commit,committed_at:\$committed_at,requirements:\$requirements[0]}' \
               >>/root/candidate-requirements.jsonl
           done
           jq -s . /root/candidate-requirements.jsonl >/root/candidate-requirements.json
