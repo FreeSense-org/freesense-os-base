@@ -14,10 +14,10 @@ def candidate(index: int) -> dict:
 
 
 class SplitPinCandidatesTests(unittest.TestCase):
-    def test_splits_fourteen_candidates_into_fours(self):
+    def test_splits_fourteen_candidates_into_twos(self):
         chunks = module.split_candidates([candidate(i) for i in range(14)])
-        self.assertEqual([chunk["id"] for chunk in chunks], [0, 1, 2, 3])
-        self.assertEqual([len(chunk["candidates"]) for chunk in chunks], [4, 4, 4, 2])
+        self.assertEqual([chunk["id"] for chunk in chunks], list(range(7)))
+        self.assertEqual([len(chunk["candidates"]) for chunk in chunks], [2] * 7)
 
     def test_single_candidate_is_one_chunk(self):
         chunks = module.split_candidates([candidate(1)])

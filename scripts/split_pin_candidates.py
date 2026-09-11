@@ -11,7 +11,7 @@ import sys
 
 
 SCHEMA = "freesense.pin-ports-cache/v1"
-CHUNK_SIZE = 4
+CHUNK_SIZE = 2
 
 
 def load_common(path: Path) -> dict:
