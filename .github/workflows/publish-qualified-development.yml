@@ -1,0 +1,79 @@
+name: Publish qualified Development architecture
+
+on:
+  workflow_call:
+    inputs:
+      architecture: {type: string, required: true}
+
+permissions: {actions: read, contents: read, id-token: write}
+
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    environment: channel-publisher
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+        with: {go-version-file: go.mod, cache: false}
+      - name: Download exact architecture documents
+        env: {GH_TOKEN: '${{ github.token }}', ARCH: '${{ inputs.architecture }}'}
+        run: |
+          set -euo pipefail
+          case "${ARCH}" in amd64) package_arch=amd64 ;; arm64) package_arch=aarch64 ;; *) exit 1 ;; esac
+          mkdir -p "${RUNNER_TEMP}/bundle/repository" "${RUNNER_TEMP}/bundle/release"
+          gh run download "${GITHUB_RUN_ID}" --repo "${GITHUB_REPOSITORY}" \
+            --name "multiarch-repository-${ARCH}" --dir "${RUNNER_TEMP}/bundle/repository"
+          gh run download "${GITHUB_RUN_ID}" --repo "${GITHUB_REPOSITORY}" \
+            --name "multiarch-release-${ARCH}" --dir "${RUNNER_TEMP}/bundle/release"
+          test -s "${RUNNER_TEMP}/bundle/repository/repos.${package_arch}.manifest.json"
+          test -s "${RUNNER_TEMP}/bundle/release/devel.json"
+          go build -trimpath -o "${RUNNER_TEMP}/fsbuild" ./cmd/fsbuild
+      - name: Acquire downloads writer and publish immutable downloads
+        env:
+          R2_CREDENTIAL_BROKER_URL: ${{ vars.R2_CREDENTIAL_BROKER_URL }}
+          R2_CREDENTIAL_BROKER_AUDIENCE: ${{ vars.R2_CREDENTIAL_BROKER_AUDIENCE }}
+          R2_BUCKET: ${{ vars.R2_DOWNLOAD_BUCKET }}
+          R2_ENDPOINT: ${{ vars.R2_ENDPOINT }}
+        run: |
+          "${RUNNER_TEMP}/fsbuild" credentials acquire --broker-url "${R2_CREDENTIAL_BROKER_URL}" \
+            --audience "${R2_CREDENTIAL_BROKER_AUDIENCE}" --role download-writer \
+            --expected-bucket "${R2_BUCKET}" --expected-prefix v1 --expected-endpoint "${R2_ENDPOINT}" \
+            --github-env "${GITHUB_ENV}"
+          bash scripts/publish_iso.sh "${RUNNER_TEMP}/bundle/release/devel.json"
+      - name: Acquire channel writer and commit qualified architecture
+        env:
+          ARCH: ${{ inputs.architecture }}
+          R2_CREDENTIAL_BROKER_URL: ${{ vars.R2_CREDENTIAL_BROKER_URL }}
+          R2_CREDENTIAL_BROKER_AUDIENCE: ${{ vars.R2_CREDENTIAL_BROKER_AUDIENCE }}
+          R2_BUCKET: ${{ vars.R2_BUILD_BUCKET }}
+          R2_ENDPOINT: ${{ vars.R2_ENDPOINT }}
+          FSBUILD_STORE_PREFIX: v1
+        run: |
+          case "${ARCH}" in amd64) package_arch=amd64 ;; arm64) package_arch=aarch64 ;; *) exit 1 ;; esac
+          "${RUNNER_TEMP}/fsbuild" credentials acquire --broker-url "${R2_CREDENTIAL_BROKER_URL}" \
+            --audience "${R2_CREDENTIAL_BROKER_AUDIENCE}" --role channel-writer \
+            --expected-bucket "${R2_BUCKET}" --expected-prefix v1 --expected-endpoint "${R2_ENDPOINT}" \
+            --github-env "${GITHUB_ENV}"
+          "${RUNNER_TEMP}/fsbuild" multiarch commit-qualified --architecture "${ARCH}" \
+            --repositories "${RUNNER_TEMP}/bundle/repository/repos.${package_arch}.manifest.json" \
+            --release "${RUNNER_TEMP}/bundle/release/devel.json" \
+            --public-key config/channel-signing-public.pem
+      - name: Commit architecture completion to the frozen cycle
+        env:
+          ARCH: ${{ inputs.architecture }}
+          R2_CREDENTIAL_BROKER_URL: ${{ vars.R2_CREDENTIAL_BROKER_URL }}
+          R2_CREDENTIAL_BROKER_AUDIENCE: ${{ vars.R2_CREDENTIAL_BROKER_AUDIENCE }}
+          R2_BUCKET: ${{ vars.R2_BUILD_BUCKET }}
+          R2_ENDPOINT: ${{ vars.R2_ENDPOINT }}
+          FSBUILD_STORE_PREFIX: v1
+        run: |
+          "${RUNNER_TEMP}/fsbuild" credentials acquire --broker-url "${R2_CREDENTIAL_BROKER_URL}" \
+            --audience "${R2_CREDENTIAL_BROKER_AUDIENCE}" --role coordinator \
+            --expected-bucket "${R2_BUCKET}" --expected-prefix v1 --expected-endpoint "${R2_ENDPOINT}" \
+            --github-env "${GITHUB_ENV}"
+          "${RUNNER_TEMP}/fsbuild" multiarch cycle-get --output "${RUNNER_TEMP}/cycle-state.json"
+          jq -e --arg arch "${ARCH}" '
+            .cycle.architectures[$arch] = {system:"complete",packages:"complete",artifacts:"complete",published:true} |
+            .cycle
+          ' "${RUNNER_TEMP}/cycle-state.json" >"${RUNNER_TEMP}/cycle-complete.json"
+          "${RUNNER_TEMP}/fsbuild" multiarch cycle-commit --document "${RUNNER_TEMP}/cycle-complete.json"

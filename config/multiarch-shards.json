@@ -1,6 +1,11 @@
 {
   "schema_version": "freesense.multiarch-shards/v1",
-  "count": 4,
+  "policy_version": "dependency-cost-v2",
+  "count": 8,
+  "batch_target_seconds": 10800,
+  "default_cost_seconds": 1800,
+  "dependency_closures": {"system": {}, "packages": {}},
+  "measured_cost_seconds": {"system": {"sysutils/telegraf": 7200}, "packages": {}},
   "measured_heavy_roots": {
     "system": ["sysutils/telegraf"],
     "packages": []

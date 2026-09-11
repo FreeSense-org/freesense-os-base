@@ -35,7 +35,8 @@ def fixture():
         catalog = item(str(number + 1), signature_verified=True, trusted_key_sha256=sha("c"))
         seed = item(str(number + 3), abi=abi, catalog_sha256=catalog["sha256"], verified=True,
                     requirements_components=["system", "packages"], requirements_sha256=sha("d"),
-                    provenance_sha256=sha("e"), verified_roots=["rust"], package_count=1)
+                    provenance_sha256=sha("e"), verified_roots=["rust"], package_count=1,
+                    accepted_count=1, rejected_count=0, rejection_reasons={})
         image = item(str(number + 5), architecture=arch, boot_verified=True)
         tools = item(str(number + 7), architecture=arch, boot_verified=True)
         reports[arch] = {"schema_version": "freesense.freebsd-pin-target/v1", "architecture": arch,
@@ -51,6 +52,22 @@ def fixture():
 
 
 class AssembleTests(unittest.TestCase):
+    def test_selects_maximin_candidate_and_architecture_specific_seeds(self):
+        common, reports = fixture(); commits = ["1" * 40, "2" * 40]
+        common["ports_candidates"] = [{"commit": commits[0], "committed_at":"2026-09-10T00:00:00Z"},
+                                      {"commit": commits[1], "committed_at":"2026-09-11T00:00:00Z"}]
+        for index, arch in enumerate(module.ARCHES):
+            base = reports[arch].pop("binary_seed")
+            reports[arch]["evidence"].pop("requirements_sha256")
+            reports[arch]["candidates"] = [
+                {**base, "commit":commits[0], "committed_at":"2026-09-10T00:00:00Z", "accepted_count":9, "package_count":9},
+                {**base, "object":"inputs/sha256/" + sha(str(index+5)), "sha256":sha(str(index+5)),
+                 "commit":commits[1], "committed_at":"2026-09-11T00:00:00Z", "accepted_count":9, "package_count":9},
+            ]
+        candidate = module.assemble(common, reports)
+        self.assertEqual(candidate["freebsd_ports"]["commit"], commits[1])
+        self.assertEqual(candidate["pin_evidence"]["selected"]["score"]["minimum_accepted"], 9)
+
     def test_requires_both_complete_native_reports(self):
         common, reports = fixture()
         candidate = module.assemble(common, reports)

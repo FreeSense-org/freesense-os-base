@@ -1,0 +1,52 @@
+name: Prepare qualified Development repository document
+
+on:
+  workflow_call:
+    inputs:
+      architecture: {type: string, required: true}
+      system_fingerprint: {type: string, required: true}
+      packages_fingerprint: {type: string, required: true}
+
+permissions: {contents: read}
+
+jobs:
+  prepare:
+    runs-on: ubuntu-24.04
+    environment: channel-publisher
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+        with: {go-version-file: go.mod, cache: false}
+      - run: go build -trimpath -o "${RUNNER_TEMP}/fsbuild" ./cmd/fsbuild
+      - name: Prepare exact signed architecture-qualified repository document
+        env:
+          ARCH: ${{ inputs.architecture }}
+          SYSTEM: ${{ inputs.system_fingerprint }}
+          PACKAGES: ${{ inputs.packages_fingerprint }}
+          SIGNING_KEY: ${{ secrets.FREESENSE_PKG_SIGNING_KEY }}
+        run: |
+          set -euo pipefail
+          case "${ARCH}" in amd64) package_arch=amd64 ;; arm64) package_arch=aarch64 ;; *) exit 1 ;; esac
+          umask 077
+          key="${RUNNER_TEMP}/channel.key"
+          printf '%s' "${SIGNING_KEY}" >"${key}"
+          curl --fail --location --silent --show-error --retry 8 --retry-all-errors \
+            "https://pkg.freesense.org/v1/artifacts/system/${SYSTEM}/complete.json" \
+            --output "${RUNNER_TEMP}/system.json"
+          curl --fail --location --silent --show-error --retry 8 --retry-all-errors \
+            "https://pkg.freesense.org/v1/artifacts/packages/1.1/${PACKAGES}/complete.json" \
+            --output "${RUNNER_TEMP}/packages.json"
+          python3 scripts/staged_system_closure.py --target "${ARCH}" \
+            --marker "${RUNNER_TEMP}/system.json" --packages-marker "${RUNNER_TEMP}/packages.json" \
+            --published-at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --output "${RUNNER_TEMP}/closure.json"
+          jq -er .payload_base64 "${RUNNER_TEMP}/closure.json" | base64 --decode >"${RUNNER_TEMP}/payload.json"
+          mkdir -p "${RUNNER_TEMP}/repository"
+          "${RUNNER_TEMP}/fsbuild" channel sign-file --payload "${RUNNER_TEMP}/payload.json" \
+            --architecture "${ARCH}" --package-arch "${package_arch}" --private-key "${key}" \
+            --output "${RUNNER_TEMP}/repository/repos.${package_arch}.manifest.json"
+      - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f
+        with:
+          name: multiarch-repository-${{ inputs.architecture }}
+          path: ${{ runner.temp }}/repository
+          if-no-files-found: error
+          retention-days: 30

@@ -147,6 +147,25 @@ def inventory(kind: str, bucket: str) -> dict:
 
 
 class RetentionPlanTests(unittest.TestCase):
+    def test_active_frozen_cycle_protects_components_and_checkpoints(self):
+        build = inventory("build", "builds"); downloads = inventory("downloads", "downloads")
+        active_system = system_marker(1, 1); active_packages = packages_marker(2, 1, active_system["fingerprint"])
+        newer_system = system_marker(3, 3); newer_packages = packages_marker(4, 3, newer_system["fingerprint"])
+        for marker, prefix in ((active_system, f"v1/artifacts/system/{active_system['fingerprint']}"),
+                               (active_packages, f"v1/artifacts/packages/1.1/{active_packages['fingerprint']}"),
+                               (newer_system, f"v1/artifacts/system/{newer_system['fingerprint']}"),
+                               (newer_packages, f"v1/artifacts/packages/1.1/{newer_packages['fingerprint']}")):
+            add_artifact(build, prefix, marker)
+        cycle = {"schema_version":"freesense.development-cycle/v1", "generation":1,
+                 "architectures":{"amd64":{}, "arm64":{}}, "plan":{"targets":{
+                    "amd64":{"system":{"system":active_system["fingerprint"]}, "packages":{"packages":active_packages["fingerprint"]}},
+                    "arm64":{"system":{"system":active_system["fingerprint"]}, "packages":{"packages":active_packages["fingerprint"]}}}}}
+        report = retention.plan_retention(build, downloads, {"channels":{"devel":{"package_train":"1.1"}}},
+            set(), NOW, keep_devel=1, grace=timedelta(0), completed_grace=timedelta(0), development_cycle=cycle)
+        candidates = {item["prefix"] for item in report["candidates"]}
+        self.assertNotIn(f"v1/artifacts/system/{active_system['fingerprint']}/", candidates)
+        self.assertNotIn(f"v1/artifacts/packages/1.1/{active_packages['fingerprint']}/", candidates)
+
     def test_authoritative_multiarch_completion_protects_its_component_pair(self):
         build = inventory("build", "builds")
         downloads = inventory("downloads", "downloads")

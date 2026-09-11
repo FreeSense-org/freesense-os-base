@@ -694,6 +694,10 @@ def main() -> int:
         "changes": release_notes["freesense"],
         "release_notes": release_notes,
     }
+    # Qualified Development publication binds both independently planned
+    # package repositories. Keep Stable byte/schema behavior unchanged.
+    if args.channel == "devel":
+        release["packages_fingerprint"] = args.packages_fingerprint
     release["artifacts"].append({
         "kind": "installer", "format": selected_profile["installer"], "filesystem": None,
         "compression": "none" if selected_profile["installer"] == "iso" else "xz", "file": marker["file"],

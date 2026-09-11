@@ -14,7 +14,125 @@ import (
 // separate gate; preparing a signature cannot advance a release channel.
 func commandMultiarch(ctx context.Context, args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: fsbuild multiarch <prepare|verify|commit>")
+		return errors.New("usage: fsbuild multiarch <prepare|verify|commit|cycle-commit>")
+	}
+	if args[0] == "cycle-get" {
+		flags := newFlagSet("multiarch cycle-get")
+		output := flags.String("output", "-", "cycle JSON path or -")
+		if err := parseFlags(flags, args[1:]); err != nil {
+			return err
+		}
+		backend, err := openStore()
+		if err != nil {
+			return err
+		}
+		cycle, exists, err := control.LoadDevelopmentCycle(ctx, backend)
+		if err != nil {
+			return err
+		}
+		if !exists {
+			return writeJSON(*output, map[string]any{"exists": false})
+		}
+		return writeJSON(*output, struct {
+			Exists bool                     `json:"exists"`
+			Cycle  control.DevelopmentCycle `json:"cycle"`
+		}{true, cycle})
+	}
+	if args[0] == "cycle-commit" {
+		flags := newFlagSet("multiarch cycle-commit")
+		document := flags.String("document", "", "Development cycle JSON")
+		output := flags.String("output", "-", "commit result path or -")
+		if err := parseFlags(flags, args[1:]); err != nil {
+			return err
+		}
+		raw, err := os.ReadFile(*document)
+		if err != nil {
+			return err
+		}
+		var cycle control.DevelopmentCycle
+		if err := json.Unmarshal(raw, &cycle); err != nil {
+			return err
+		}
+		backend, err := openStore()
+		if err != nil {
+			return err
+		}
+		info, updated, err := control.CommitDevelopmentCycle(ctx, backend, cycle)
+		if err != nil {
+			return err
+		}
+		return writeJSON(*output, map[string]any{"updated": updated, "key": info.Key, "sha256": info.SHA256})
+	}
+	if args[0] == "commit-qualified" {
+		flags := newFlagSet("multiarch commit-qualified")
+		architecture := flags.String("architecture", "", "amd64 or arm64")
+		repositories := flags.String("repositories", "", "signed qualified repository manifest")
+		release := flags.String("release", "", "qualified release document")
+		publicKey := flags.String("public-key", "", "RSA verification key")
+		output := flags.String("output", "-", "commit result path or -")
+		if err := parseFlags(flags, args[1:]); err != nil {
+			return err
+		}
+		repositoryBytes, err := os.ReadFile(*repositories)
+		if err != nil {
+			return err
+		}
+		releaseBytes, err := os.ReadFile(*release)
+		if err != nil {
+			return err
+		}
+		keyBytes, err := os.ReadFile(*publicKey)
+		if err != nil {
+			return err
+		}
+		key, err := control.ParsePublicKey(keyBytes)
+		if err != nil {
+			return err
+		}
+		backend, err := openStore()
+		if err != nil {
+			return err
+		}
+		updated, err := control.CommitQualified(ctx, backend, repositoryBytes, releaseBytes, *architecture, key)
+		if err != nil {
+			return err
+		}
+		return writeJSON(*output, map[string]any{"updated": updated, "architecture": *architecture})
+	}
+	if args[0] == "commit-legacy-amd64" {
+		flags := newFlagSet("multiarch commit-legacy-amd64")
+		repositories := flags.String("repositories", "", "signed amd64 repository manifest")
+		release := flags.String("release", "", "amd64 release document")
+		publicKey := flags.String("public-key", "", "RSA verification key")
+		output := flags.String("output", "-", "commit result path or -")
+		if err := parseFlags(flags, args[1:]); err != nil {
+			return err
+		}
+		repositoryBytes, err := os.ReadFile(*repositories)
+		if err != nil {
+			return err
+		}
+		releaseBytes, err := os.ReadFile(*release)
+		if err != nil {
+			return err
+		}
+		keyBytes, err := os.ReadFile(*publicKey)
+		if err != nil {
+			return err
+		}
+		key, err := control.ParsePublicKey(keyBytes)
+		if err != nil {
+			return err
+		}
+		backend, err := openStore()
+		if err != nil {
+			return err
+		}
+		updated, err := control.CommitLegacyAMD64(ctx, backend, repositoryBytes, releaseBytes, key)
+		if err != nil {
+			return err
+		}
+		return writeJSON(*output, map[string]any{"updated": updated, "architecture": "amd64"})
 	}
 	if args[0] == "verify" {
 		flags := newFlagSet("multiarch verify")
@@ -73,7 +191,7 @@ func commandMultiarch(ctx context.Context, args []string) error {
 		return writeJSON(*output, map[string]any{"updated": updated, "key": info.Key, "sha256": info.SHA256})
 	}
 	if args[0] != "prepare" {
-		return errors.New("usage: fsbuild multiarch <prepare|verify|commit>")
+		return errors.New("usage: fsbuild multiarch <prepare|verify|commit|cycle-commit>")
 	}
 	flags := newFlagSet("multiarch prepare")
 	evidencePath := flags.String("evidence", "", "same-run canary verification report")

@@ -21,14 +21,17 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
-      - name: Require a complete active v4 pin
+      - name: Require a structurally complete v4 pin
         run: |
           python3 - <<'PY'
           import json, sys
-          from datetime import datetime, timezone
+          from datetime import datetime, timedelta
           sys.path.insert(0, 'scripts')
           from multiarch_pin import validate
-          validate(json.load(open('config/freebsd-16.json')), now=datetime.now(timezone.utc))
+          pin = json.load(open('config/freebsd-16.json'))
+          # Expiration is checked when planning a new cycle. Keeping readiness
+          # structural allows an older frozen incomplete cycle to resume.
+          validate(pin, now=datetime.fromisoformat(pin['valid_from'].replace('Z', '+00:00')) + timedelta(seconds=1))
           PY
 
   arm_capability:
@@ -92,28 +95,17 @@ jobs:
     runs-on: ubuntu-24.04
     environment: build-coordinator
     outputs:
-      pair_generation: ${{ steps.reserve.outputs.generation }}
-      amd64_system: ${{ steps.plan.outputs.amd64_system }}
-      arm64_system: ${{ steps.plan.outputs.arm64_system }}
-      amd64_packages: ${{ steps.plan.outputs.amd64_packages }}
-      arm64_packages: ${{ steps.plan.outputs.arm64_packages }}
+      pair_generation: ${{ steps.coordinate.outputs.generation }}
+      amd64_system: ${{ steps.coordinate.outputs.amd64_system }}
+      arm64_system: ${{ steps.coordinate.outputs.arm64_system }}
+      amd64_packages: ${{ steps.coordinate.outputs.amd64_packages }}
+      arm64_packages: ${{ steps.coordinate.outputs.arm64_packages }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
         with: {go-version-file: go.mod, cache: false}
-      - id: plan
-        env:
-          ARM_PROBE: ${{ needs.arm_capability.outputs.report || '{}' }}
-          FORCE_DEDICATED: ${{ inputs.force_dedicated || false }}
-        run: |
-          printf '%s' "${ARM_PROBE}" >"${RUNNER_TEMP}/arm-probe.json"
-          args=()
-          if [[ "${FORCE_DEDICATED}" == true ]]; then args+=(--force-dedicated); fi
-          python3 scripts/multiarch_plan.py --probe "${RUNNER_TEMP}/arm-probe.json" \
-            --os-base-sha "${GITHUB_SHA}" --output "${RUNNER_TEMP}/multiarch-plan.json" \
-            --github-output "${GITHUB_OUTPUT}" "${args[@]}"
       - run: go build -trimpath -o "${RUNNER_TEMP}/fsbuild" ./cmd/fsbuild
-      - name: Acquire generation coordinator
+      - name: Acquire frozen cycle coordinator
         env:
           R2_CREDENTIAL_BROKER_URL: ${{ vars.R2_CREDENTIAL_BROKER_URL }}
           R2_CREDENTIAL_BROKER_AUDIENCE: ${{ vars.R2_CREDENTIAL_BROKER_AUDIENCE }}
@@ -124,15 +116,51 @@ jobs:
           --audience "${R2_CREDENTIAL_BROKER_AUDIENCE}" --role coordinator
           --expected-bucket "${R2_BUCKET}" --expected-prefix v1 --expected-endpoint "${R2_ENDPOINT}"
           --github-env "${GITHUB_ENV}"
-      - id: reserve
+      - id: coordinate
+        name: Resume the frozen cycle or reserve one new cycle
         env:
+          ARM_PROBE: ${{ needs.arm_capability.outputs.report || '{}' }}
+          FORCE_DEDICATED: ${{ inputs.force_dedicated || false }}
           R2_BUCKET: ${{ vars.R2_BUILD_BUCKET }}
           FSBUILD_STORE_PREFIX: v1
-          PAIR_FINGERPRINT: ${{ steps.plan.outputs.pair_fingerprint }}
         run: |
-          "${RUNNER_TEMP}/fsbuild" state reserve-generation --fingerprint "${PAIR_FINGERPRINT}" \
+          set -euo pipefail
+          "${RUNNER_TEMP}/fsbuild" multiarch cycle-get --output "${RUNNER_TEMP}/cycle-state.json"
+          active=$(jq -r '.exists and (.cycle.superseded != true) and ((.cycle.architectures.amd64.published != true) or (.cycle.architectures.arm64.published != true))' "${RUNNER_TEMP}/cycle-state.json")
+          if [[ "${active}" == true ]]; then
+            jq -e .cycle.plan "${RUNNER_TEMP}/cycle-state.json" >"${RUNNER_TEMP}/multiarch-plan.json"
+            generation=$(jq -er .cycle.generation "${RUNNER_TEMP}/cycle-state.json")
+            jq -n --argjson generation "${generation}" '{generation:$generation}' >"${RUNNER_TEMP}/pair-generation.json"
+          else
+          printf '%s' "${ARM_PROBE}" >"${RUNNER_TEMP}/arm-probe.json"
+          args=()
+          if [[ "${FORCE_DEDICATED}" == true ]]; then args+=(--force-dedicated); fi
+          python3 scripts/multiarch_plan.py --probe "${RUNNER_TEMP}/arm-probe.json" \
+            --os-base-sha "${GITHUB_SHA}" --output "${RUNNER_TEMP}/multiarch-plan.json" \
+            "${args[@]}"
+          pair=$(jq -er .pair_fingerprint "${RUNNER_TEMP}/multiarch-plan.json")
+          "${RUNNER_TEMP}/fsbuild" state reserve-generation --fingerprint "${pair}" \
             --proposed "$(date -u +%s)" --output "${RUNNER_TEMP}/pair-generation.json"
-          echo "generation=$(jq -er .generation "${RUNNER_TEMP}/pair-generation.json")" >>"${GITHUB_OUTPUT}"
+          jq -n --argjson generation "$(jq -er .generation "${RUNNER_TEMP}/pair-generation.json")" \
+            --arg pin "$(jq -er .freebsd_pin "${RUNNER_TEMP}/multiarch-plan.json")" \
+            --arg pair "${pair}" --slurpfile plan "${RUNNER_TEMP}/multiarch-plan.json" \
+            '{schema_version:"freesense.development-cycle/v1",generation:$generation,pin:$pin,
+              pair_fingerprint:$pair,sources:$plan[0].resolved_inputs,plan:$plan[0],
+              architectures:{amd64:{system:"pending",packages:"pending",artifacts:"pending",published:false},
+                             arm64:{system:"pending",packages:"pending",artifacts:"pending",published:false}}}' \
+            >"${RUNNER_TEMP}/cycle.json"
+          "${RUNNER_TEMP}/fsbuild" multiarch cycle-commit --document "${RUNNER_TEMP}/cycle.json"
+          fi
+          python3 - <<'PY' >>"${GITHUB_OUTPUT}"
+          import json, os
+          root = os.environ["RUNNER_TEMP"]
+          plan = json.load(open(root + "/multiarch-plan.json", encoding="utf-8"))
+          generation = json.load(open(root + "/pair-generation.json", encoding="utf-8"))["generation"]
+          print(f"generation={generation}")
+          for arch in ("amd64", "arm64"):
+              for component in ("system", "packages"):
+                  print(f"{arch}_{component}=" + json.dumps(plan["targets"][arch][component], separators=(",", ":")))
+          PY
       - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f
         with:
           name: multiarch-plan
@@ -163,7 +191,7 @@ jobs:
     secrets: inherit
 
   packages_amd64:
-    needs: [prepare, system_amd64, system_arm64]
+    needs: [prepare, system_amd64]
     uses: ./.github/workflows/packages.yml
     with:
       target: amd64
@@ -174,7 +202,7 @@ jobs:
     secrets: inherit
 
   packages_arm64:
-    needs: [prepare, system_amd64, system_arm64]
+    needs: [prepare, system_arm64]
     uses: ./.github/workflows/packages.yml
     with:
       target: arm64
@@ -184,61 +212,26 @@ jobs:
       suppress_publication: true
     secrets: inherit
 
-  repository_documents:
-    needs: [prepare, system_amd64, system_arm64, packages_amd64, packages_arm64]
-    runs-on: ubuntu-24.04
-    environment: channel-publisher
-    permissions: {contents: read}
-    steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
-        with: {go-version-file: go.mod, cache: false}
-      - run: go build -trimpath -o "${RUNNER_TEMP}/fsbuild" ./cmd/fsbuild
-      - name: Prepare exact signed architecture-qualified repository documents
-        env:
-          AMD64_SYSTEM: ${{ needs.system_amd64.outputs.system_fingerprint }}
-          ARM64_SYSTEM: ${{ needs.system_arm64.outputs.system_fingerprint }}
-          AMD64_PACKAGES: ${{ needs.packages_amd64.outputs.packages_fingerprint }}
-          ARM64_PACKAGES: ${{ needs.packages_arm64.outputs.packages_fingerprint }}
-          SIGNING_KEY: ${{ secrets.FREESENSE_PKG_SIGNING_KEY }}
-        run: |
-          set -euo pipefail
-          umask 077
-          key="${RUNNER_TEMP}/channel.key"
-          printf '%s' "${SIGNING_KEY}" >"${key}"
-          mkdir -p "${RUNNER_TEMP}/repositories"
-          published_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-          for arch in amd64 arm64; do
-            if [[ "${arch}" == amd64 ]]; then
-              system=${AMD64_SYSTEM}; packages=${AMD64_PACKAGES}; package_arch=amd64
-            else
-              system=${ARM64_SYSTEM}; packages=${ARM64_PACKAGES}; package_arch=aarch64
-            fi
-            curl --fail --location --silent --show-error --retry 8 --retry-all-errors \
-              "https://pkg.freesense.org/v1/artifacts/system/${system}/complete.json" \
-              --output "${RUNNER_TEMP}/${arch}-system.json"
-            curl --fail --location --silent --show-error --retry 8 --retry-all-errors \
-              "https://pkg.freesense.org/v1/artifacts/packages/1.1/${packages}/complete.json" \
-              --output "${RUNNER_TEMP}/${arch}-packages.json"
-            python3 scripts/staged_system_closure.py --target "${arch}" \
-              --marker "${RUNNER_TEMP}/${arch}-system.json" \
-              --packages-marker "${RUNNER_TEMP}/${arch}-packages.json" \
-              --published-at "${published_at}" --output "${RUNNER_TEMP}/${arch}-closure.json"
-            jq -er .payload_base64 "${RUNNER_TEMP}/${arch}-closure.json" | base64 --decode \
-              >"${RUNNER_TEMP}/${arch}-payload.json"
-            "${RUNNER_TEMP}/fsbuild" channel sign-file --payload "${RUNNER_TEMP}/${arch}-payload.json" \
-              --architecture "${arch}" --package-arch "${package_arch}" --private-key "${key}" \
-              --output "${RUNNER_TEMP}/repositories/repos.${package_arch}.manifest.json"
-          done
-      - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f
-        with:
-          name: multiarch-repository-documents
-          path: ${{ runner.temp }}/repositories
-          if-no-files-found: error
-          retention-days: 14
+  repository_amd64:
+    needs: [system_amd64, packages_amd64]
+    uses: ./.github/workflows/qualified-repository-document.yml
+    with:
+      architecture: amd64
+      system_fingerprint: ${{ needs.system_amd64.outputs.system_fingerprint }}
+      packages_fingerprint: ${{ needs.packages_amd64.outputs.packages_fingerprint }}
+    secrets: inherit
+
+  repository_arm64:
+    needs: [system_arm64, packages_arm64]
+    uses: ./.github/workflows/qualified-repository-document.yml
+    with:
+      architecture: arm64
+      system_fingerprint: ${{ needs.system_arm64.outputs.system_fingerprint }}
+      packages_fingerprint: ${{ needs.packages_arm64.outputs.packages_fingerprint }}
+    secrets: inherit
 
   release_amd64:
-    needs: [prepare, system_amd64, packages_amd64, packages_arm64, repository_documents]
+    needs: [prepare, system_amd64, packages_amd64, repository_amd64]
     uses: ./.github/workflows/release.yml
     with:
       operation: bundle
@@ -252,7 +245,7 @@ jobs:
     secrets: inherit
 
   release_arm64:
-    needs: [prepare, system_arm64, packages_amd64, packages_arm64, repository_documents]
+    needs: [prepare, system_arm64, packages_arm64, repository_arm64]
     uses: ./.github/workflows/release.yml
     with:
       operation: bundle
@@ -265,8 +258,22 @@ jobs:
       suppress_publication: true
     secrets: inherit
 
+  publish_amd64:
+    needs: [release_amd64, repository_amd64]
+    if: github.ref == 'refs/heads/main' && vars.MULTIARCH_PUBLICATION_ENABLED == 'true'
+    uses: ./.github/workflows/publish-qualified-development.yml
+    with: {architecture: amd64}
+    secrets: inherit
+
+  publish_arm64:
+    needs: [release_arm64, repository_arm64]
+    if: github.ref == 'refs/heads/main' && vars.MULTIARCH_PUBLICATION_ENABLED == 'true'
+    uses: ./.github/workflows/publish-qualified-development.yml
+    with: {architecture: arm64}
+    secrets: inherit
+
   verify_pair:
-    needs: [release_amd64, release_arm64, repository_documents]
+    needs: [release_amd64, release_arm64, repository_amd64, repository_arm64]
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     environment: channel-publisher
@@ -279,7 +286,9 @@ jobs:
           gh run download "${GITHUB_RUN_ID}" --repo "${GITHUB_REPOSITORY}" --name multiarch-plan --dir "${RUNNER_TEMP}/plan"
           gh run download "${GITHUB_RUN_ID}" --repo "${GITHUB_REPOSITORY}" --name multiarch-release-amd64 --dir "${RUNNER_TEMP}/amd64"
           gh run download "${GITHUB_RUN_ID}" --repo "${GITHUB_REPOSITORY}" --name multiarch-release-arm64 --dir "${RUNNER_TEMP}/arm64"
-          gh run download "${GITHUB_RUN_ID}" --repo "${GITHUB_REPOSITORY}" --name multiarch-repository-documents --dir "${RUNNER_TEMP}/repositories"
+          mkdir -p "${RUNNER_TEMP}/repositories"
+          gh run download "${GITHUB_RUN_ID}" --repo "${GITHUB_REPOSITORY}" --name multiarch-repository-amd64 --dir "${RUNNER_TEMP}/repositories"
+          gh run download "${GITHUB_RUN_ID}" --repo "${GITHUB_REPOSITORY}" --name multiarch-repository-arm64 --dir "${RUNNER_TEMP}/repositories"
           gh api --paginate --slurp "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/jobs?filter=all&per_page=100" >"${RUNNER_TEMP}/jobs.json"
       - name: Verify both architecture closures and all reused package bytes
         run: |

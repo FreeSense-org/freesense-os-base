@@ -20,9 +20,9 @@ for name in AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN R2_ENDPOIN
   SYSTEM_SHA PACKAGES_SHA PACKAGES_ID OS_BASE_SHA FREEBSD_SHA PORTS_SHA JAIL_OBJECT FREEBSD_PIN_ID PACKAGE_TRAIN PRODUCT_VERSION \
   IMAGE_SHA256 WORKER_TOOLS_SHA256 GENERATION SYSTEM_GENERATION PUBLIC_BASE_URL CHANNEL CHANNEL_PAYLOAD_SHA256 \
   CHANNEL_PAYLOAD_B64 CHANNEL_SIGNATURE_B64 BUNDLE_ID CLOUD_FILESYSTEM CLOUD_VIRTUAL_SIZE_GIB \
-  TARGET ARCHITECTURE PACKAGE_ARCH ABI ALTABI FREEBSD_TARGET FREEBSD_TARGET_ARCH POUDRIERE_ARCH KERNEL \
+  TARGET ARCHITECTURE PACKAGE_ARCH ABI OSVERSION ALTABI FREEBSD_TARGET FREEBSD_TARGET_ARCH POUDRIERE_ARCH KERNEL \
   EXECUTOR IMAGE_PROFILE FIRMWARE IMAGE_CAPABILITIES INSTALLER_FORMAT PUBLISH_ENABLED \
-  SYSTEM_PART SYSTEM_SHARD_INDEX SYSTEM_SHARD_COUNT BINARY_SEED_OBJECT BINARY_SEED_PROVENANCE_SHA256 FARM_LAYOUT \
+  SYSTEM_PART SYSTEM_SHARD_INDEX SYSTEM_SHARD_COUNT BINARY_SEED_OBJECT BINARY_SEED_PROVENANCE_SHA256 PREVIOUS_FREESENSE_REPOSITORY FARM_LAYOUT SHARD_POLICY_VERSION \
   BOOT_INPUTS TARGET_MODELS PARTITION_SCHEME APPLIANCE_FILESYSTEM APPLIANCE_FORMAT APPLIANCE_COMPRESSION; do
   eval "$name=\$(decode \"\${${name}_B64}\")"
 done
@@ -42,7 +42,13 @@ esac
 }
 case "${FARM_LAYOUT}" in legacy|delta-v1) : ;; *) echo "invalid farm layout" >&2; exit 1 ;; esac
 if [ "${FARM_LAYOUT}" = delta-v1 ]; then
-  [ "${SYSTEM_SHARD_COUNT}" -eq 4 ] || { echo "delta farm requires four shards" >&2; exit 1; }
+  [ "${SYSTEM_SHARD_COUNT}" -eq 8 ] || { echo "delta farm requires eight shards" >&2; exit 1; }
+  [ "${SHARD_POLICY_VERSION}" = dependency-cost-v2 ] || { echo "invalid shard policy version" >&2; exit 1; }
+  case "${PREVIOUS_FREESENSE_REPOSITORY}" in
+    '') ;;
+    *[!0-9a-f]*) echo "invalid previous FreeSense repository" >&2; exit 1 ;;
+    *) [ "${#PREVIOUS_FREESENSE_REPOSITORY}" -eq 64 ] || { echo "invalid previous FreeSense repository" >&2; exit 1; } ;;
+  esac
   case "${STAGE}:${SYSTEM_PART}" in system:core|system:shard|system:finalize|packages:shard|packages:finalize) : ;;
     *) echo "invalid delta farm part" >&2; exit 1 ;;
   esac
@@ -468,12 +474,13 @@ merge_package() {
 
 publish_system_checkpoint() {
   checkpoint_kind=$1 checkpoint_id=$2 checkpoint_directory=$3
+  checkpoint_batch=${CHECKPOINT_BATCH:-0}
   checkpoint_farm="${RESULT}/checkpoints/farm-${SYSTEM_SHARD_COUNT}"
-  if [ "${FARM_LAYOUT}" = delta-v1 ]; then checkpoint_farm="${checkpoint_farm}/${ARCHITECTURE}/delta-v1"; fi
+  if [ "${FARM_LAYOUT}" = delta-v1 ]; then checkpoint_farm="${RESULT}/checkpoints/${ARCHITECTURE}/${FREEBSD_PIN_ID}/${PREVIOUS_FREESENSE_REPOSITORY:-none}/${SHARD_POLICY_VERSION}/farm-${SYSTEM_SHARD_COUNT}"; fi
   case "${checkpoint_kind}" in
-    core) checkpoint_result="${checkpoint_farm}/core" ;;
-    bootstrap) checkpoint_result="${checkpoint_farm}/bootstrap" ;;
-    shard) checkpoint_result="${checkpoint_farm}/shards/${checkpoint_id}" ;;
+    core) checkpoint_result="${checkpoint_farm}/core/batch-${checkpoint_batch}" ;;
+    bootstrap) checkpoint_result="${checkpoint_farm}/bootstrap/batch-${checkpoint_batch}" ;;
+    shard) checkpoint_result="${checkpoint_farm}/shards/${checkpoint_id}/batch-${checkpoint_batch}" ;;
     *) echo "invalid System checkpoint kind" >&2; return 1 ;;
   esac
   checkpoint_items=/tmp/freesense-checkpoint-items.$$
@@ -532,12 +539,43 @@ publish_system_checkpoint() {
         signing_public_key:$signing_public_key},packages:.}' \
     "${checkpoint_items}" >"${checkpoint_marker}"
   if [ "${FARM_LAYOUT}" = delta-v1 ]; then
+    checkpoint_roots=/tmp/checkpoint-roots.json
+    roots_file=/root/freesense-src/tools/conf/pfPorts/poudriere_bulk
+    [ ! -f /tmp/checkpoint-current-roots ] || roots_file=/tmp/checkpoint-current-roots
+    if [ -f "${roots_file}" ]; then
+      jq -Rsc 'split("\n") | map(select(length > 0))' "${roots_file}" >"${checkpoint_roots}"
+    else
+      printf '[]\n' >"${checkpoint_roots}"
+    fi
     jq --arg stage "${STAGE}" --arg packages "${PACKAGES_SHA}" --arg executor "${EXECUTOR}" \
-      --arg seed "${BINARY_SEED_OBJECT}" '
-      .schema_version = "freesense.component-checkpoint/v1" | .stage = $stage |
-      .inputs.packages = $packages | .inputs.executor = $executor | .inputs.binary_seed = $seed
+      --arg seed "${BINARY_SEED_OBJECT}" --arg policy "${SHARD_POLICY_VERSION}" --argjson batch "${checkpoint_batch}" \
+      --arg pin "${FREEBSD_PIN_ID}" --arg previous "${PREVIOUS_FREESENSE_REPOSITORY}" --slurpfile roots "${checkpoint_roots}" '
+      .schema_version = "freesense.cumulative-batch-checkpoint/v1" | .stage = $stage | .batch = $batch |
+      .policy = $policy | .pin = $pin | .roots = $roots[0] |
+      .inputs.packages = $packages | .inputs.executor = $executor | .inputs.binary_seed = $seed |
+      .inputs.previous_freesense_repository = $previous
     ' "${checkpoint_marker}" >"${checkpoint_marker}.next"
     mv "${checkpoint_marker}.next" "${checkpoint_marker}"
+    if [ "${checkpoint_batch}" -gt 0 ]; then
+      previous_batch=$((checkpoint_batch - 1))
+      case "${checkpoint_kind}" in
+        core) previous_result="${checkpoint_farm}/core/batch-${previous_batch}" ;;
+        bootstrap) previous_result="${checkpoint_farm}/bootstrap/batch-${previous_batch}" ;;
+        shard) previous_result="${checkpoint_farm}/shards/${checkpoint_id}/batch-${previous_batch}" ;;
+      esac
+      rclone cat "${previous_result}/complete.json" >"${checkpoint_marker}.previous" || {
+        echo "cumulative checkpoint has no preceding batch" >&2; return 1;
+      }
+      jq -e --slurpfile old "${checkpoint_marker}.previous" '. as $new |
+        ($old[0].batch + 1 == $new.batch) and
+        (all($old[0].roots[]; . as $root | any($new.roots[]; . == $root))) and
+        (all($old[0].packages[]; . as $package |
+          any($new.packages[]; .name == $package.name and .sha256 == $package.sha256)))
+      ' "${checkpoint_marker}" >/dev/null || {
+        echo "cumulative checkpoint changed completed roots or package bytes" >&2; return 1;
+      }
+      rm -f "${checkpoint_marker}.previous"
+    fi
   fi
   phase system-checkpoint-publish
   for package in "${checkpoint_directory}"/All/*.pkg; do
@@ -550,14 +588,23 @@ publish_system_checkpoint() {
   phase system-checkpoint-complete
 }
 
+latest_checkpoint_batch() {
+  latest_kind=$1 latest_id=$2
+  latest_farm="${RESULT}/checkpoints/farm-${SYSTEM_SHARD_COUNT}"
+  if [ "${FARM_LAYOUT}" = delta-v1 ]; then latest_farm="${RESULT}/checkpoints/${ARCHITECTURE}/${FREEBSD_PIN_ID}/${PREVIOUS_FREESENSE_REPOSITORY:-none}/${SHARD_POLICY_VERSION}/farm-${SYSTEM_SHARD_COUNT}"; fi
+  case "${latest_kind}" in core) latest_source="${latest_farm}/core" ;; bootstrap) latest_source="${latest_farm}/bootstrap" ;; shard) latest_source="${latest_farm}/shards/${latest_id}" ;; *) return 1 ;; esac
+  rclone lsf --dirs-only "${latest_source}" 2>/dev/null | sed -nE 's#^batch-([0-9]+)/$#\1#p' | sort -n | tail -1
+}
+
 fetch_system_checkpoint() {
   checkpoint_kind=$1 checkpoint_id=$2 checkpoint_destination=$3
+  checkpoint_batch=${CHECKPOINT_BATCH:-0}
   checkpoint_farm="${RESULT}/checkpoints/farm-${SYSTEM_SHARD_COUNT}"
-  if [ "${FARM_LAYOUT}" = delta-v1 ]; then checkpoint_farm="${checkpoint_farm}/${ARCHITECTURE}/delta-v1"; fi
+  if [ "${FARM_LAYOUT}" = delta-v1 ]; then checkpoint_farm="${RESULT}/checkpoints/${ARCHITECTURE}/${FREEBSD_PIN_ID}/${PREVIOUS_FREESENSE_REPOSITORY:-none}/${SHARD_POLICY_VERSION}/farm-${SYSTEM_SHARD_COUNT}"; fi
   case "${checkpoint_kind}" in
-    core) checkpoint_source="${checkpoint_farm}/core" ;;
-    bootstrap) checkpoint_source="${checkpoint_farm}/bootstrap" ;;
-    shard) checkpoint_source="${checkpoint_farm}/shards/${checkpoint_id}" ;;
+    core) checkpoint_source="${checkpoint_farm}/core/batch-${checkpoint_batch}" ;;
+    bootstrap) checkpoint_source="${checkpoint_farm}/bootstrap/batch-${checkpoint_batch}" ;;
+    shard) checkpoint_source="${checkpoint_farm}/shards/${checkpoint_id}/batch-${checkpoint_batch}" ;;
     *) echo "invalid System checkpoint kind" >&2; return 1 ;;
   esac
   checkpoint_part=${checkpoint_destination}.part.$$
@@ -573,11 +620,14 @@ fetch_system_checkpoint() {
   marker=${checkpoint_part}/complete.json
   checkpoint_schema=freesense.system-checkpoint/v1
   if [ "${FARM_LAYOUT}" = delta-v1 ]; then
-    checkpoint_schema=freesense.component-checkpoint/v1
+    checkpoint_schema=freesense.cumulative-batch-checkpoint/v1
     jq -e --arg stage "${STAGE}" --arg packages "${PACKAGES_SHA}" --arg executor "${EXECUTOR}" \
-      --arg seed "${BINARY_SEED_OBJECT}" '
-      .stage == $stage and .inputs.packages == $packages and
-      .inputs.executor == $executor and .inputs.binary_seed == $seed
+      --arg seed "${BINARY_SEED_OBJECT}" --arg policy "${SHARD_POLICY_VERSION}" --arg pin "${FREEBSD_PIN_ID}" --argjson batch "${checkpoint_batch}" \
+      --arg previous "${PREVIOUS_FREESENSE_REPOSITORY}" '
+      .stage == $stage and .batch == $batch and .inputs.packages == $packages and
+      .policy == $policy and .pin == $pin and (.roots | type == "array") and
+      .inputs.executor == $executor and .inputs.binary_seed == $seed and
+      .inputs.previous_freesense_repository == $previous
     ' "${marker}" >/dev/null || { echo "checkpoint executor/seed/component mismatch" >&2; return 1; }
   fi
   jq -e --arg kind "${checkpoint_kind}" --arg id "${checkpoint_id}" \
@@ -947,6 +997,7 @@ EOF
 publish_repository() {
   directory=$1
   record_upstream_provenance "${directory}"
+  record_package_provenance "${directory}"
   phase repository-publish
   test -n "$(find "${directory}/All" -type f -name '*.pkg' -print -quit)"
   find "${directory}" -type f ! -name complete.json | while IFS= read -r file; do
@@ -961,11 +1012,12 @@ publish_repository() {
     --arg os_definition "${OS_BASE_SHA}" --arg worker_image "${IMAGE_SHA256}" \
     --arg worker_tools "${WORKER_TOOLS_SHA256}" \
     --arg freebsd_pin_id "${FREEBSD_PIN_ID}" \
+    --arg package_provenance "$(sha256 -q "${directory}/package-provenance.json")" \
     --arg jail_object "${JAIL_OBJECT}" --arg signing_public_key "${derived_fingerprint}" \
     --arg architecture "${ARCHITECTURE}" --arg package_arch "${PACKAGE_ARCH}" \
     --arg image_profile "${IMAGE_PROFILE}" --arg firmware "${FIRMWARE}" \
     --argjson capabilities "${IMAGE_CAPABILITIES}" --argjson generation "${GENERATION}" \
-    '{schema_version:"freesense.artifact/v1",stage:$stage,fingerprint:$fingerprint,generation:$generation,architecture:$architecture,package_arch:$package_arch,platform:$image_profile,firmware:($firmware|split(",")),capabilities:$capabilities,inputs:{platform:$platform,system:$system,source:$source,system_ports:$system_ports,freebsd:$freebsd,ports:$ports,freebsd_pin_id:$freebsd_pin_id,package_train:$package_train,os_definition:$os_definition,worker_image:$worker_image,worker_tools:$worker_tools,jail_object:$jail_object,signing_public_key:$signing_public_key}} | if $stage == "packages" then .inputs.packages = $packages | .inputs.built_against_system = $system else . end' \
+    '{schema_version:"freesense.artifact/v1",stage:$stage,fingerprint:$fingerprint,generation:$generation,architecture:$architecture,package_arch:$package_arch,platform:$image_profile,firmware:($firmware|split(",")),capabilities:$capabilities,inputs:{platform:$platform,system:$system,source:$source,system_ports:$system_ports,freebsd:$freebsd,ports:$ports,freebsd_pin_id:$freebsd_pin_id,package_train:$package_train,package_provenance_sha256:$package_provenance,os_definition:$os_definition,worker_image:$worker_image,worker_tools:$worker_tools,jail_object:$jail_object,signing_public_key:$signing_public_key}} | if $stage == "packages" then .inputs.packages = $packages | .inputs.built_against_system = $system else . end' \
     >"${directory}/complete.json"
   if [ -n "${BINARY_SEED_OBJECT}" ]; then
     jq --arg seed "${BINARY_SEED_OBJECT}" --arg executor "${EXECUTOR}" \
@@ -977,6 +1029,92 @@ publish_repository() {
   fi
   upload_immutable "${directory}/complete.json" "${RESULT}/complete.json"
   phase repository-complete
+}
+
+record_package_provenance() {
+  provenance_repository=$1
+  provenance_inventory=/tmp/package-provenance-inventory.jsonl
+  : >"${provenance_inventory}"
+  for provenance_package in "${provenance_repository}"/All/*.pkg; do
+    [ -f "${provenance_package}" ] || continue
+    provenance_name=$(pkg query -F "${provenance_package}" '%n')
+    provenance_version=$(pkg query -F "${provenance_package}" '%v')
+    provenance_origin=$(pkg query -F "${provenance_package}" '%o')
+    pkg query -F "${provenance_package}" '%Ok|%Ov' | jq -Rn '[inputs | split("|") | {(.[0]): (.[1] == "on")}] | add // {}' >/tmp/provenance-options.json
+    pkg query -F "${provenance_package}" '%dn|%do|%dv' | jq -Rn '[inputs | split("|") | {(.[0]): {origin:.[1],version:.[2]}}] | add // {}' >/tmp/provenance-dependencies.json
+    jq -cn --arg name "${provenance_name}" --arg version "${provenance_version}" \
+      --arg origin "${provenance_origin}" --slurpfile options /tmp/provenance-options.json \
+      --slurpfile dependencies /tmp/provenance-dependencies.json \
+      '{name:$name,version:$version,origin:$origin,options:$options[0],dependencies:$dependencies[0]}' \
+      >>"${provenance_inventory}"
+  done
+  jq -s . "${provenance_inventory}" >/tmp/package-provenance-inventory.json
+  provenance_policy=/root/os-definition/config/multiarch-shards.json
+  provenance_overlays="--overlay /root/freesense-system-ports"
+  if [ "${STAGE}" = packages ]; then
+    provenance_policy=/root/freesense-packages/architecture-policy.json
+    provenance_overlays="--overlay /root/freesense-packages --overlay /root/freesense-system-ports"
+  fi
+  python_bin=$(command -v python3 || command -v python3.11)
+  # shellcheck disable=SC2086
+  "${python_bin}" /root/os-definition/scripts/package_provenance.py \
+    --inventory /tmp/package-provenance-inventory.json \
+    --ports /usr/local/poudriere/ports/FreeSense_main ${provenance_overlays} \
+    --make-config /usr/local/etc/poudriere.d/FreeSense_main-make.conf \
+    --architecture-policy "${provenance_policy}" --abi "${ABI}" --osversion "${OSVERSION}" \
+    --output "${provenance_repository}/package-provenance.json"
+}
+
+load_previous_freesense_seed() {
+  [ -n "${PREVIOUS_FREESENSE_REPOSITORY}" ] || return 0
+  previous_kind=system
+  [ "${STAGE}" != packages ] || previous_kind="packages/${PACKAGE_TRAIN}"
+  fetch_repository "${previous_kind}" "${PREVIOUS_FREESENSE_REPOSITORY}" /root/previous-freesense-repository
+  jq -e --arg pin "${FREEBSD_PIN_ID}" '.inputs.freebsd_pin_id == $pin and (.inputs.package_provenance_sha256 | test("^[0-9a-f]{64}$"))' \
+    /root/previous-freesense-repository/complete.json >/dev/null || { echo "previous repository pin/provenance mismatch" >&2; return 1; }
+  [ "$(sha256 -q /root/previous-freesense-repository/package-provenance.json)" = \
+    "$(jq -r .inputs.package_provenance_sha256 /root/previous-freesense-repository/complete.json)" ] || {
+    echo "previous repository provenance checksum mismatch" >&2; return 1;
+  }
+  cp /root/previous-freesense-repository/package-provenance.json /tmp/previous-package-provenance.json
+  rm -rf /tmp/current-package-provenance-repository
+  mkdir -p /tmp/current-package-provenance-repository
+  record_package_provenance /tmp/current-package-provenance-repository
+  python_bin=$(command -v python3 || command -v python3.11)
+  "${python_bin}" - /tmp/previous-package-provenance.json \
+    /tmp/current-package-provenance-repository/package-provenance.json /tmp/previous-selection.json <<'PY'
+import json, sys
+sys.path.insert(0, "/root/os-definition/scripts")
+from package_provenance import select
+old, current, output = map(__import__('pathlib').Path, sys.argv[1:])
+output.write_text(json.dumps(select(json.loads(old.read_text()), json.loads(current.read_text()),
+                                    pin_unchanged=True), sort_keys=True, separators=(",", ":")) + "\n")
+PY
+  rm -rf /root/previous-freesense-seed
+  mkdir -p /root/previous-freesense-seed/All
+  jq -r '.accepted[]' /tmp/previous-selection.json | while IFS= read -r accepted_name; do
+    accepted_count=0
+    for accepted_package in /root/previous-freesense-repository/All/*.pkg; do
+      [ "$(pkg query -F "${accepted_package}" '%n')" = "${accepted_name}" ] || continue
+      cp "${accepted_package}" /root/previous-freesense-seed/All/
+      accepted_count=$((accepted_count + 1))
+    done
+    [ "${accepted_count}" -eq 1 ] || { echo "ambiguous previous package: ${accepted_name}" >&2; return 1; }
+  done
+}
+
+prepare_merged_binary_seed() {
+  load_binary_seed
+  load_previous_freesense_seed
+  rm -rf /root/merged-binary-seed
+  mkdir -p /root/merged-binary-seed/All
+  merged_inventory=/tmp/merged-binary-seed-inventory
+  : >"${merged_inventory}"
+  rm -f "${merged_inventory}.rebuild"
+  for seed_package in /root/binary-seed/All/*.pkg /root/previous-freesense-seed/All/*.pkg; do
+    [ -f "${seed_package}" ] || continue
+    merge_package "${seed_package}" /root/merged-binary-seed/All "${merged_inventory}" rebuild
+  done
 }
 
 # The seed is a pin-time product. Runtime has no upstream repository URL and

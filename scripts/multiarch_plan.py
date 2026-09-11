@@ -29,15 +29,15 @@ def plan(pin: dict, probe: dict, fingerprints: dict, *, force_dedicated: bool = 
     system, packages = [], []
     for arch in ARCHES:
         common = {"target": arch, "build_host": hosts[arch], "executor": executors[arch]["executor"]}
-        system.append({**common, "part": "core", "shard": 0, "count": 4})
-        for shard in range(4):
-            system.append({**common, "part": "shard", "shard": shard, "count": 4})
-            packages.append({**common, "part": "shard", "shard": shard, "count": 4})
+        system.append({**common, "part": "core", "shard": 0, "count": 8})
+        for shard in range(8):
+            system.append({**common, "part": "shard", "shard": shard, "count": 8})
+            packages.append({**common, "part": "shard", "shard": shard, "count": 8})
     return {
         "schema_version": "freesense.multiarch-plan/v1", "pair_fingerprint": pair_id,
         "freebsd_pin": pin_id, "fingerprints": fingerprints, "executors": executors,
         "system_matrix": {"include": system}, "packages_matrix": {"include": packages},
-        "system_max_parallel": 10, "packages_max_parallel": 8,
+        "system_max_parallel": 18, "packages_max_parallel": 16,
         "finalizers": list(ARCHES),
         "release_artifacts": {
             "amd64": ["installer", "cloud-ufs", "cloud-zfs"],
@@ -78,7 +78,8 @@ def planning_closure(system: dict) -> dict:
 
 
 def resolve(pin: dict, probe: dict, os_base_sha: str, *, force_dedicated: bool = False) -> dict:
-    from plan import remote_sha
+    from plan import current_component_record, remote_sha
+    from build_platform import load_policy, manifest_name, target
     validate(pin, now=datetime.now(timezone.utc))
     # Resolve each moving branch exactly once, before either target is planned.
     resolved = {
@@ -87,6 +88,13 @@ def resolve(pin: dict, probe: dict, os_base_sha: str, *, force_dedicated: bool =
         "packages": remote_sha("FreeSense-org/freesense-packages"),
     }
     arm_host = select_arm_host(probe, pin, force_dedicated=force_dedicated)
+    policy = load_policy()
+    prior = {}
+    pin_id = digest(pin)
+    for arch in ARCHES:
+        descriptor = target(policy, arch)
+        url = policy["public_base_url"] + "/" + manifest_name(descriptor, legacy=False)
+        prior[arch] = {component: current_component_record(url, component) for component in ("system", "packages")}
     targets, fingerprints = {}, {}
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
@@ -98,9 +106,15 @@ def resolve(pin: dict, probe: dict, os_base_sha: str, *, force_dedicated: bool =
                       "--target", arch, "--build-host", host, "--resolved-inputs", str(snapshot),
                       "--os-base-sha", os_base_sha, "--immutable-only"]
             system = json.loads(subprocess.check_output([*common, "system"], text=True))
+            previous = prior[arch]["system"]
+            system["previous_freesense_repository"] = (previous.get("fingerprint", "")
+                if previous.get("freebsd_pin_id") == pin_id else "")
             closure = root / f"{arch}-closure.json"
             closure.write_text(json.dumps(planning_closure(system)), encoding="utf-8")
             packages = json.loads(subprocess.check_output([*common, "packages", "--system-closure", str(closure)], text=True))
+            previous = prior[arch]["packages"]
+            packages["previous_freesense_repository"] = (previous.get("fingerprint", "")
+                if previous.get("freebsd_pin_id") == pin_id else "")
             targets[arch] = {"system": system, "packages": packages}
             fingerprints[arch] = {"system": system["system"], "packages": packages["packages"]}
     result = plan(pin, probe, fingerprints, force_dedicated=force_dedicated)

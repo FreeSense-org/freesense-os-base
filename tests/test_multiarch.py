@@ -200,8 +200,9 @@ class MultiarchPinTests(unittest.TestCase):
         native = multiarch_plan.plan(pin, probe, fps)
         fallback = multiarch_plan.plan(pin, probe, fps, force_dedicated=True)
         self.assertNotEqual(native["pair_fingerprint"], fallback["pair_fingerprint"])
-        self.assertEqual(len(native["system_matrix"]["include"]), 10)
-        self.assertEqual(len(native["packages_matrix"]["include"]), 8)
+        self.assertEqual(len(native["system_matrix"]["include"]), 18)
+        self.assertEqual(len(native["packages_matrix"]["include"]), 16)
+        self.assertEqual(native["system_max_parallel"], 18)
 
     def test_shards_cover_roots_once_and_isolate_measured_heavy_roots(self):
         roots = ["net/b", "net/a", "lang/heavy", "devel/c", "devel/d", "net/a"]

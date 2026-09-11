@@ -29,6 +29,9 @@ def check(plan: dict, stage: str, generation: str, pin: dict, policy: dict) -> d
     }
     if any(plan.get(key) != value for key, value in expected.items()):
         raise ValueError("farm inputs differ from the selected immutable pin/executor")
+    previous = plan.get("previous_freesense_repository", "")
+    if previous and not SHA256.fullmatch(str(previous)):
+        raise ValueError("invalid previous FreeSense repository seed")
     for field in ("system", "platform", "fingerprint", "freebsd_pin_id", stage):
         if not SHA256.fullmatch(str(plan.get(field, ""))):
             raise ValueError(f"invalid component identity: {field}")
@@ -39,7 +42,7 @@ def check(plan: dict, stage: str, generation: str, pin: dict, policy: dict) -> d
             raise ValueError(f"invalid source identity: {field}")
     if plan["os_base_sha"] != os.environ.get("GITHUB_SHA", plan["os_base_sha"]):
         raise ValueError("coordinator plan was created with a different workflow revision")
-    matrix = [{"part": "shard", "shard": str(index)} for index in range(4)]
+    matrix = [{"part": "shard", "shard": str(index)} for index in range(8)]
     if stage == "system":
         matrix.insert(0, {"part": "core", "shard": "0"})
     return {"fingerprint": plan[stage], "matrix": {"include": matrix}}
