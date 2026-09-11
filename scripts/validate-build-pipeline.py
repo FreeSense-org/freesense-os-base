@@ -505,6 +505,11 @@ require("freebsd/freebsd-ports.git" not in pin_target_workflow,
         "pin-target must not clone freebsd-ports inside the guest")
 require("10.0.2.2:8765/ports.git.tar" in pin_target_workflow,
         "pin-target guest must fetch the cached ports tree from the host")
+require("--owner=0 --group=0 --numeric-owner" in pin_workflow,
+        "host ports tar must not preserve the GitHub runner uid")
+require("tar -C /root --no-same-owner" in pin_target_workflow and
+        "safe.directory /root/ports" in pin_target_workflow,
+        "guest ports extract must not trip git safe.directory")
 require("split_pin_candidates.py" in pin_workflow and "split_pin_candidates.py" in pin_target_workflow,
         "chunked pin candidates are missing")
 require("strategy:" in pin_target_workflow and "matrix:" in pin_target_workflow,

@@ -241,7 +241,7 @@ jobs:
           mkdir -p "${work}" "${RUNNER_TEMP}/pin-ports"
           git clone --bare https://github.com/freebsd/freebsd-ports.git "${work}/ports.git"
           python3 scripts/split_pin_candidates.py --common "${common}" --verify-git-dir "${work}/ports.git"
-          tar -C "${work}" -cf "${work}/ports.git.tar" ports.git
+          tar -C "${work}" --owner=0 --group=0 --numeric-owner -cf "${work}/ports.git.tar" ports.git
           python3 scripts/split_pin_candidates.py --common "${common}" --tar "${work}/ports.git.tar" \
             --report "${RUNNER_TEMP}/pin-ports/ports.json"
           "${RUNNER_TEMP}/fsbuild" blob put --file "${work}/ports.git.tar" \

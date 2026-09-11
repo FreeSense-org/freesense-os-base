@@ -173,11 +173,14 @@ jobs:
           fetch -o /root/ports.git.tar 'http://10.0.2.2:8765/ports.git.tar'
           [ -s /root/ports.git.tar ]
           phase ports-unpack
-          tar -C /root -xf /root/ports.git.tar
+          tar -C /root --no-same-owner -xf /root/ports.git.tar
           rm -f /root/ports.git.tar
           [ -d /root/ports.git ]
+          chown -R root:wheel /root/ports.git
           mkdir -p /root/ports
           printf '%s\n' 'gitdir: /root/ports.git' >/root/ports/.git
+          git config --global --add safe.directory /root/ports.git
+          git config --global --add safe.directory /root/ports
           phase ports-ready
           for spec in \
             'FreeSense-org/freesense:$(jq -er .sources.freesense "${common}"):source' \
