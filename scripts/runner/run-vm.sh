@@ -31,12 +31,15 @@ while (($#)); do
     *) usage ;;
   esac
 done
+uses_kvm=false
+accel_args=()
 case "${host_architecture}:$(uname -m)" in
   amd64:x86_64)
     qemu=qemu-system-x86_64
     if [[ -r /dev/kvm && -w /dev/kvm ]]; then
       machine=q35,accel=kvm
       cpu=host
+      uses_kvm=true
     else
       machine=q35
       cpu=max
@@ -50,6 +53,7 @@ case "${host_architecture}:$(uname -m)" in
     if [[ -r /dev/kvm && -w /dev/kvm ]]; then
       machine=virt,accel=kvm,gic-version=host
       cpu=host
+      uses_kvm=true
     else
       machine=virt,gic-version=3
       cpu=cortex-a57
@@ -57,6 +61,18 @@ case "${host_architecture}:$(uname -m)" in
     seed_interface=virtio
     firmware_codes=(/usr/share/AAVMF/AAVMF_CODE.fd)
     firmware_vars=(/usr/share/AAVMF/AAVMF_VARS.fd)
+    ;;
+  arm64:x86_64)
+    # x86 KVM cannot accelerate an aarch64 guest. Same TCG path smoke-cloud uses
+    # when ISO-checking ARM images on GitHub-hosted amd64 runners.
+    qemu=qemu-system-aarch64
+    machine=virt,gic-version=3
+    cpu=max
+    accel_args=(-accel tcg,thread=multi)
+    seed_interface=virtio
+    firmware_codes=(/usr/share/AAVMF/AAVMF_CODE.fd /usr/share/qemu-efi-aarch64/QEMU_EFI.fd)
+    firmware_vars=(/usr/share/AAVMF/AAVMF_VARS.fd /usr/share/qemu-efi-aarch64/QEMU_VARS.fd)
+    echo "ARM guest on x86_64 host: using TCG; host KVM cannot accelerate aarch64"
     ;;
   *) echo "worker host architecture does not match native executor" >&2; exit 1 ;;
 esac
@@ -75,10 +91,10 @@ done
 for tool in "$qemu" qemu-img cloud-localds curl sha256sum base64 awk; do
   command -v "$tool" >/dev/null || { echo "missing host dependency: $tool" >&2; exit 1; }
 done
-if [[ -r /dev/kvm && -w /dev/kvm ]]; then
-  echo "Virtualization acceleration: /dev/kvm is available"
+if [[ $uses_kvm == true ]]; then
+  echo "Virtualization acceleration: KVM"
 else
-  echo "Virtualization acceleration: /dev/kvm is not available; falling back to software emulation" >&2
+  echo "Virtualization acceleration: TCG software emulation" >&2
 fi
 if [[ $vcpus == auto ]]; then
   vcpus=$(nproc)
@@ -280,6 +296,7 @@ touch "$serial"
 "$qemu" \
   -name freesense-${nonce} \
   -machine "$machine" \
+  "${accel_args[@]}" \
   -cpu "$cpu" \
   -smp "$vcpus" \
   -m "$memory_mib" \
@@ -323,7 +340,7 @@ while true; do
   fi
   if [[ $seen_begin == false ]] && grep -Fq "$begin_marker" "$serial"; then seen_begin=true; fi
   boot_timeout=300
-  if [[ ! -r /dev/kvm || ! -w /dev/kvm ]]; then
+  if [[ $uses_kvm != true ]]; then
     boot_timeout=900
   fi
   if [[ $seen_begin == false ]] && (( now - start >= boot_timeout )); then

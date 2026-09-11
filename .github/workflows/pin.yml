@@ -18,6 +18,12 @@ on:
         type: boolean
         default: false
         required: false
+      arm64_runner:
+        description: Host for the ARM64 pin VM. ubuntu-24.04 boots qemu-system-aarch64 with TCG on x86.
+        type: choice
+        options: [ubuntu-24.04-arm, ubuntu-24.04]
+        default: ubuntu-24.04-arm
+        required: false
   schedule:
     - cron: "0 2 * * *"
 
@@ -214,6 +220,7 @@ jobs:
     uses: ./.github/workflows/pin-target.yml
     with:
       architecture: arm64
+      runner: ${{ inputs.arm64_runner || '' }}
     secrets: inherit
 
   finalize:
