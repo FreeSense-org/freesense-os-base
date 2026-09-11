@@ -45,6 +45,28 @@ func TestDevelopmentCycleResumesFrozenInputs(t *testing.T) {
 	}
 }
 
+func TestDevelopmentCycleSupersedeAllowsNewGeneration(t *testing.T) {
+	backend := newMemoryStore()
+	cycle := cycleFixture()
+	if _, _, err := CommitDevelopmentCycle(context.Background(), backend, cycle); err != nil {
+		t.Fatal(err)
+	}
+	cycle.Superseded = true
+	if _, updated, err := CommitDevelopmentCycle(context.Background(), backend, cycle); err != nil || !updated {
+		t.Fatalf("supersede: %v %v", updated, err)
+	}
+	newer := cycleFixture()
+	newer.Generation++
+	newer.Sources["freesense"] = strings.Repeat("b", 40)
+	var nextPlan map[string]any
+	_ = json.Unmarshal(newer.Plan, &nextPlan)
+	nextPlan["resolved_inputs"] = newer.Sources
+	newer.Plan, _ = json.Marshal(nextPlan)
+	if _, updated, err := CommitDevelopmentCycle(context.Background(), backend, newer); err != nil || !updated {
+		t.Fatalf("replace superseded cycle: %v %v", updated, err)
+	}
+}
+
 func TestDevelopmentCycleRejectsSameGenerationInputRewrite(t *testing.T) {
 	backend := newMemoryStore()
 	cycle := cycleFixture()

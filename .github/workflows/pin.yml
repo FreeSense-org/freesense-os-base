@@ -13,6 +13,11 @@ on:
         type: string
         default: ''
         required: false
+      force_refresh:
+        description: Rebuild official binary seeds and advance the pin window now
+        type: boolean
+        default: false
+        required: false
   schedule:
     - cron: "0 2 * * *"
 
@@ -37,6 +42,7 @@ jobs:
     env:
       SECURITY_ROLLOVER: ${{ inputs.security_rollover || false }}
       SECURITY_REFERENCE: ${{ inputs.security_reference || '' }}
+      FORCE_REFRESH: ${{ inputs.force_refresh || false }}
       GH_TOKEN: ${{ github.token }}
     outputs:
       due: ${{ steps.window.outputs.due }}
@@ -59,6 +65,9 @@ jobs:
             }
             echo "due=true" >>"${GITHUB_OUTPUT}"
             echo "Explicit security rollover requested: ${SECURITY_REFERENCE}"
+          elif [[ "${FORCE_REFRESH}" == true ]]; then
+            echo "due=true" >>"${GITHUB_OUTPUT}"
+            echo "Explicit pin refresh requested to rebuild official binary seeds."
           elif (( $(date -u +%s) >= due_at )); then
             echo "due=true" >>"${GITHUB_OUTPUT}"
           else
@@ -124,7 +133,7 @@ jobs:
           packages_sha=$(gh api repos/FreeSense-org/freesense-packages/commits/main --jq .sha)
           os_base_sha="${GITHUB_SHA}"
 
-          if [[ "${SECURITY_ROLLOVER}" == true ]]; then
+          if [[ "${SECURITY_ROLLOVER}" == true || "${FORCE_REFRESH}" == true ]]; then
             window_start=$(date -u --date='14 days ago' +%Y-%m-%dT%H:%M:%SZ)
             window_end=$(date -u +%Y-%m-%dT%H:%M:%SZ)
           else
@@ -171,7 +180,7 @@ jobs:
             >"${RUNNER_TEMP}/sources.json"
 
           extra_flags=()
-          if [[ "${SECURITY_ROLLOVER}" == true ]]; then
+          if [[ "${SECURITY_ROLLOVER}" == true || "${FORCE_REFRESH}" == true ]]; then
             extra_flags+=(--security-rollover)
           fi
 
@@ -220,6 +229,7 @@ jobs:
       pull-requests: write
     env:
       SECURITY_ROLLOVER: ${{ inputs.security_rollover || false }}
+      FORCE_REFRESH: ${{ inputs.force_refresh || false }}
       R2_CREDENTIAL_BROKER_URL: ${{ vars.R2_CREDENTIAL_BROKER_URL }}
       R2_CREDENTIAL_BROKER_AUDIENCE: ${{ vars.R2_CREDENTIAL_BROKER_AUDIENCE }}
       R2_BUCKET: ${{ vars.R2_BUILD_BUCKET }}
@@ -269,7 +279,7 @@ jobs:
         run: |
           set -euo pipefail
           extra_flags=()
-          if [[ "${SECURITY_ROLLOVER}" == true ]]; then
+          if [[ "${SECURITY_ROLLOVER}" == true || "${FORCE_REFRESH}" == true ]]; then
             extra_flags+=(--security-rollover)
           fi
           python3 scripts/assemble_multiarch_pin.py \
