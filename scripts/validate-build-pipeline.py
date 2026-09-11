@@ -246,7 +246,8 @@ for value in ('-smp "$vcpus"', '-m "$memory_mib"',
               'qemu-img resize -q "$overlay" "${disk_gib}G"',
               "minimum_free_gib=80", "vcpus=$(nproc)",
               "host_memory_available_kib * 80 / 100", "/dev/kvm", "cleanup_orphans",
-              "trap cleanup EXIT", "qemu_owns_overlay"):
+              "trap cleanup EXIT", "qemu_owns_overlay", "arm64:x86_64)",
+              "tcg,thread=multi"):
     require(value in runner, f"KVM runner contract is missing {value!r}")
 require('sha256sum "$base_image"' in runner and 'sha256sum "$download"' in runner,
         "cached and downloaded worker images are not SHA-256 checked")
@@ -513,7 +514,8 @@ require("max_bootstrap_osversion_delta = 2" in pin_contract and
         "Pin FreeBSD does not validate the target catalog bootstrap window")
 for value in ("target_amd64:", "target_arm64:",
               "needs: [resolve, target_amd64, target_arm64]",
-              "scripts/assemble_multiarch_pin.py"):
+              "scripts/assemble_multiarch_pin.py", "arm64_runner:",
+              "runner: ${{ inputs.arm64_runner || '' }}"):
     require(value in pin_workflow, f"Pin v4 workflow orchestrator contract is missing {value!r}")
 require("git push origin" in pin_workflow and "--force" not in pin_workflow,
         "Pin PR automation must not force-push shared history")

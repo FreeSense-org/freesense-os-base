@@ -30,12 +30,16 @@ jobs:
       - name: Prepare native virtualization tools
         run: |
           sudo apt-get update
+          uname -m
           if [[ "${{ inputs.architecture }}" == "arm64" ]]; then
             sudo apt-get install -y --no-install-recommends qemu-system-arm qemu-utils qemu-efi-aarch64 cloud-image-utils zstd
+            command -v qemu-system-aarch64
+            qemu-system-aarch64 --version | head -n 1
           else
             sudo apt-get install -y --no-install-recommends qemu-system-x86 qemu-utils ovmf cloud-image-utils zstd
           fi
           if [[ -e /dev/kvm ]]; then sudo chmod a+rw /dev/kvm; fi
+          ls -l /dev/kvm || true
       - run: go build -trimpath -o "${RUNNER_TEMP}/fsbuild" ./cmd/fsbuild
       - name: Acquire immutable pin writer
         env:
