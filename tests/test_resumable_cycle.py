@@ -35,6 +35,13 @@ class PreviousReuseTests(unittest.TestCase):
         self.assertEqual(freesense_reuse.reusable(item, changed, pin_unchanged=True)[0], False)
         self.assertEqual(freesense_reuse.reusable(item, item, pin_unchanged=False)[0], False)
 
+    def test_unmodified_php_is_reusable_with_matching_provenance(self):
+        item = self.package()
+        item["name"] = "php85"
+        item["origin"] = "lang/php85"
+        self.assertEqual(freesense_reuse.reusable(item, dict(item), pin_unchanged=True),
+                         (True, "exact provenance match"))
+
     def test_seed_conflicts_are_rebuilt(self):
         base = {"name": "curl", "version": "1", "origin": "ftp/curl",
                 "abi": "FreeBSD:16:amd64", "sha256": "a" * 64}

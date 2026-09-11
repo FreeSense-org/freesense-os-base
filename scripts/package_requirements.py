@@ -26,7 +26,7 @@ METADATA_KNOBS = {
     "MASTER_SITE_OVERRIDE", "DEFAULT_VERSIONS", "CUR_ARCH", "NATIVE_BUILD",
     "IGNORE_OSVERSION", "PKG_ENV",
 }
-SOURCE_KNOBS = {"PHP_FD_SETSIZE": r"lang/php85(?:$|/)", "ETCDIR": r"net/frr",
+SOURCE_KNOBS = {"ETCDIR": r"net/frr",
                 "WITH_DEBUG": r"(?:net/(?:frr|quagga)|sysutils/check_reload_status)",
                 "MAKE_JOBS_UNSAFE": r"devel/doxygen$"}
 PORT = re.compile(r"^[A-Za-z0-9][A-Za-z0-9+_.-]*/[A-Za-z0-9][A-Za-z0-9+_.-]*(?:@[A-Za-z0-9][A-Za-z0-9+_.-]*)?$")

@@ -39,13 +39,9 @@ def reusable(previous: dict, current: dict, *, pin_unchanged: bool) -> tuple[boo
     if before != after:
         changed = next(field for field in (*FIELDS, "digest") if before.get(field) != after.get(field))
         return False, f"provenance changed: {changed}"
-    origin = str(after["origin"]).lower()
-    # FreeSense packages are reusable when every source/provenance input is
-    # identical. PHP, kernel-coupled and locally patched packages retain the
-    # stronger source-only rule because their effective ABI is not fully
-    # represented by pkg metadata.
-    if (origin.startswith("lang/php") or "/php" in origin or
-            current.get("kernel_sensitive") or current.get("patched")):
+    # Kernel-coupled and locally patched packages retain a source-only rule
+    # because their effective ABI is not fully represented by pkg metadata.
+    if current.get("kernel_sensitive") or current.get("patched"):
         return False, "source-only architecture policy"
     return True, "exact provenance match"
 

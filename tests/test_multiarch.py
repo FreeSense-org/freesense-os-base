@@ -7,6 +7,7 @@ import importlib.util
 import io
 import json
 from pathlib import Path
+import re
 import subprocess
 import sys
 import tarfile
@@ -75,14 +76,22 @@ class BinarySeedTests(unittest.TestCase):
         self.assertEqual(list(result["accepted"]), ["rust"])
 
     def test_mandatory_blacklist_cannot_be_overridden(self):
-        for name, origin in (("php85", "lang/php85"), ("php85-curl", "ftp/php85-curl"),
-                             ("FreeSense", "security/FreeSense"), ("world", "base/world"),
+        for name, origin in (("FreeSense", "security/FreeSense"), ("world", "base/world"),
                              ("kernel", "base/kernel"), ("wireguard-kmod", "net/wireguard-kmod")):
             with self.subTest(name=name):
                 req = requirement(name, origin)
                 rust = requirement()
                 result = binary_seed.select(requirements(rust, req), [catalogue(rust), catalogue(req)], "amd64")
                 self.assertIn(name, result["rejected"])
+
+    def test_unmodified_php_matches_official_packages(self):
+        rust = requirement()
+        php = requirement("php85", "lang/php85")
+        ext = requirement("php85-curl", "ftp/php85-curl",
+                          {"php85": {"version": php["version"], "origin": php["origin"]}})
+        result = binary_seed.select(requirements(rust, php, ext),
+                                    [catalogue(rust), catalogue(php), catalogue(ext)], "amd64")
+        self.assertEqual(set(result["accepted"]), {"rust", "php85", "php85-curl"})
 
     def test_customizations_and_missing_audit_fail_closed(self):
         for flag in binary_seed.FLAGS:
@@ -217,7 +226,11 @@ class RequirementsCollectorTests(unittest.TestCase):
         root = Path(__file__).resolve().parents[2]
         path = root / "freesense/tools/conf/pfPorts/make.conf"
         if path.exists():
-            self.assertIn("PHP_FD_SETSIZE", package_requirements.audit_make_conf(path.read_text()))
+            text = path.read_text()
+            package_requirements.audit_make_conf(text)
+            self.assertIsNone(re.search(r"^\s*PHP_FD_SETSIZE\s*=", text, re.M))
+        with self.assertRaisesRegex(ValueError, "non-OPTIONS knob"):
+            package_requirements.audit_make_conf("PHP_FD_SETSIZE=3172\n")
         with self.assertRaisesRegex(ValueError, "non-OPTIONS knob"):
             package_requirements.audit_make_conf("CFLAGS+= -DUNREVIEWED\n")
         with self.assertRaisesRegex(ValueError, "directive"):
