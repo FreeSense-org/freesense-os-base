@@ -116,7 +116,6 @@ jobs:
             ln -s "\$(command -v python3.11)" /usr/local/bin/python3
           fi
           git clone https://github.com/freebsd/freebsd-ports.git /root/ports
-          git -C /root/ports checkout --detach '$(jq -er --arg arch "${ARCH}" '.targets[$arch].ports_commit // .freebsd_ports.commit' "${common}")'
           for spec in \
             'FreeSense-org/freesense:$(jq -er .sources.freesense "${common}"):source' \
             'FreeSense-org/freesense-system-ports:$(jq -er .sources.system_ports "${common}"):system' \
@@ -127,9 +126,6 @@ jobs:
           SPEC
             git clone "https://github.com/\${repo}.git" "/root/\${name}"
             git -C "/root/\${name}" checkout --detach "\${revision}"
-          done
-          for overlay in /root/system /root/packages; do
-            (cd "\${overlay}" && tar --exclude=.git -cf - .) | tar -xf - -C /root/ports
           done
           mkdir -p /usr/local/etc/poudriere.d
           sed -e 's,%%PRODUCT_NAME%%,FreeSense,g' -e 's,%%PRODUCT_VERSION%%,1.1.0,g' \
@@ -162,32 +158,44 @@ jobs:
               packages = [x for x in packages if x not in excluded]
           print(json.dumps({'system': system, 'packages': packages}))
           PY
-          python3 /root/os-definition/scripts/package_requirements.py \
-            --ports /root/ports --make-conf /usr/local/etc/poudriere.d/FreeSense_main-make.conf \
-            --architecture '${ARCH}' --ports-sha '$(jq -er --arg arch "${ARCH}" '.targets[$arch].ports_commit // .freebsd_ports.commit' "${common}")' \
-            --roots /root/roots.json --output /root/requirements.json
-          echo PIN_REQUIREMENTS_BEGIN
-          base64 /root/requirements.json
-          echo PIN_REQUIREMENTS_END
+          printf '%s' '$(jq -c .ports_candidates "${common}" | base64 -w0)' | base64 -d >/root/candidates.json
+          : >/root/candidate-requirements.jsonl
+          jq -r '.[] | [.commit,.committed_at] | @tsv' /root/candidates.json | while IFS="$(printf '\t')" read -r candidate committed_at; do
+            git -C /root/ports reset --hard "\${candidate}"
+            git -C /root/ports clean -fdx
+            for overlay in /root/system /root/packages; do
+              (cd "\${overlay}" && tar --exclude=.git -cf - .) | tar -xf - -C /root/ports
+            done
+            python3 /root/os-definition/scripts/package_requirements.py \
+              --ports /root/ports --make-conf /usr/local/etc/poudriere.d/FreeSense_main-make.conf \
+              --architecture '${ARCH}' --ports-sha "\${candidate}" \
+              --roots /root/roots.json --output /root/requirements.json
+            jq -cn --arg commit "\${candidate}" --arg committed_at "\${committed_at}" \
+              --slurpfile requirements /root/requirements.json \
+              '{commit:$commit,committed_at:$committed_at,requirements:$requirements[0]}' \
+              >>/root/candidate-requirements.jsonl
+          done
+          jq -s . /root/candidate-requirements.jsonl >/root/candidate-requirements.json
+          echo PIN_CANDIDATES_BEGIN
+          base64 /root/candidate-requirements.json
+          echo PIN_CANDIDATES_END
           EOF
           scripts/runner/run-vm.sh --host-architecture "${ARCH}" --image-sha256 "${image_sha}" \
             --script "${target}/collect.sh" --timeout 14400 --vcpus auto --memory-mib auto \
             --disk-gib 60 --minimum-free-gib 25 --serial-output "${target}/serial.log" \
             --failure-dir "${RUNNER_TEMP}/pin-${ARCH}-failure"
           python3 scripts/extract_serial_payload.py --log "${target}/serial.log" \
-            --name PIN_REQUIREMENTS --output "${target}/requirements.json"
+            --name PIN_CANDIDATES --output "${target}/candidate-requirements.json"
       - name: Build, verify and mirror the official package seed
         env:
           ARCH: ${{ inputs.architecture }}
         run: |
           set -euo pipefail
           target="${RUNNER_TEMP}/target"
-          python3 scripts/binary_seed.py --catalog "${target}/packagesite.pkg" \
+          python3 scripts/candidate_seeds.py --catalog "${target}/packagesite.pkg" \
             --trusted-key-sha256 "$(jq -er .trusted_key_sha256 "${target}/worker-tools.json")" \
-            --requirements "${target}/requirements.json" --architecture "${ARCH}" \
-            --output "${target}/binary-seed.tar" --report "${target}/binary-seed.json"
-          "${RUNNER_TEMP}/fsbuild" blob put --file "${target}/binary-seed.tar" \
-            --output "${target}/binary-seed.tar.blob.json"
+            --candidates "${target}/candidate-requirements.json" --architecture "${ARCH}" \
+            --fsbuild "${RUNNER_TEMP}/fsbuild" --output "${target}/candidate-seeds"
       - id: identity
         name: Emit the target report only after every immutable input is verified
         env:
@@ -199,8 +207,7 @@ jobs:
           jq -n --arg arch "${ARCH}" --arg abi "${abi}" \
             --slurpfile jail "${target}/base.txz.blob.json" \
             --slurpfile catalog "${target}/packagesite.pkg.blob.json" \
-            --slurpfile seedblob "${target}/binary-seed.tar.blob.json" \
-            --slurpfile seed "${target}/binary-seed.json" \
+            --slurpfile candidates "${target}/candidate-seeds/candidates.json" \
             --slurpfile image "${target}/worker.qcow2.blob.json" \
             --slurpfile tools "${target}/worker-tools.tar.blob.json" \
             --slurpfile toolmeta "${target}/worker-tools.json" '
@@ -208,12 +215,11 @@ jobs:
             {schema_version:"freesense.freebsd-pin-target/v1",architecture:$arch,abi:$abi,ready:true,
              jail_seed:as_blob($jail[0]),
              package_catalog:(as_blob($catalog[0])+{signature_verified:true,trusted_key_sha256:$toolmeta[0].trusted_key_sha256}),
-             binary_seed:(as_blob($seedblob[0])+$seed[0]+{object:(as_blob($seedblob[0]).object)}),
+             candidates:$candidates[0],
              worker_image:(as_blob($image[0])+{architecture:$arch,boot_verified:true}),
              worker_tools:(as_blob($tools[0])+{architecture:$arch,boot_verified:true}),
              evidence:{schema_version:"freesense.worker-evidence/v1",architecture:$arch,boot:true,tools:true,
-              worker_image_sha256:$image[0].sha256,worker_tools_sha256:$tools[0].sha256,
-              requirements_sha256:$seed[0].requirements_sha256}}' >"${target}/report.json"
+              worker_image_sha256:$image[0].sha256,worker_tools_sha256:$tools[0].sha256}}' >"${target}/report.json"
           artifact="freebsd-pin-${ARCH}"
           echo "artifact_name=${artifact}" >>"${GITHUB_OUTPUT}"
       - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f

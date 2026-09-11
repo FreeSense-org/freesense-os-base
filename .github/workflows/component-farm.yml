@@ -59,7 +59,7 @@ jobs:
     needs: prepare
     strategy:
       fail-fast: false
-      max-parallel: 5
+      max-parallel: 9
       matrix: ${{ fromJSON(needs.prepare.outputs.matrix) }}
     uses: ./.github/workflows/runner-build.yml
     with:
@@ -85,6 +85,7 @@ jobs:
       architecture: ${{ fromJSON(inputs.plan).architecture }}
       package_arch: ${{ fromJSON(inputs.plan).package_arch }}
       abi: ${{ fromJSON(inputs.plan).abi }}
+      osversion: ${{ fromJSON(inputs.plan).osversion }}
       altabi: ${{ fromJSON(inputs.plan).altabi }}
       freebsd_target: ${{ fromJSON(inputs.plan).freebsd_target }}
       freebsd_target_arch: ${{ fromJSON(inputs.plan).freebsd_target_arch }}
@@ -98,11 +99,13 @@ jobs:
       build_host: ${{ fromJSON(inputs.plan).build_host }}
       binary_seed_object: ${{ fromJSON(inputs.plan).binary_seed_object }}
       binary_seed_provenance_sha256: ${{ fromJSON(inputs.plan).binary_seed_provenance_sha256 }}
+      previous_freesense_repository: ${{ fromJSON(inputs.plan).previous_freesense_repository }}
       publish_enabled: ${{ 'false' }}
       farm_layout: delta-v1
+      shard_policy_version: dependency-cost-v2
       system_part: ${{ matrix.part }}
       system_shard_index: ${{ matrix.shard }}
-      system_shard_count: '4'
+      system_shard_count: '8'
     secrets: inherit
 
   finalize:
@@ -131,6 +134,7 @@ jobs:
       architecture: ${{ fromJSON(inputs.plan).architecture }}
       package_arch: ${{ fromJSON(inputs.plan).package_arch }}
       abi: ${{ fromJSON(inputs.plan).abi }}
+      osversion: ${{ fromJSON(inputs.plan).osversion }}
       altabi: ${{ fromJSON(inputs.plan).altabi }}
       freebsd_target: ${{ fromJSON(inputs.plan).freebsd_target }}
       freebsd_target_arch: ${{ fromJSON(inputs.plan).freebsd_target_arch }}
@@ -144,8 +148,10 @@ jobs:
       build_host: ${{ fromJSON(inputs.plan).build_host }}
       binary_seed_object: ${{ fromJSON(inputs.plan).binary_seed_object }}
       binary_seed_provenance_sha256: ${{ fromJSON(inputs.plan).binary_seed_provenance_sha256 }}
+      previous_freesense_repository: ${{ fromJSON(inputs.plan).previous_freesense_repository }}
       publish_enabled: ${{ 'false' }}
       farm_layout: delta-v1
+      shard_policy_version: dependency-cost-v2
       system_part: finalize
-      system_shard_count: '4'
+      system_shard_count: '8'
     secrets: inherit

@@ -1,17 +1,40 @@
 # Development multiarch implementation status
 
-The unified pipeline is under implementation. It is not the active Development
-publisher, and its full execution has not been verified. Stable keeps its
-existing workflow and checked release locks.
+The resumable unified pipeline is implemented behind rollout gates. It is not
+the active Development publisher until its publication-disabled native canary
+passes. Stable keeps its existing workflow, schemas, and checked release locks.
 
 ## Implemented locally
 
 `development-multiarch.yml` freezes source revisions, probes the pinned native
 ARM worker, selects its executor before generation reservation, and invokes
 immutable System, Optional Packages and release subworkflows for both targets.
-System has one core job and four package shards per target. Optional Packages
-has four shards per target. Each component has an authoritative finalizer.
+System has one core job and eight dependency/cost-aware package shards per target.
+Optional Packages has eight shards per target. Each component has an authoritative
+finalizer. Shards are divided into cumulative three-hour batches whose immutable
+checkpoint identity binds architecture, pin, component, policy, shard count,
+shard, batch, and previous qualified repository. Unknown timings receive a
+conservative estimate instead of being treated as free work.
 The Optional fingerprint remains independent of System-only source changes.
+
+Each 14-day pin evaluates the same bounded ports-candidate window against both
+signed FreeBSD catalogues. It selects the highest minimum accepted count, then
+the highest combined count, then the newest commit. The final pin records
+accepted and rejected counts and reasons for both architectures and refers to
+separate content-addressed binary seeds.
+
+The official signed seed is Tier 1. When the pin is unchanged, Tier 2 may import
+packages from the previous signed architecture-qualified FreeSense repository.
+Reuse requires exact ABI, OSVERSION, origin/version, options, recursive
+dependency provenance, port and patch content, relevant Mk content, make
+configuration, and architecture policy. Patched, PHP, kernel-sensitive,
+changed, or transitively affected packages rebuild. The final Poudriere pass
+remains authoritative.
+
+`state/development-cycle.json` is the CAS-protected frozen-cycle resume point.
+Reruns resume it before considering newer source heads. Immutable component
+markers and cumulative checkpoints preserve completed AMD64 work and completed
+ARM64 batches.
 
 The native ARM probe needs KVM, sufficient memory and disk, QEMU, AAVMF and a
 successful pinned-image boot. A failed probe selects the dedicated executor;
@@ -39,20 +62,17 @@ recorded job durations and standard-runner concurrency. Pi images retain their
 structural-only verification label. Reused images can retain their original
 build generation while the release documents identify the shared pair generation.
 
-`fsbuild multiarch prepare` validates the trusted same-run canary report against
-both signed repository manifests and exact release-document bytes, then writes
-a local RSA-signed `freesense.multiarch-release/v1` completion document. It has
-no store access and cannot change channel pointers. The downstream publication
-workflow `development-multiarch-publish.yml` executes once the multiarch run
-succeeds on `main`: it verifies local documents, publishes immutable download
-artifacts, publishes architecture-qualified manifests (`repos.amd64.manifest.json`,
-`repos.aarch64.manifest.json`, `devel.amd64.json`, `devel.arm64.json`), verifies
-their public visibility via `verify_multiarch_publication.py`, commits
-`releases/devel.multiarch.json` atomically via `fsbuild multiarch commit` with
-compare-and-swap semantics, and refreshes legacy amd64 aliases (`repos.manifest.json`,
-`releases/devel.json`). Retention planning in `r2_retention.py` binds qualified release
-documents and referenced image artifact families (`installer`, `cloud`, `appliance`)
-to the authoritative completion document.
+Each architecture independently publishes immutable downloads and then its
+qualified release document, with the signed repository manifest last as its
+commit point. CAS rejects rollback and conflicting same-generation bytes, so
+AMD64 may advance while ARM64 remains at its previous qualified release.
+`fsbuild multiarch prepare` still validates the eventual pair and creates the
+signed `freesense.multiarch-release/v1` completion document. The downstream
+`development-multiarch-publish.yml` runs only for the complete pair, verifies
+both qualified publications, commits `releases/devel.multiarch.json`, and then
+refreshes the legacy AMD64 aliases through monotonic CAS operations. Retention
+protects qualified releases plus incomplete-cycle component and checkpoint
+namespaces.
 
 ## Rollout boundaries
 
@@ -77,10 +97,8 @@ to the authoritative completion document.
 1. Native candidate generation: The v4 pin workflow is fully wired into `pin.yml`.
    Running it will produce the first complete dual-architecture v4 pin with real
    verified inputs mirrored to R2.
-2. Signed publication and retention: Architecture-qualified manifests, atomic
-   commit via `fsbuild multiarch commit`, and retention planning binding release
-   documents to the completion hash are implemented and verified with exhaustive
-   failure-path test suites.
+2. Confirm the deployed credential broker roles match the independently invoked
+   coordinator, download-writer, and channel-writer jobs.
 3. Verify native requirements collection, architecture exclusions, shard balance,
    empty shards, OPTIONS mismatch repair, repository signatures and Optional reuse
    on actual FreeBSD. Exercise the job timing gate against the 5.5-hour watchdog.

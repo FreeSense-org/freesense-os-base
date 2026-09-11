@@ -24,6 +24,7 @@ def require(condition: bool, message: str) -> None:
 
 expected_workflows = {
     "development-multiarch.yml", "development-multiarch-publish.yml", "component-farm.yml",
+    "qualified-repository-document.yml", "publish-qualified-development.yml",
     "github-hosted-experiment.yml",
     "github-hosted-system.yml",
     "arm64-experimental.yml", "broker.yml", "ci.yml", "packages.yml", "pin.yml", "pin-target.yml", "release.yml",
@@ -517,7 +518,7 @@ require("git push origin" in pin_workflow and "--force" not in pin_workflow,
 
 publish_workflow = read(".github/workflows/development-multiarch-publish.yml")
 for value in (
-    "Publish qualified documents before the authoritative commit point",
+    "Verify independently committed qualified documents before the aggregate commit point",
     "Commit the complete pair atomically",
     "Refresh legacy amd64 aliases after the commit point",
     "multiarch verify",
@@ -526,7 +527,7 @@ for value in (
 ):
     require(value in publish_workflow, f"Development multiarch publication workflow is missing {value!r}")
 
-idx_qualified = publish_workflow.index("Publish qualified documents before the authoritative commit point")
+idx_qualified = publish_workflow.index("Verify independently committed qualified documents before the aggregate commit point")
 idx_commit = publish_workflow.index("Commit the complete pair atomically")
 idx_legacy = publish_workflow.index("Refresh legacy amd64 aliases after the commit point")
 require(idx_qualified < idx_commit < idx_legacy,

@@ -114,7 +114,8 @@ EOF
         python_bin=$(command -v python3 || command -v python3.11)
         "${python_bin}" /root/os-definition/scripts/partition_roots.py \
           --config /root/os-definition/config/multiarch-shards.json --component system \
-          --shard "${SYSTEM_SHARD_INDEX}" --roots "${all_roots}.sorted" --output "${shard_roots}"
+          --shard "${SYSTEM_SHARD_INDEX}" --roots "${all_roots}.sorted" --output "${shard_roots}" \
+          --batches-output /tmp/system-shard-batches.json
       else
       sed -e '/^net\/cloud-init$/d' -e '/^sysutils\/FreeSense-cloud-init$/d' \
         "${all_roots}.sorted" >"${all_roots}.general"
@@ -171,8 +172,8 @@ prepare_system_ports() {
   esac
   create_source_archive
   if [ -n "${BINARY_SEED_OBJECT}" ]; then
-    load_binary_seed
-    seed_poudriere_repository /root/binary-seed
+    prepare_merged_binary_seed
+    seed_poudriere_repository /root/merged-binary-seed
   fi
 }
 
@@ -229,11 +230,33 @@ case "${SYSTEM_PART}" in
   shard)
     prepare_system_ports shard
     if [ "${EMPTY_SOURCE_SHARD:-false}" = true ]; then
-      publish_system_checkpoint shard "${SYSTEM_SHARD_INDEX}" /root/binary-seed
+      publish_system_checkpoint shard "${SYSTEM_SHARD_INDEX}" /root/merged-binary-seed
       exit 0
     fi
-    build_system_packages
-    publish_system_checkpoint shard "${SYSTEM_SHARD_INDEX}" "${latest}"
+    batch_count=$(jq -r length /tmp/system-shard-batches.json)
+    [ "${batch_count}" -gt 0 ] || { echo "non-empty shard has no cumulative batches" >&2; exit 1; }
+    completed_batch=$(latest_checkpoint_batch shard "${SYSTEM_SHARD_INDEX}" || true)
+    next_batch=0
+    if [ -n "${completed_batch}" ]; then
+      [ "${completed_batch}" -lt "${batch_count}" ] || { echo "checkpoint batch exceeds plan" >&2; exit 1; }
+      CHECKPOINT_BATCH=${completed_batch}; export CHECKPOINT_BATCH
+      fetch_system_checkpoint shard "${SYSTEM_SHARD_INDEX}" /root/resumed-shard-checkpoint
+      jq -e --argjson expected "$(jq -c --argjson batch "${completed_batch}" '.[$batch]' /tmp/system-shard-batches.json)" \
+        '.roots == $expected' /root/resumed-shard-checkpoint/complete.json >/dev/null || {
+        echo "resumed System checkpoint roots conflict with cumulative plan" >&2; exit 1;
+      }
+      seed_poudriere_repository "/root/resumed-shard-checkpoint/${PACKAGE_ARCH}"
+      next_batch=$((completed_batch + 1))
+    fi
+    while [ "${next_batch}" -lt "${batch_count}" ]; do
+      jq -r --argjson batch "${next_batch}" '.[$batch][]' /tmp/system-shard-batches.json \
+        >tools/conf/pfPorts/poudriere_bulk
+      cp tools/conf/pfPorts/poudriere_bulk /tmp/checkpoint-current-roots
+      build_system_packages
+      CHECKPOINT_BATCH=${next_batch}; export CHECKPOINT_BATCH
+      publish_system_checkpoint shard "${SYSTEM_SHARD_INDEX}" "${latest}"
+      next_batch=$((next_batch + 1))
+    done
     ;;
   dependent)
     prepare_system_ports dependent
@@ -258,6 +281,8 @@ case "${SYSTEM_PART}" in
     shard=0
     while [ "${shard}" -lt "${SYSTEM_SHARD_COUNT}" ]; do
       shard_directory=/root/system-shard-${shard}
+      CHECKPOINT_BATCH=$(latest_checkpoint_batch shard "${shard}" || true); export CHECKPOINT_BATCH
+      [ -n "${CHECKPOINT_BATCH}" ] || { echo "missing completed shard checkpoint: ${shard}" >&2; exit 1; }
       fetch_system_checkpoint shard "${shard}" "${shard_directory}"
       for package in "${shard_directory}/${PACKAGE_ARCH}/All"/*.pkg; do
         merge_package "${package}" "${shard_seed}/All" "${shard_inventory}" "${seed_duplicate_policy}"

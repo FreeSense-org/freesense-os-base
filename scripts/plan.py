@@ -160,7 +160,7 @@ def validate_target_bootstrap(
         raise SystemExit("FreeBSD target inputs are outside the bounded bootstrap window")
 
 
-def current_component(manifest_url: str, component: str) -> str:
+def current_component_record(manifest_url: str, component: str) -> dict:
     try:
         request = urllib.request.Request(
             manifest_url,
@@ -170,7 +170,7 @@ def current_component(manifest_url: str, component: str) -> str:
             envelope = json.load(response)
     except urllib.error.HTTPError as error:
         if error.code == 404:
-            return ""
+            return {}
         raise SystemExit(f"channel manifest fetch failed with HTTP {error.code}") from error
     except (OSError, urllib.error.URLError) as error:
         raise SystemExit(f"channel manifest fetch failed: {error}") from error
@@ -199,15 +199,19 @@ def current_component(manifest_url: str, component: str) -> str:
             raise ValueError("unsupported signed channel payload")
         selected = payload.get("channels", {}).get("devel", {}).get(component)
         if selected is None:
-            return ""
+            return {}
         if not isinstance(selected, dict):
             raise ValueError("current component is not an object")
         value = selected.get("fingerprint", "")
         if not SHA256.fullmatch(value):
             raise ValueError("current component has an invalid fingerprint")
-        return value
+        return selected
     except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError) as error:
         raise SystemExit(f"channel manifest verification failed: {error}") from error
+
+
+def current_component(manifest_url: str, component: str) -> str:
+    return current_component_record(manifest_url, component).get("fingerprint", "")
 
 
 def main() -> int:

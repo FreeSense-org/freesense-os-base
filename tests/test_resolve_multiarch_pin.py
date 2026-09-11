@@ -60,7 +60,7 @@ class ResolvePinTests(unittest.TestCase):
                     self.assertIn("sha256", res["targets"][arch]["package_catalog"])
                     self.assertEqual(len(res["targets"][arch]["package_catalog"]["sha256"]), 64)
 
-    def test_resolve_selects_primary_architecture_ports_revision(self):
+    def test_resolve_rejects_different_architecture_ports_revisions(self):
         from unittest.mock import patch
         from datetime import datetime, timezone
         with tempfile.TemporaryDirectory() as directory:
@@ -89,10 +89,8 @@ class ResolvePinTests(unittest.TestCase):
 
             with patch.object(module, "verify_catalogue", return_value=[{"name": "test"}]), \
                  patch.object(module, "resolve_worker_tools", side_effect=fake_worker):
-                res = module.resolve(prev, root, meta, sources, security_rollover=True, now=datetime(2026, 9, 7, 12, 0, 0, tzinfo=timezone.utc))
-                self.assertEqual(res["freebsd_ports"]["commit"], "a" * 40)
-                self.assertEqual(res["targets"]["amd64"]["ports_commit"], "a" * 40)
-                self.assertEqual(res["targets"]["arm64"]["ports_commit"], "b" * 40)
+                with self.assertRaisesRegex(ValueError, "shared ports revision"):
+                    module.resolve(prev, root, meta, sources, security_rollover=True, now=datetime(2026, 9, 7, 12, 0, 0, tzinfo=timezone.utc))
 
 
 if __name__ == "__main__": unittest.main()

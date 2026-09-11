@@ -32,7 +32,9 @@ jobs:
           gh run download "${UPSTREAM_RUN_ID}" --repo "${GITHUB_REPOSITORY}" \
             --name multiarch-authoritative-completion --dir "${RUNNER_TEMP}/bundle/completion"
           gh run download "${UPSTREAM_RUN_ID}" --repo "${GITHUB_REPOSITORY}" \
-            --name multiarch-repository-documents --dir "${RUNNER_TEMP}/bundle/repositories"
+            --name multiarch-repository-amd64 --dir "${RUNNER_TEMP}/bundle/repositories"
+          gh run download "${UPSTREAM_RUN_ID}" --repo "${GITHUB_REPOSITORY}" \
+            --name multiarch-repository-arm64 --dir "${RUNNER_TEMP}/bundle/repositories"
           gh run download "${UPSTREAM_RUN_ID}" --repo "${GITHUB_REPOSITORY}" \
             --name multiarch-release-amd64 --dir "${RUNNER_TEMP}/bundle/amd64"
           gh run download "${UPSTREAM_RUN_ID}" --repo "${GITHUB_REPOSITORY}" \
@@ -80,24 +82,9 @@ jobs:
           --audience "${R2_CREDENTIAL_BROKER_AUDIENCE}" --role channel-writer
           --expected-bucket "${R2_BUCKET}" --expected-prefix v1 --expected-endpoint "${R2_ENDPOINT}"
           --github-env "${GITHUB_ENV}"
-      - name: Publish qualified documents before the authoritative commit point
-        env:
-          R2_BUCKET: ${{ vars.R2_BUILD_BUCKET }}
-          R2_ENDPOINT: ${{ vars.R2_ENDPOINT }}
+      - name: Verify independently committed qualified documents before the aggregate commit point
         run: |
           set -euo pipefail
-          aws s3 cp "${RUNNER_TEMP}/bundle/repositories/repos.amd64.manifest.json" \
-            "s3://${R2_BUCKET}/v1/repos.amd64.manifest.json" --endpoint-url "${R2_ENDPOINT}" \
-            --no-progress --content-type application/json --cache-control 'public, max-age=60, must-revalidate'
-          aws s3 cp "${RUNNER_TEMP}/bundle/repositories/repos.aarch64.manifest.json" \
-            "s3://${R2_BUCKET}/v1/repos.aarch64.manifest.json" --endpoint-url "${R2_ENDPOINT}" \
-            --no-progress --content-type application/json --cache-control 'public, max-age=60, must-revalidate'
-          aws s3 cp "${RUNNER_TEMP}/bundle/amd64/devel.json" \
-            "s3://${R2_BUCKET}/v1/releases/devel.amd64.json" --endpoint-url "${R2_ENDPOINT}" \
-            --no-progress --content-type application/json --cache-control 'public, max-age=60, must-revalidate'
-          aws s3 cp "${RUNNER_TEMP}/bundle/arm64/devel.json" \
-            "s3://${R2_BUCKET}/v1/releases/devel.arm64.json" --endpoint-url "${R2_ENDPOINT}" \
-            --no-progress --content-type application/json --cache-control 'public, max-age=60, must-revalidate'
           python3 scripts/verify_multiarch_publication.py \
             --completion "${RUNNER_TEMP}/bundle/completion/payload.json" --public-base-url https://pkg.freesense.org/v1 \
             --amd64-repositories "${RUNNER_TEMP}/bundle/repositories/repos.amd64.manifest.json" \
@@ -121,10 +108,9 @@ jobs:
         env:
           R2_BUCKET: ${{ vars.R2_BUILD_BUCKET }}
           R2_ENDPOINT: ${{ vars.R2_ENDPOINT }}
+          FSBUILD_STORE_PREFIX: v1
         run: |
-          aws s3 cp "${RUNNER_TEMP}/bundle/repositories/repos.amd64.manifest.json" \
-            "s3://${R2_BUCKET}/v1/repos.manifest.json" --endpoint-url "${R2_ENDPOINT}" \
-            --no-progress --content-type application/json --cache-control 'public, max-age=60, must-revalidate'
-          aws s3 cp "${RUNNER_TEMP}/bundle/amd64/devel.json" \
-            "s3://${R2_BUCKET}/v1/releases/devel.json" --endpoint-url "${R2_ENDPOINT}" \
-            --no-progress --content-type application/json --cache-control 'public, max-age=60, must-revalidate'
+          "${RUNNER_TEMP}/fsbuild" multiarch commit-legacy-amd64 \
+            --repositories "${RUNNER_TEMP}/bundle/repositories/repos.amd64.manifest.json" \
+            --release "${RUNNER_TEMP}/bundle/amd64/devel.json" \
+            --public-key config/channel-signing-public.pem

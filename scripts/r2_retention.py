@@ -61,6 +61,7 @@ DOCUMENT_KEYS = {
     "v1/releases/devel.arm64.json",
     "v1/releases/devel.multiarch.json",
     "v1/state/retention.json",
+    "v1/state/development-cycle.json",
 }
 MAX_DOCUMENT_SIZE = 1024 * 1024
 MAX_DELETE_OBJECTS = 5000
@@ -591,6 +592,7 @@ def plan_retention(
     development_train: str | None = None,
     multiarch: dict[str, Any] | None = None,
     release_documents: dict[str, Any] | None = None,
+    development_cycle: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     if keep_devel < 1:
         fail("Development retention must keep at least one completed build")
@@ -648,6 +650,22 @@ def plan_retention(
         markers[prefix] = marker_identity(prefix, kind, train, fingerprint, document)
 
     protected_prefixes: set[str] = set()
+    if development_cycle is not None:
+        if (development_cycle.get("schema_version") != "freesense.development-cycle/v1"
+                or not isinstance(development_cycle.get("generation"), int)
+                or not isinstance(development_cycle.get("plan"), dict)
+                or set(development_cycle.get("architectures", {})) != {"amd64", "arm64"}):
+            fail("invalid active Development cycle retention root")
+        if not development_cycle.get("superseded", False):
+            targets = development_cycle["plan"].get("targets", {})
+            for arch in ("amd64", "arm64"):
+                target_plan = targets.get(arch, {})
+                for component, prefix in (("system", "v1/artifacts/system/"),
+                                          ("packages", f"v1/artifacts/packages/{development_train}/")):
+                    fingerprint = target_plan.get(component, {}).get(component)
+                    if not isinstance(fingerprint, str) or not SHA256.fullmatch(fingerprint):
+                        fail(f"active Development cycle has invalid {arch} {component} identity")
+                    protected_prefixes.add(prefix + fingerprint)
     devel: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for entry in markers.values():
         inputs = entry["marker"]["inputs"]
@@ -1317,6 +1335,7 @@ def main() -> None:
         development_train,
         completion,
         release_documents=release_documents,
+        development_cycle=documents.get("v1/state/development-cycle.json"),
     )
     args.output.write_text(
         json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8"

@@ -34,6 +34,7 @@ on:
       architecture: {type: string, required: false, default: amd64}
       package_arch: {type: string, required: false, default: amd64}
       abi: {type: string, required: false, default: 'FreeBSD:16:amd64'}
+      osversion: {type: string, required: false, default: '1600000'}
       altabi: {type: string, required: false, default: 'freebsd:16:x86:64'}
       freebsd_target: {type: string, required: false, default: amd64}
       freebsd_target_arch: {type: string, required: false, default: amd64}
@@ -58,7 +59,9 @@ on:
       build_host: {type: string, required: false, default: dedicated}
       binary_seed_object: {type: string, required: false, default: ''}
       binary_seed_provenance_sha256: {type: string, required: false, default: ''}
+      previous_freesense_repository: {type: string, required: false, default: ''}
       farm_layout: {type: string, required: false, default: legacy}
+      shard_policy_version: {type: string, required: false, default: legacy}
 
 jobs:
   build:
@@ -110,6 +113,7 @@ jobs:
       ARCHITECTURE: ${{ inputs.architecture }}
       PACKAGE_ARCH: ${{ inputs.package_arch }}
       ABI: ${{ inputs.abi }}
+      OSVERSION: ${{ inputs.osversion }}
       ALTABI: ${{ inputs.altabi }}
       FREEBSD_TARGET: ${{ inputs.freebsd_target }}
       FREEBSD_TARGET_ARCH: ${{ inputs.freebsd_target_arch }}
@@ -127,7 +131,9 @@ jobs:
       SYSTEM_SHARD_COUNT: ${{ inputs.system_shard_count }}
       BINARY_SEED_OBJECT: ${{ inputs.binary_seed_object }}
       BINARY_SEED_PROVENANCE_SHA256: ${{ inputs.binary_seed_provenance_sha256 }}
+      PREVIOUS_FREESENSE_REPOSITORY: ${{ inputs.previous_freesense_repository }}
       FARM_LAYOUT: ${{ inputs.farm_layout }}
+      SHARD_POLICY_VERSION: ${{ inputs.shard_policy_version }}
       BOOT_INPUTS: ${{ inputs.boot_inputs }}
       TARGET_MODELS: ${{ inputs.target_models }}
       PARTITION_SCHEME: ${{ inputs.partition_scheme }}
@@ -213,7 +219,7 @@ jobs:
           steps.reuse.outputs.complete != 'true' &&
           (inputs.stage == 'system' || (inputs.stage == 'packages' && inputs.farm_layout == 'delta-v1')) &&
           (inputs.system_part == 'core' || inputs.system_part == 'bootstrap' ||
-           inputs.system_part == 'shard' || inputs.system_part == 'dependent')
+           inputs.system_part == 'dependent' || (inputs.system_part == 'shard' && inputs.farm_layout != 'delta-v1'))
         run: |
           case "${SYSTEM_PART}" in
             core) checkpoint="core" ;;
@@ -224,7 +230,8 @@ jobs:
           if [[ "${FARM_LAYOUT}" == delta-v1 ]]; then
             component="${STAGE}"
             if [[ "${STAGE}" == packages ]]; then component="packages/${PACKAGE_TRAIN}"; fi
-            key="${FSBUILD_STORE_PREFIX}/artifacts/${component}/${FINGERPRINT}/checkpoints/farm-${SYSTEM_SHARD_COUNT}/${ARCHITECTURE}/delta-v1/${checkpoint}/complete.json"
+            previous="${PREVIOUS_FREESENSE_REPOSITORY:-none}"
+            key="${FSBUILD_STORE_PREFIX}/artifacts/${component}/${FINGERPRINT}/checkpoints/${ARCHITECTURE}/${FREEBSD_PIN_ID}/${previous}/${SHARD_POLICY_VERSION}/farm-${SYSTEM_SHARD_COUNT}/${checkpoint}/batch-0/complete.json"
           fi
           if aws s3api head-object --endpoint-url "${R2_ENDPOINT}" \
               --bucket "${R2_BUCKET}" --key "${key}" >/dev/null 2>&1; then

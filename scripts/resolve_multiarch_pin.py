@@ -15,6 +15,40 @@ from resolve_worker_tools import resolve_worker_tools
 TARGETS = {"amd64": ("amd64", "amd64"), "arm64": ("arm64", "aarch64")}
 
 
+def score_candidates(candidates: list[dict]) -> dict:
+    """Choose the best common ports revision without architecture bias.
+
+    Candidate reports are produced after applying the normal binary-seed
+    eligibility checks to both signed catalogues.  The tuple is deliberately
+    explicit so reruns select identical input even if report ordering differs.
+    """
+    if not candidates:
+        raise ValueError("no ports candidates in the pin window")
+    ranked = []
+    for candidate in candidates:
+        commit = candidate.get("commit")
+        accepted = candidate.get("accepted")
+        committed_at = candidate.get("committed_at")
+        if (not re.fullmatch(r"[0-9a-f]{40}", str(commit)) or
+                not isinstance(accepted, dict) or set(accepted) != set(TARGETS) or
+                any(type(accepted[a]) is not int or accepted[a] < 0 for a in TARGETS) or
+                not isinstance(committed_at, str)):
+            raise ValueError("invalid ports candidate evidence")
+        try:
+            stamp = datetime.fromisoformat(committed_at.replace("Z", "+00:00"))
+        except ValueError as error:
+            raise ValueError("invalid ports candidate timestamp") from error
+        if stamp.tzinfo is None:
+            raise ValueError("ports candidate timestamp has no timezone")
+        ranked.append(((min(accepted.values()), sum(accepted.values()), stamp, commit), candidate))
+    winner = max(ranked, key=lambda item: item[0])[1]
+    # Preserve full rejection evidence; callers seal this alongside the pin.
+    return {**winner, "score": {
+        "minimum_accepted": min(winner["accepted"].values()),
+        "combined_accepted": sum(winner["accepted"].values()),
+    }}
+
+
 def manifest_sha(path: Path, filename: str) -> str:
     matches = [line.split("\t")[1] for line in path.read_text().splitlines()
                if line.split("\t", 1)[0] == filename]
@@ -60,7 +94,7 @@ def resolve(previous: dict, directory: Path, metadata: dict, sources: dict,
             raise ValueError(f"{arch} catalog OSVERSION is outside the bounded bootstrap window")
         reports[arch] = {
             "abi": f"FreeBSD:16:{package_arch}",
-            "ports_commit": ports[arch],
+            "catalog_ports_commit": ports[arch],
             "jail_seed": {
                 "url": metadata["dist_urls"][arch].rstrip("/") + "/base.txz",
                 "sha256": manifest_sha(target / "MANIFEST", "base.txz"),
@@ -74,14 +108,43 @@ def resolve(previous: dict, directory: Path, metadata: dict, sources: dict,
                 package_arch, build_date, revision),
             "catalog_osversion": catalog_osversion,
         }
-    ports_commit = ports.get("amd64") or next(iter(ports.values()))
-    if not re.fullmatch(r"[0-9a-f]{40}", str(ports_commit)):
-        raise ValueError("invalid official ports revision")
     start = now.replace(microsecond=0) if security_rollover else datetime.fromisoformat(
         previous["valid_until"].replace("Z", "+00:00"))
     if start.tzinfo is None:
         raise ValueError("pin boundary has no timezone")
     start = start.astimezone(timezone.utc)
+    selection = None
+    candidates = metadata.get("candidate_commits")
+    if candidates is not None:
+        if (not isinstance(candidates, list) or not 1 <= len(candidates) <= 14 or
+                any(not re.fullmatch(r"[0-9a-f]{40}", str(item.get("commit"))) or not isinstance(item.get("committed_at"), str) for item in candidates)):
+            raise ValueError("invalid bounded ports candidate window")
+        commits, stamps = set(), []
+        for item in candidates:
+            try:
+                stamp = datetime.fromisoformat(item["committed_at"].replace("Z", "+00:00"))
+            except ValueError as error:
+                raise ValueError("invalid ports candidate timestamp") from error
+            if stamp.tzinfo is None:
+                raise ValueError("ports candidate timestamp has no timezone")
+            stamp = stamp.astimezone(timezone.utc)
+            if item["commit"] in commits or not start - timedelta(days=14) <= stamp <= start:
+                raise ValueError("ports candidate is duplicated or outside the bounded window")
+            commits.add(item["commit"]); stamps.append(stamp)
+        if stamps != sorted(stamps, reverse=True):
+            raise ValueError("ports candidates are not deterministically ordered")
+        ports_commit = candidates[0]["commit"]
+    elif "ports_candidates" in metadata:
+        selection = score_candidates(metadata["ports_candidates"])
+        ports_commit = selection["commit"]
+    else:
+        if len(set(ports.values())) != 1:
+            raise ValueError("signed catalogues do not identify one shared ports revision")
+        ports_commit = next(iter(ports.values()))
+    for report in reports.values():
+        report["ports_commit"] = ports_commit
+    if not re.fullmatch(r"[0-9a-f]{40}", str(ports_commit)):
+        raise ValueError("invalid official ports revision")
     result = {
         "schema_version": "freesense.freebsd-pin-common/v1",
         "valid_from": start.isoformat().replace("+00:00", "Z"),
@@ -91,6 +154,11 @@ def resolve(previous: dict, directory: Path, metadata: dict, sources: dict,
                                "build_date": build_date, "osversion": metadata["osversion"]},
         "freebsd_ports": {"commit": ports_commit}, "sources": sources, "targets": reports,
     }
+    if selection is not None:
+        result["pin_evidence"] = {"schema_version": "freesense.ports-candidate-selection/v1",
+                                  "selected": selection, "candidate_count": len(metadata["ports_candidates"])}
+    if candidates is not None:
+        result["ports_candidates"] = candidates
     return result
 
 

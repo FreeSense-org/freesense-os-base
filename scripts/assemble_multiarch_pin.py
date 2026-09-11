@@ -8,12 +8,43 @@ from pathlib import Path
 import subprocess
 
 from multiarch_pin import ARCHES, blob, rollover, validate
+from resolve_multiarch_pin import score_candidates
 
 
 def assemble(common: dict, reports: dict[str, dict]) -> dict:
     if (common.get("schema_version") != "freesense.freebsd-pin-common/v1"
             or set(reports) != set(ARCHES)):
         raise ValueError("complete pin common data and target reports are required")
+    common = dict(common)
+    if all(isinstance(report.get("candidates"), list) for report in reports.values()):
+        indexed = {}
+        for arch in ARCHES:
+            values = reports[arch]["candidates"]
+            indexed[arch] = {item.get("commit"): item for item in values}
+            if len(indexed[arch]) != len(values):
+                raise ValueError(f"duplicate {arch} ports candidate evidence")
+        expected = [item.get("commit") for item in common.get("ports_candidates", [])]
+        if set(indexed["amd64"]) != set(expected) or set(indexed["arm64"]) != set(expected):
+            raise ValueError("architectures did not evaluate the complete frozen candidate window")
+        commits = set(expected)
+        evidence = []
+        for source in common.get("ports_candidates", []):
+            commit = source.get("commit")
+            if commit not in commits:
+                raise ValueError("invalid common ports candidate")
+            evidence.append({**source, "accepted": {arch: indexed[arch][commit].get("accepted_count", 0) for arch in ARCHES},
+                             "rejected": {arch: {"count": indexed[arch][commit].get("rejected_count", 0),
+                                                  "reasons": indexed[arch][commit].get("rejection_reasons", {}),
+                                                  "error": indexed[arch][commit].get("candidate_error", "")} for arch in ARCHES}})
+        selected = score_candidates(evidence)
+        common["freebsd_ports"] = {"commit": selected["commit"]}
+        common["pin_evidence"] = {"schema_version":"freesense.ports-candidate-selection/v1",
+                                  "candidate_count":len(evidence), "selected":selected}
+        for arch in ARCHES:
+            chosen = indexed[arch][selected["commit"]]
+            if "object" not in chosen: raise ValueError(f"selected {arch} candidate has no binary seed")
+            reports[arch] = {**reports[arch], "binary_seed":chosen,
+                             "evidence":{**reports[arch]["evidence"], "requirements_sha256":chosen["requirements_sha256"]}}
     candidate = {
         "schema_version": "freesense.freebsd-pin/v4",
         "valid_from": common["valid_from"],
@@ -21,6 +52,7 @@ def assemble(common: dict, reports: dict[str, dict]) -> dict:
         "freebsd_source": common["freebsd_source"],
         "bootstrap_snapshot": common["bootstrap_snapshot"],
         "freebsd_ports": common["freebsd_ports"],
+        **({"pin_evidence": common["pin_evidence"]} if "pin_evidence" in common else {}),
         "targets": {},
     }
     for arch, abi in ARCHES.items():
@@ -41,6 +73,10 @@ def assemble(common: dict, reports: dict[str, dict]) -> dict:
                 or evidence.get("worker_tools_sha256") != target["worker_tools"]["sha256"]
                 or evidence.get("requirements_sha256") != target["binary_seed"].get("requirements_sha256")):
             raise ValueError(f"{arch} evidence does not bind its immutable inputs")
+        if (target["binary_seed"].get("accepted_count") != target["binary_seed"].get("package_count")
+                or not isinstance(target["binary_seed"].get("rejected_count"), int)
+                or not isinstance(target["binary_seed"].get("rejection_reasons"), dict)):
+            raise ValueError(f"{arch} seed lacks accepted/rejected coverage evidence")
         candidate["targets"][arch] = target
     validate(candidate)
     return candidate

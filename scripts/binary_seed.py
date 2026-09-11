@@ -181,6 +181,9 @@ def bundle(selection: dict, directory: Path, output: Path, *, abi: str, catalog_
         archive.addfile(info, io.BytesIO(encoded))
     with output.open("rb") as stream:
         sha = hashlib.file_digest(stream, "sha256").hexdigest()
+    reasons = {}
+    for reason in selection["rejected"].values():
+        reasons[reason] = reasons.get(reason, 0) + 1
     return {
         "object": f"inputs/sha256/{sha}", "sha256": sha, "size": output.stat().st_size,
         "abi": abi, "catalog_sha256": catalog_sha256, "verified": True,
@@ -188,6 +191,9 @@ def bundle(selection: dict, directory: Path, output: Path, *, abi: str, catalog_
         "requirements_components": ["system", "packages"],
         "provenance_sha256": hashlib.sha256(encoded).hexdigest(),
         "verified_roots": ["rust"], "package_count": len(packages),
+        "accepted_count": len(packages), "rejected_count": len(selection["rejected"]),
+        "rejection_reasons": dict(sorted(reasons.items())),
+        "rejected": dict(sorted(selection["rejected"].items())),
     }
 
 
