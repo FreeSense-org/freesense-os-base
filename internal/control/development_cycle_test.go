@@ -9,9 +9,10 @@ import (
 
 func cycleFixture() DevelopmentCycle {
 	hash := strings.Repeat("a", 64)
-	plan, _ := json.Marshal(map[string]any{"schema_version": "freesense.multiarch-plan/v1", "pair_fingerprint": hash, "freebsd_pin": hash, "resolved_inputs": map[string]string{"freesense": hash}, "targets": map[string]any{"amd64": map[string]any{"system": map[string]any{}}, "arm64": map[string]any{"system": map[string]any{}}}})
+	revision := strings.Repeat("a", 40)
+	plan, _ := json.Marshal(map[string]any{"schema_version": "freesense.multiarch-plan/v1", "pair_fingerprint": hash, "freebsd_pin": hash, "resolved_inputs": map[string]string{"freesense": revision}, "targets": map[string]any{"amd64": map[string]any{"system": map[string]any{}}, "arm64": map[string]any{"system": map[string]any{}}}})
 	return DevelopmentCycle{SchemaVersion: DevelopmentCycleSchema, Generation: 7, Pin: hash, PairFingerprint: hash, Plan: plan,
-		Sources:       map[string]string{"freesense": hash},
+		Sources:       map[string]string{"freesense": revision},
 		Architectures: map[string]ArchitectureCycleStatus{"amd64": {}, "arm64": {}}}
 }
 
@@ -27,7 +28,7 @@ func TestDevelopmentCycleResumesFrozenInputs(t *testing.T) {
 	}
 	newer := cycleFixture()
 	newer.Generation++
-	newer.Sources["freesense"] = strings.Repeat("b", 64)
+	newer.Sources["freesense"] = strings.Repeat("b", 40)
 	var nextPlan map[string]any
 	_ = json.Unmarshal(newer.Plan, &nextPlan)
 	nextPlan["resolved_inputs"] = newer.Sources
