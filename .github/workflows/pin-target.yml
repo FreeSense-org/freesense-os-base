@@ -106,7 +106,9 @@ jobs:
       - uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16
         with: {name: freebsd-pin-ports, path: '${{ runner.temp }}/pin-ports'}
       - uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16
-        with: {name: freebsd-pin-${{ inputs.architecture }}-inputs, path: '${{ runner.temp }}/inputs'}
+        with:
+          name: freebsd-pin-${{ inputs.architecture }}-inputs
+          path: ${{ runner.temp }}/inputs
       - name: Prepare native virtualization tools
         run: |
           sudo apt-get update
@@ -280,7 +282,9 @@ jobs:
       - uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16
         with: {name: freebsd-pin-common, path: '${{ runner.temp }}/pin-common'}
       - uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16
-        with: {name: freebsd-pin-${{ inputs.architecture }}-inputs, path: '${{ runner.temp }}/inputs'}
+        with:
+          name: freebsd-pin-${{ inputs.architecture }}-inputs
+          path: ${{ runner.temp }}/inputs
       - uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16
         with:
           pattern: freebsd-pin-${{ inputs.architecture }}-requirements-*
