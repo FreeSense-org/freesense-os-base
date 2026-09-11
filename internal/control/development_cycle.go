@@ -7,12 +7,15 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"regexp"
 
 	"github.com/FreeSense-org/freesense-os-base/internal/store"
 )
 
 const DevelopmentCycleSchema = "freesense.development-cycle/v1"
 const DevelopmentCycleKey = "state/development-cycle.json"
+
+var sourceRevisionPattern = regexp.MustCompile(`^[0-9a-f]{40}$`)
 
 type ArchitectureCycleStatus struct {
 	System    string `json:"system"`
@@ -67,7 +70,7 @@ func (cycle DevelopmentCycle) Validate() error {
 		}
 	}
 	for name, revision := range cycle.Sources {
-		if name == "" || !fingerprintPattern.MatchString(revision) {
+		if name == "" || !sourceRevisionPattern.MatchString(revision) {
 			return errors.New("invalid frozen source revision")
 		}
 	}
