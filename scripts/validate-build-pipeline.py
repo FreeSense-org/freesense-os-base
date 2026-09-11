@@ -247,7 +247,7 @@ for value in ('-smp "$vcpus"', '-m "$memory_mib"',
               "minimum_free_gib=80", "vcpus=$(nproc)",
               "host_memory_available_kib * 80 / 100", "/dev/kvm", "cleanup_orphans",
               "trap cleanup EXIT", "qemu_owns_overlay", "arm64:x86_64)",
-              "tcg,thread=multi"):
+              "tcg,thread=multi", "--serve-dir", "10.0.2.2"):
     require(value in runner, f"KVM runner contract is missing {value!r}")
 require('sha256sum "$base_image"' in runner and 'sha256sum "$download"' in runner,
         "cached and downloaded worker images are not SHA-256 checked")
@@ -499,11 +499,22 @@ else:
 pin_target_workflow = read(".github/workflows/pin-target.yml")
 require(r"{commit:\$commit,committed_at:\$committed_at,requirements:\$requirements[0]}" in pin_target_workflow,
         "pin-target guest jq filter must not expand host $commit under set -u")
+require("git clone --bare https://github.com/freebsd/freebsd-ports.git" in pin_workflow,
+        "Pin FreeBSD must clone freebsd-ports on the native host")
+require("freebsd/freebsd-ports.git" not in pin_target_workflow,
+        "pin-target must not clone freebsd-ports inside the guest")
+require("10.0.2.2:8765/ports.git.tar" in pin_target_workflow,
+        "pin-target guest must fetch the cached ports tree from the host")
+require("split_pin_candidates.py" in pin_workflow and "split_pin_candidates.py" in pin_target_workflow,
+        "chunked pin candidates are missing")
+require("strategy:" in pin_target_workflow and "matrix:" in pin_target_workflow,
+        "pin-target does not split candidates across jobs")
 resolve_multiarch_pin = read("scripts/resolve_multiarch_pin.py")
 assemble_multiarch_pin = read("scripts/assemble_multiarch_pin.py")
 multiarch_pin_module = read("scripts/multiarch_pin.py")
 pin_contract = (pin_workflow + pin_target_workflow + resolve_multiarch_pin +
-                assemble_multiarch_pin + multiarch_pin_module + read("scripts/pin-worker-tools.sh"))
+                assemble_multiarch_pin + multiarch_pin_module + read("scripts/pin-worker-tools.sh") +
+                read("scripts/split_pin_candidates.py"))
 for value in ("scripts/resolve_worker_tools.py", "packagesite.yaml.sig",
               "packagesite.yaml.pub", "install_worker_tools"):
     require(value in pin_contract, f"Pin FreeBSD trust contract is missing {value!r}")
@@ -512,7 +523,8 @@ require("bootstrap_snapshot" in pin_contract and "bootstrap_osversion" in pin_co
 require("max_bootstrap_osversion_delta = 2" in pin_contract and
         "catalog OSVERSION is outside the bounded bootstrap window" in pin_contract,
         "Pin FreeBSD does not validate the target catalog bootstrap window")
-for value in ("target_amd64:", "target_arm64:",
+for value in ("target_amd64:", "target_arm64:", "ports_cache:",
+              "needs: [resolve, ports_cache]",
               "needs: [resolve, target_amd64, target_arm64]",
               "scripts/assemble_multiarch_pin.py", "arm64_runner:",
               "runner: ${{ inputs.arm64_runner || '' }}"):

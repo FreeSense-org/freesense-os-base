@@ -2,7 +2,7 @@
 set -euo pipefail
 
 usage() {
-  echo "usage: run-vm.sh --image-sha256 SHA256 --script FILE [--timeout SECONDS] [--vcpus N] [--memory-mib N] [--disk-gib N] [--minimum-free-gib N] [--failure-dir DIR] [--serial-output FILE]" >&2
+  echo "usage: run-vm.sh --image-sha256 SHA256 --script FILE [--timeout SECONDS] [--vcpus N] [--memory-mib N] [--disk-gib N] [--minimum-free-gib N] [--failure-dir DIR] [--serial-output FILE] [--serve-dir DIR] [--serve-port PORT]" >&2
   exit 2
 }
 
@@ -16,6 +16,9 @@ vcpus=12
 memory_mib=32768
 disk_gib=160
 minimum_free_gib=80
+serve_dir=""
+serve_port=8765
+http_pid=""
 while (($#)); do
   case "$1" in
     --host-architecture) host_architecture=${2:-}; shift 2 ;;
@@ -28,6 +31,8 @@ while (($#)); do
     --minimum-free-gib) minimum_free_gib=${2:-}; shift 2 ;;
     --failure-dir) failure_dir=${2:-}; shift 2 ;;
     --serial-output) serial_output=${2:-}; shift 2 ;;
+    --serve-dir) serve_dir=${2:-}; shift 2 ;;
+    --serve-port) serve_port=${2:-}; shift 2 ;;
     *) usage ;;
   esac
 done
@@ -85,7 +90,8 @@ for value in "$timeout_seconds" "$disk_gib" "$minimum_free_gib"; do
 done
 [[ $vcpus == auto || $vcpus =~ ^[1-9][0-9]*$ ]] || usage
 [[ $memory_mib == auto || $memory_mib =~ ^[1-9][0-9]*$ ]] || usage
-: "${FSBUILD:?FSBUILD must point to the fsbuild executable}"
+[[ $serve_port =~ ^[1-9][0-9]*$ ]] || usage
+[[ -z $serve_dir || -d $serve_dir ]] || usage
 : "${RUNNER_TEMP:?RUNNER_TEMP is required}"
 
 for tool in "$qemu" qemu-img cloud-localds curl sha256sum base64 awk; do
@@ -171,6 +177,9 @@ cleanup() {
   fi
   [[ -z $run_dir ]] || rm -rf -- "$run_dir"
   [[ -z $download ]] || rm -f -- "$download"
+  if [[ $http_pid =~ ^[0-9]+$ ]]; then
+    kill "$http_pid" 2>/dev/null || true
+  fi
   return "$status"
 }
 trap cleanup EXIT
@@ -189,6 +198,7 @@ verify_image() {
 }
 
 if ! verify_image; then
+  : "${FSBUILD:?FSBUILD must point to the fsbuild executable}"
   rm -f "$base_image"
   download=${base_image}.download.$$
   rm -f "$download"
@@ -291,6 +301,12 @@ EOF
 unset payload_b64 wrapper_b64 wrapper
 cloud-localds "$seed" "${run_dir}/user-data" "${run_dir}/meta-data" >/dev/null
 rm -f "${run_dir}/user-data" "${run_dir}/meta-data"
+
+if [[ -n $serve_dir ]]; then
+  python3 -m http.server "$serve_port" --bind 0.0.0.0 --directory "$serve_dir" >/dev/null 2>&1 &
+  http_pid=$!
+  echo "Serving ${serve_dir} to the guest at http://10.0.2.2:${serve_port}/"
+fi
 
 touch "$serial"
 "$qemu" \

@@ -7,39 +7,43 @@ on:
       runner: {type: string, required: false, default: ''}
     outputs:
       artifact_name:
-        value: ${{ jobs.prepare.outputs.artifact_name }}
+        value: ${{ jobs.seed.outputs.artifact_name }}
 
 permissions: {contents: read, id-token: write}
 
 jobs:
-  prepare:
-    runs-on: ${{ inputs.runner != '' && inputs.runner || (inputs.architecture == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04') }}
-    timeout-minutes: 300
-    environment: pin
-    concurrency:
-      group: ${{ format('freebsd-pin-{0}', inputs.architecture) }}
-      cancel-in-progress: false
+  plan:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
     outputs:
-      artifact_name: ${{ steps.identity.outputs.artifact_name }}
+      chunk_ids: ${{ steps.plan.outputs.chunk_ids }}
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+      - uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16
+        with: {name: freebsd-pin-common, path: '${{ runner.temp }}/pin-common'}
+      - id: plan
+        run: |
+          set -euo pipefail
+          ids=$(python3 scripts/split_pin_candidates.py \
+            --common "${RUNNER_TEMP}/pin-common/common.json" \
+            --output-chunks "${RUNNER_TEMP}/chunks.json")
+          echo "chunk_ids=${ids}" >>"${GITHUB_OUTPUT}"
+          python3 -m json.tool "${RUNNER_TEMP}/chunks.json" >/dev/null
+
+  inputs:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    environment: pin
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
         with: {go-version-file: go.mod, cache: false}
       - uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16
         with: {name: freebsd-pin-common, path: '${{ runner.temp }}/pin-common'}
-      - name: Prepare native virtualization tools
+      - name: Prepare archive tools
         run: |
           sudo apt-get update
-          uname -m
-          if [[ "${{ inputs.architecture }}" == "arm64" ]]; then
-            sudo apt-get install -y --no-install-recommends qemu-system-arm qemu-utils qemu-efi-aarch64 cloud-image-utils zstd
-            command -v qemu-system-aarch64
-            qemu-system-aarch64 --version | head -n 1
-          else
-            sudo apt-get install -y --no-install-recommends qemu-system-x86 qemu-utils ovmf cloud-image-utils zstd
-          fi
-          if [[ -e /dev/kvm ]]; then sudo chmod a+rw /dev/kvm; fi
-          ls -l /dev/kvm || true
+          sudo apt-get install -y --no-install-recommends qemu-utils zstd
       - run: go build -trimpath -o "${RUNNER_TEMP}/fsbuild" ./cmd/fsbuild
       - name: Acquire immutable pin writer
         env:
@@ -80,19 +84,65 @@ jobs:
           for file in base.txz packagesite.pkg worker.qcow2 worker-tools.tar; do
             "${FSBUILD}" blob put --file "${target}/${file}" --output "${target}/${file}.blob.json"
           done
-      - name: Boot native FreeBSD and evaluate the complete package requirement union
+      - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f
+        with:
+          name: freebsd-pin-${{ inputs.architecture }}-inputs
+          path: ${{ runner.temp }}/target/
+          if-no-files-found: error
+          retention-days: 14
+
+  evaluate:
+    needs: [plan, inputs]
+    runs-on: ${{ inputs.runner != '' && inputs.runner || (inputs.architecture == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04') }}
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        chunk: ${{ fromJSON(needs.plan.outputs.chunk_ids) }}
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+      - uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16
+        with: {name: freebsd-pin-common, path: '${{ runner.temp }}/pin-common'}
+      - uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16
+        with: {name: freebsd-pin-ports, path: '${{ runner.temp }}/pin-ports'}
+      - uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16
+        with:
+          name: freebsd-pin-${{ inputs.architecture }}-inputs
+          path: ${{ runner.temp }}/inputs
+      - name: Prepare native virtualization tools
+        run: |
+          sudo apt-get update
+          uname -m
+          if [[ "${{ inputs.architecture }}" == "arm64" ]]; then
+            sudo apt-get install -y --no-install-recommends qemu-system-arm qemu-utils qemu-efi-aarch64 cloud-image-utils
+            command -v qemu-system-aarch64
+            qemu-system-aarch64 --version | head -n 1
+          else
+            sudo apt-get install -y --no-install-recommends qemu-system-x86 qemu-utils ovmf cloud-image-utils
+          fi
+          if [[ -e /dev/kvm ]]; then sudo chmod a+rw /dev/kvm; fi
+          ls -l /dev/kvm || true
+      - name: Boot native FreeBSD and evaluate one candidate chunk
         env:
           ARCH: ${{ inputs.architecture }}
-          FSBUILD: ${{ runner.temp }}/fsbuild
-          R2_BUCKET: ${{ vars.R2_BUILD_BUCKET }}
-          FSBUILD_STORE_PREFIX: v1
+          CHUNK_ID: ${{ matrix.chunk }}
         run: |
           set -euo pipefail
-          target="${RUNNER_TEMP}/target"; common="${RUNNER_TEMP}/pin-common/common.json"
-          image_sha=$(jq -er .sha256 "${target}/worker.qcow2.blob.json")
-          tools_sha=$(jq -er .sha256 "${target}/worker-tools.tar.blob.json")
+          common="${RUNNER_TEMP}/pin-common/common.json"
+          inputs="${RUNNER_TEMP}/inputs"
+          target="${RUNNER_TEMP}/target"; mkdir -p "${target}/serve"
+          image_sha=$(jq -er .sha256 "${inputs}/worker.qcow2.blob.json")
+          tools_sha=$(jq -er .sha256 "${inputs}/worker-tools.tar.blob.json")
+          ports_sha=$(jq -er .sha256 "${RUNNER_TEMP}/pin-ports/cache.json")
+          public_base=$(jq -er .public_base_url config/build-policy.json)
           mkdir -p "${HOME}/.cache/freesense-build/images"
-          cp -f "${target}/worker.qcow2" "${HOME}/.cache/freesense-build/images/${image_sha}.qcow2"
+          cp -f "${inputs}/worker.qcow2" "${HOME}/.cache/freesense-build/images/${image_sha}.qcow2"
+          curl --proto '=https' --fail --location --silent --show-error --retry 5 --retry-all-errors \
+            "${public_base}/inputs/sha256/${ports_sha}" --output "${target}/serve/ports.git.tar"
+          echo "${ports_sha}  ${target}/serve/ports.git.tar" | sha256sum -c -
+          python3 scripts/split_pin_candidates.py --common "${common}" --output-chunks "${target}/chunks.json" >/dev/null
+          chunk=$(jq -c --arg id "${CHUNK_ID}" '.[] | select(.id == ($id|tonumber))' "${target}/chunks.json")
+          [[ -n ${chunk} ]]
           cat <<'EOF' >"${target}/collect.sh"
           #!/bin/sh
           set -eu
@@ -119,7 +169,16 @@ jobs:
           if command -v python3.11 >/dev/null && ! command -v python3 >/dev/null; then
             ln -s "\$(command -v python3.11)" /usr/local/bin/python3
           fi
-          git clone https://github.com/freebsd/freebsd-ports.git /root/ports
+          phase ports-fetch
+          fetch -o /root/ports.git.tar 'http://10.0.2.2:8765/ports.git.tar'
+          [ -s /root/ports.git.tar ]
+          phase ports-unpack
+          tar -C /root -xf /root/ports.git.tar
+          rm -f /root/ports.git.tar
+          [ -d /root/ports.git ]
+          mkdir -p /root/ports
+          printf '%s\n' 'gitdir: /root/ports.git' >/root/ports/.git
+          phase ports-ready
           for spec in \
             'FreeSense-org/freesense:$(jq -er .sources.freesense "${common}"):source' \
             'FreeSense-org/freesense-system-ports:$(jq -er .sources.system_ports "${common}"):system' \
@@ -162,9 +221,11 @@ jobs:
               packages = [x for x in packages if x not in excluded]
           print(json.dumps({'system': system, 'packages': packages}))
           PY
-          printf '%s' '$(jq -c .ports_candidates "${common}" | base64 -w0)' | base64 -d >/root/candidates.json
+          printf '%s' '$(jq -c '.candidates' <<<"${chunk}" | base64 -w0)' | base64 -d >/root/candidates.json
           : >/root/candidate-requirements.jsonl
           jq -r '.[] | [.commit,.committed_at] | @tsv' /root/candidates.json | while IFS="$(printf '\t')" read -r candidate committed_at; do
+            phase "candidate-\${candidate}"
+            git --git-dir=/root/ports.git --work-tree=/root/ports checkout -f "\${candidate}"
             git -C /root/ports reset --hard "\${candidate}"
             git -C /root/ports clean -fdx
             for overlay in /root/system /root/packages; do
@@ -185,19 +246,75 @@ jobs:
           echo PIN_CANDIDATES_END
           EOF
           scripts/runner/run-vm.sh --host-architecture "${ARCH}" --image-sha256 "${image_sha}" \
-            --script "${target}/collect.sh" --timeout 14400 --vcpus auto --memory-mib auto \
+            --script "${target}/collect.sh" --timeout 10800 --vcpus auto --memory-mib auto \
             --disk-gib 60 --minimum-free-gib 25 --serial-output "${target}/serial.log" \
-            --failure-dir "${RUNNER_TEMP}/pin-${ARCH}-failure"
+            --failure-dir "${RUNNER_TEMP}/pin-${ARCH}-chunk-${CHUNK_ID}-failure" \
+            --serve-dir "${target}/serve" --serve-port 8765
           python3 scripts/extract_serial_payload.py --log "${target}/serial.log" \
-            --name PIN_CANDIDATES --output "${target}/candidate-requirements.json"
+            --name PIN_CANDIDATES --output "${target}/candidate-requirements-${CHUNK_ID}.json"
+      - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f
+        with:
+          name: freebsd-pin-${{ inputs.architecture }}-requirements-${{ matrix.chunk }}
+          path: ${{ runner.temp }}/target/candidate-requirements-${{ matrix.chunk }}.json
+          if-no-files-found: error
+          retention-days: 14
+      - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f
+        if: failure()
+        with:
+          name: freebsd-pin-${{ inputs.architecture }}-chunk-${{ matrix.chunk }}-failure
+          path: |
+            ${{ runner.temp }}/pin-${{ inputs.architecture }}-chunk-${{ matrix.chunk }}-failure/
+            ${{ runner.temp }}/target/*.log
+          if-no-files-found: ignore
+          retention-days: 14
+
+  seed:
+    needs: [inputs, evaluate]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    environment: pin
+    outputs:
+      artifact_name: ${{ steps.identity.outputs.artifact_name }}
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+        with: {go-version-file: go.mod, cache: false}
+      - uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16
+        with: {name: freebsd-pin-common, path: '${{ runner.temp }}/pin-common'}
+      - uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16
+        with:
+          name: freebsd-pin-${{ inputs.architecture }}-inputs
+          path: ${{ runner.temp }}/inputs
+      - uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16
+        with:
+          pattern: freebsd-pin-${{ inputs.architecture }}-requirements-*
+          path: ${{ runner.temp }}/chunks
+          merge-multiple: true
+          if-no-files-found: error
+      - run: go build -trimpath -o "${RUNNER_TEMP}/fsbuild" ./cmd/fsbuild
+      - name: Acquire immutable pin writer
+        env:
+          R2_CREDENTIAL_BROKER_URL: ${{ vars.R2_CREDENTIAL_BROKER_URL }}
+          R2_CREDENTIAL_BROKER_AUDIENCE: ${{ vars.R2_CREDENTIAL_BROKER_AUDIENCE }}
+          R2_BUCKET: ${{ vars.R2_BUILD_BUCKET }}
+          R2_ENDPOINT: ${{ vars.R2_ENDPOINT }}
+        run: >-
+          "${RUNNER_TEMP}/fsbuild" credentials acquire --broker-url "${R2_CREDENTIAL_BROKER_URL}"
+          --audience "${R2_CREDENTIAL_BROKER_AUDIENCE}" --role pin-writer
+          --expected-bucket "${R2_BUCKET}" --expected-prefix v1 --expected-endpoint "${R2_ENDPOINT}"
+          --github-env "${GITHUB_ENV}"
       - name: Build, verify and mirror the official package seed
         env:
           ARCH: ${{ inputs.architecture }}
         run: |
           set -euo pipefail
-          target="${RUNNER_TEMP}/target"
-          python3 scripts/candidate_seeds.py --catalog "${target}/packagesite.pkg" \
-            --trusted-key-sha256 "$(jq -er .trusted_key_sha256 "${target}/worker-tools.json")" \
+          target="${RUNNER_TEMP}/target"; mkdir -p "${target}"
+          python3 scripts/split_pin_candidates.py \
+            --common "${RUNNER_TEMP}/pin-common/common.json" \
+            --merge "${RUNNER_TEMP}/chunks" \
+            --output "${target}/candidate-requirements.json"
+          python3 scripts/candidate_seeds.py --catalog "${RUNNER_TEMP}/inputs/packagesite.pkg" \
+            --trusted-key-sha256 "$(jq -er .trusted_key_sha256 "${RUNNER_TEMP}/inputs/worker-tools.json")" \
             --candidates "${target}/candidate-requirements.json" --architecture "${ARCH}" \
             --fsbuild "${RUNNER_TEMP}/fsbuild" --output "${target}/candidate-seeds"
       - id: identity
@@ -206,15 +323,16 @@ jobs:
           ARCH: ${{ inputs.architecture }}
         run: |
           set -euo pipefail
-          target="${RUNNER_TEMP}/target"; common="${RUNNER_TEMP}/pin-common/common.json"
+          target="${RUNNER_TEMP}/target"
+          inputs="${RUNNER_TEMP}/inputs"
           abi=$(jq -er --arg arch "${ARCH}" '.targets[$arch].abi' config/build-policy.json)
           jq -n --arg arch "${ARCH}" --arg abi "${abi}" \
-            --slurpfile jail "${target}/base.txz.blob.json" \
-            --slurpfile catalog "${target}/packagesite.pkg.blob.json" \
+            --slurpfile jail "${inputs}/base.txz.blob.json" \
+            --slurpfile catalog "${inputs}/packagesite.pkg.blob.json" \
             --slurpfile candidates "${target}/candidate-seeds/candidates.json" \
-            --slurpfile image "${target}/worker.qcow2.blob.json" \
-            --slurpfile tools "${target}/worker-tools.tar.blob.json" \
-            --slurpfile toolmeta "${target}/worker-tools.json" '
+            --slurpfile image "${inputs}/worker.qcow2.blob.json" \
+            --slurpfile tools "${inputs}/worker-tools.tar.blob.json" \
+            --slurpfile toolmeta "${inputs}/worker-tools.json" '
             def as_blob(b): b + {object: (b.object // b.key // ("inputs/sha256/" + b.sha256))};
             {schema_version:"freesense.freebsd-pin-target/v1",architecture:$arch,abi:$abi,ready:true,
              jail_seed:as_blob($jail[0]),
@@ -231,13 +349,4 @@ jobs:
           name: freebsd-pin-${{ inputs.architecture }}
           path: ${{ runner.temp }}/target/report.json
           if-no-files-found: error
-          retention-days: 14
-      - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f
-        if: failure()
-        with:
-          name: freebsd-pin-${{ inputs.architecture }}-failure
-          path: |
-            ${{ runner.temp }}/pin-${{ inputs.architecture }}-failure/
-            ${{ runner.temp }}/target/*.log
-          if-no-files-found: ignore
           retention-days: 14
