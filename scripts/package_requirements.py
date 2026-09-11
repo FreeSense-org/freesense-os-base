@@ -26,9 +26,7 @@ METADATA_KNOBS = {
     "MASTER_SITE_OVERRIDE", "DEFAULT_VERSIONS", "CUR_ARCH", "NATIVE_BUILD",
     "IGNORE_OSVERSION", "PKG_ENV",
 }
-SOURCE_KNOBS = {"ETCDIR": r"net/frr",
-                "WITH_DEBUG": r"(?:net/(?:frr|quagga)|sysutils/check_reload_status)",
-                "MAKE_JOBS_UNSAFE": r"devel/doxygen$"}
+SOURCE_KNOBS = {"ETCDIR": r"net/frr"}
 PORT = re.compile(r"^[A-Za-z0-9][A-Za-z0-9+_.-]*/[A-Za-z0-9][A-Za-z0-9+_.-]*(?:@[A-Za-z0-9][A-Za-z0-9+_.-]*)?$")
 ASSIGNMENT = re.compile(r"^([A-Za-z0-9_.-]+)\s*(?:\+|\?|:|!)?=")
 OPTIONS_KNOB = re.compile(r"^(?:OPTIONS_(?:SET|UNSET)(?:_FORCE)?|.+_(?:SET|UNSET)(?:_FORCE)?)$")

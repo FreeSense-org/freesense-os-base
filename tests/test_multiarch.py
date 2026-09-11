@@ -229,8 +229,15 @@ class RequirementsCollectorTests(unittest.TestCase):
             text = path.read_text()
             package_requirements.audit_make_conf(text)
             self.assertIsNone(re.search(r"^\s*PHP_FD_SETSIZE\s*=", text, re.M))
+            self.assertIsNone(re.search(r"go=1\.25", text))
+            self.assertIsNone(re.search(r"^\s*WITH_DEBUG\s*=", text, re.M))
+            self.assertIsNone(re.search(r"^\s*MAKE_JOBS_UNSAFE\s*=", text, re.M))
         with self.assertRaisesRegex(ValueError, "non-OPTIONS knob"):
             package_requirements.audit_make_conf("PHP_FD_SETSIZE=3172\n")
+        with self.assertRaisesRegex(ValueError, "non-OPTIONS knob"):
+            package_requirements.audit_make_conf("WITH_DEBUG=yes\n")
+        with self.assertRaisesRegex(ValueError, "non-OPTIONS knob"):
+            package_requirements.audit_make_conf("MAKE_JOBS_UNSAFE=yes\n")
         with self.assertRaisesRegex(ValueError, "non-OPTIONS knob"):
             package_requirements.audit_make_conf("CFLAGS+= -DUNREVIEWED\n")
         with self.assertRaisesRegex(ValueError, "directive"):
