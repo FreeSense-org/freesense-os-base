@@ -27,6 +27,8 @@ const COMPONENT_FARM_WORKFLOW =
   `${GITHUB_REPOSITORY}/.github/workflows/component-farm.yml@${MAIN_REF}`;
 const MULTIARCH_PUBLISH_WORKFLOW =
   `${GITHUB_REPOSITORY}/.github/workflows/development-multiarch-publish.yml@${MAIN_REF}`;
+const QUALIFIED_PUBLISH_WORKFLOW =
+  `${GITHUB_REPOSITORY}/.github/workflows/publish-qualified-development.yml@${MAIN_REF}`;
 const BUILD_ENTRY_WORKFLOWS = Object.freeze([
   SYSTEM_WORKFLOW,
   PACKAGES_WORKFLOW,
@@ -72,8 +74,11 @@ const ROLE_DEFINITIONS = Object.freeze({
     workflow: "coordinator",
     actions: ["GetObject", "HeadObject", "PutObject"],
     ttlSeconds: 45 * 60,
-    paths() {
+    prefixPaths() {
       return [`${R2_PREFIX}/state/generations/`];
+    },
+    objectPaths() {
+      return [`${R2_PREFIX}/state/development-cycle.json`];
     },
   },
   "artifact-writer": {
@@ -153,6 +158,7 @@ const ROLE_DEFINITIONS = Object.freeze({
         `${R2_PREFIX}/releases/devel.arm64.json`,
         `${R2_PREFIX}/releases/devel.multiarch.json`,
         `${R2_PREFIX}/state/retention.json`,
+        `${R2_PREFIX}/state/development-cycle.json`,
       ];
     },
   },
@@ -583,7 +589,18 @@ function coordinatorWorkflow(claims) {
       claims.job_workflow_sha === claims.workflow_sha) ||
     entryWorkflow(claims) ||
     directWorkflow(claims, RELEASE_WORKFLOW, ["workflow_run"]) ||
+    qualifiedArchitectureWorkflow(claims) ||
     arm64ReusableWorkflow(claims, [SYSTEM_WORKFLOW, PACKAGES_WORKFLOW, RELEASE_WORKFLOW])
+  );
+}
+
+function qualifiedArchitectureWorkflow(claims) {
+  return (
+    claims.workflow_ref === MULTIARCH_WORKFLOW &&
+    claims.job_workflow_ref === QUALIFIED_PUBLISH_WORKFLOW &&
+    ["workflow_dispatch", "schedule"].includes(claims.event_name) &&
+    SHA_PATTERN.test(claims.job_workflow_sha ?? "") &&
+    claims.job_workflow_sha === claims.workflow_sha
   );
 }
 
@@ -592,6 +609,7 @@ function channelWorkflow(claims) {
     entryWorkflow(claims) ||
     directWorkflow(claims, RELEASE_WORKFLOW, ["workflow_run"]) ||
     directWorkflow(claims, MULTIARCH_PUBLISH_WORKFLOW, ["workflow_run"]) ||
+    qualifiedArchitectureWorkflow(claims) ||
     arm64ReusableWorkflow(claims, [SYSTEM_WORKFLOW, PACKAGES_WORKFLOW, RELEASE_WORKFLOW])
   );
 }
@@ -604,6 +622,7 @@ function downloadWorkflow(claims) {
     ]) ||
     directWorkflow(claims, STABLE_WORKFLOW, ["workflow_dispatch"]) ||
     directWorkflow(claims, MULTIARCH_PUBLISH_WORKFLOW, ["workflow_run"]) ||
+    qualifiedArchitectureWorkflow(claims) ||
     arm64ReusableWorkflow(claims, [RELEASE_WORKFLOW])
   );
 }
@@ -986,6 +1005,7 @@ export const protocol = Object.freeze({
     multiarch: MULTIARCH_WORKFLOW,
     componentFarm: COMPONENT_FARM_WORKFLOW,
     multiarchPublish: MULTIARCH_PUBLISH_WORKFLOW,
+    qualifiedPublish: QUALIFIED_PUBLISH_WORKFLOW,
     arm64Experimental: ARM64_EXPERIMENTAL_WORKFLOW,
     system: SYSTEM_WORKFLOW,
     packages: PACKAGES_WORKFLOW,
