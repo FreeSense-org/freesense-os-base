@@ -5,6 +5,8 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -176,6 +178,72 @@ func TestAcquireAndExportUsesOIDCAndWritesOnlyGitHubEnvironment(t *testing.T) {
 		if !strings.Contains(environment, expected) {
 			t.Fatalf("GITHUB_ENV is missing %q:\n%s", expected, environment)
 		}
+	}
+}
+
+func TestAcquireAndExportRetriesTransientBrokerFailure(t *testing.T) {
+	now := time.Date(2026, 7, 17, 12, 0, 0, 0, time.UTC)
+	oidcToken := testJWT(`{"alg":"RS256"}`, `{"aud":"broker"}`, "signature")
+	temporary := validTemporaryCredentials(now)
+	var brokerRequests atomic.Int32
+	originalWait := brokerRetryWait
+	brokerRetryWait = func(context.Context, time.Duration) error { return nil }
+	t.Cleanup(func() { brokerRetryWait = originalWait })
+	server := httptest.NewTLSServer(http.HandlerFunc(func(
+		writer http.ResponseWriter,
+		request *http.Request,
+	) {
+		writer.Header().Set("Content-Type", "application/json")
+		switch request.URL.Path {
+		case "/oidc":
+			_ = json.NewEncoder(writer).Encode(oidcResponse{Value: oidcToken})
+		case "/v1/credentials":
+			if brokerRequests.Add(1) == 1 {
+				http.Error(writer, `{"error":"unavailable"}`, http.StatusServiceUnavailable)
+				return
+			}
+			_ = json.NewEncoder(writer).Encode(temporary)
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	defer server.Close()
+
+	githubEnv := filepath.Join(t.TempDir(), "github-env")
+	if err := os.WriteFile(githubEnv, []byte("EXISTING=value\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	err := AcquireAndExport(context.Background(), Options{
+		BrokerURL:        server.URL + "/v1/credentials",
+		Audience:         server.URL,
+		Role:             "cas-worker",
+		ExpectedBucket:   "freesense-builds",
+		ExpectedPrefix:   "v1",
+		ExpectedEndpoint: "https://0123456789abcdef.r2.cloudflarestorage.com",
+		GitHubEnv:        githubEnv,
+		OIDCRequestURL:   server.URL + "/oidc?api-version=1",
+		OIDCRequestToken: "runner-request-token",
+		MinimumValidity:  10 * time.Minute,
+		Client:           server.Client(),
+		Now:              func() time.Time { return now },
+		MaskWriter:       io.Discard,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if brokerRequests.Load() != 2 {
+		t.Fatalf("broker requests = %d, want 2", brokerRequests.Load())
+	}
+}
+
+func TestRetryableBrokerFailure(t *testing.T) {
+	if !retryableBrokerFailure(http.StatusServiceUnavailable, nil) ||
+		!retryableBrokerFailure(0, errors.New("read tcp 10.1.0.140:41526->172.67.206.57:443: read: connection reset by peer")) {
+		t.Fatal("transient broker failures must be retried")
+	}
+	if retryableBrokerFailure(http.StatusUnauthorized, nil) ||
+		retryableBrokerFailure(http.StatusBadRequest, errors.New("credential broker returned 400 Bad Request")) {
+		t.Fatal("permanent broker failures must not be retried")
 	}
 }
 
