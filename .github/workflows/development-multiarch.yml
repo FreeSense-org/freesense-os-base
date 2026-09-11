@@ -7,6 +7,10 @@ on:
         description: Exercise the dedicated ARM64 fallback for this full canary
         type: boolean
         default: false
+      abandon_incomplete_cycle:
+        description: Supersede the frozen incomplete cycle and start a new one from current sources
+        type: boolean
+        default: false
   schedule:
     - cron: '0 6 * * *'
 
@@ -121,11 +125,18 @@ jobs:
         env:
           ARM_PROBE: ${{ needs.arm_capability.outputs.report || '{}' }}
           FORCE_DEDICATED: ${{ inputs.force_dedicated || false }}
+          ABANDON_INCOMPLETE_CYCLE: ${{ inputs.abandon_incomplete_cycle || false }}
           R2_BUCKET: ${{ vars.R2_BUILD_BUCKET }}
           FSBUILD_STORE_PREFIX: v1
         run: |
           set -euo pipefail
           "${RUNNER_TEMP}/fsbuild" multiarch cycle-get --output "${RUNNER_TEMP}/cycle-state.json"
+          if [[ "${ABANDON_INCOMPLETE_CYCLE}" == true ]] && jq -e '.exists and (.cycle.superseded != true)' "${RUNNER_TEMP}/cycle-state.json" >/dev/null; then
+            jq '.cycle + {superseded:true}' "${RUNNER_TEMP}/cycle-state.json" >"${RUNNER_TEMP}/abandoned-cycle.json"
+            "${RUNNER_TEMP}/fsbuild" multiarch cycle-commit --document "${RUNNER_TEMP}/abandoned-cycle.json"
+            echo "Superseded incomplete Development cycle generation $(jq -er .cycle.generation "${RUNNER_TEMP}/cycle-state.json")"
+            "${RUNNER_TEMP}/fsbuild" multiarch cycle-get --output "${RUNNER_TEMP}/cycle-state.json"
+          fi
           active=$(jq -r '.exists and (.cycle.superseded != true) and ((.cycle.architectures.amd64.published != true) or (.cycle.architectures.arm64.published != true))' "${RUNNER_TEMP}/cycle-state.json")
           if [[ "${active}" == true ]]; then
             jq -e .cycle.plan "${RUNNER_TEMP}/cycle-state.json" >"${RUNNER_TEMP}/multiarch-plan.json"
