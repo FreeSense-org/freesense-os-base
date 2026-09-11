@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"mime"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -31,7 +32,22 @@ const (
 	maximumValidity        = 6 * time.Hour
 	defaultMinimumValidity = 5 * time.Minute
 	defaultHTTPTimeout     = 30 * time.Second
+	brokerAttempts         = 6
 )
+
+var brokerRetryWait = func(ctx context.Context, delay time.Duration) error {
+	if delay <= 0 {
+		return nil
+	}
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
 
 var (
 	rolePattern      = regexp.MustCompile(`^[a-z][a-z0-9-]{0,63}$`)
@@ -214,6 +230,31 @@ func exchangeToken(
 	if err != nil {
 		return TemporaryR2Credentials{}, err
 	}
+	var last error
+	for attempt := 1; attempt <= brokerAttempts; attempt++ {
+		temporary, status, err := postBroker(ctx, options, oidcToken, payload)
+		if err == nil {
+			return temporary, nil
+		}
+		last = err
+		if !retryableBrokerFailure(status, err) || attempt == brokerAttempts {
+			break
+		}
+		delay := time.Duration(attempt*attempt) * 200 * time.Millisecond
+		fmt.Fprintf(os.Stderr, "credential broker attempt %d failed (%v); retrying in %s\n", attempt, err, delay)
+		if waitErr := brokerRetryWait(ctx, delay); waitErr != nil {
+			return TemporaryR2Credentials{}, waitErr
+		}
+	}
+	return TemporaryR2Credentials{}, last
+}
+
+func postBroker(
+	ctx context.Context,
+	options Options,
+	oidcToken string,
+	payload []byte,
+) (TemporaryR2Credentials, int, error) {
 	request, err := http.NewRequestWithContext(
 		ctx,
 		http.MethodPost,
@@ -221,7 +262,7 @@ func exchangeToken(
 		bytes.NewReader(payload),
 	)
 	if err != nil {
-		return TemporaryR2Credentials{}, fmt.Errorf("create credential broker request: %w", err)
+		return TemporaryR2Credentials{}, 0, fmt.Errorf("create credential broker request: %w", err)
 	}
 	request.Header.Set("Accept", "application/json")
 	request.Header.Set("Authorization", "Bearer "+oidcToken)
@@ -229,17 +270,40 @@ func exchangeToken(
 	request.Header.Set("User-Agent", "freesense-fsbuild/credentials-v1")
 	response, err := noRedirectClient(options.Client).Do(request)
 	if err != nil {
-		return TemporaryR2Credentials{}, fmt.Errorf("request temporary R2 credentials: %w", err)
+		return TemporaryR2Credentials{}, 0, fmt.Errorf("request temporary R2 credentials: %w", err)
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
-		return TemporaryR2Credentials{}, fmt.Errorf("credential broker returned %s", response.Status)
+		return TemporaryR2Credentials{}, response.StatusCode,
+			fmt.Errorf("credential broker returned %s", response.Status)
 	}
 	var temporary TemporaryR2Credentials
 	if err := decodeJSONResponse(response, &temporary, "credential broker response"); err != nil {
-		return TemporaryR2Credentials{}, err
+		return TemporaryR2Credentials{}, response.StatusCode, err
 	}
-	return temporary, nil
+	return temporary, response.StatusCode, nil
+}
+
+func retryableBrokerFailure(status int, err error) bool {
+	switch status {
+	case http.StatusTooManyRequests, http.StatusInternalServerError,
+		http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout:
+		return true
+	}
+	if err == nil {
+		return false
+	}
+	message := strings.ToLower(err.Error())
+	for _, token := range []string{
+		"connection reset", "unexpected eof", "broken pipe", "i/o timeout",
+		"tls handshake timeout", "connection refused",
+	} {
+		if strings.Contains(message, token) {
+			return true
+		}
+	}
+	var netErr net.Error
+	return errors.As(err, &netErr) && netErr.Timeout()
 }
 
 func validateTemporaryCredentials(
