@@ -94,7 +94,7 @@ jobs:
   evaluate:
     needs: [plan, inputs]
     runs-on: ${{ inputs.runner != '' && inputs.runner || (inputs.architecture == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04') }}
-    timeout-minutes: 180
+    timeout-minutes: 240
     strategy:
       fail-fast: false
       matrix:
@@ -248,7 +248,7 @@ jobs:
           echo PIN_CANDIDATES_END
           EOF
           scripts/runner/run-vm.sh --host-architecture "${ARCH}" --image-sha256 "${image_sha}" \
-            --script "${target}/collect.sh" --timeout 10800 --vcpus auto --memory-mib auto \
+            --script "${target}/collect.sh" --timeout 12600 --vcpus auto --memory-mib auto \
             --disk-gib 60 --minimum-free-gib 25 --serial-output "${target}/serial.log" \
             --failure-dir "${RUNNER_TEMP}/pin-${ARCH}-chunk-${CHUNK_ID}-failure" \
             --serve-dir "${target}/serve" --serve-port 8765
