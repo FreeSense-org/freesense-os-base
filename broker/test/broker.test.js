@@ -289,6 +289,20 @@ describe("multiarch identity boundaries", () => {
       ...publisher, event_name: "workflow_dispatch",
     }))).status, 403);
   });
+  it("grants the architecture-qualified publisher only its three required roles", async () => {
+    const publisher = {
+      workflow_ref: protocol.workflows.multiarch,
+      job_workflow_ref: protocol.workflows.qualifiedPublish,
+      event_name: "workflow_dispatch",
+    };
+    for (const role of ["coordinator", "channel-writer", "download-writer"]) {
+      assert.equal((await request(role, claimsFor(role, publisher))).status, 200);
+    }
+    assert.equal((await request("artifact-writer", claimsFor("artifact-writer", publisher))).status, 403);
+    assert.equal((await request("channel-writer", claimsFor("channel-writer", {
+      ...publisher, job_workflow_sha: "c".repeat(40),
+    }))).status, 403);
+  });
 });
 
 describe("configuration and protocol", () => {
@@ -353,7 +367,7 @@ describe("least-privilege role policies", () => {
       BUCKET,
       2700,
       ["v1/state/generations/"],
-      [],
+      ["v1/state/development-cycle.json"],
       ["GetObject", "HeadObject", "PutObject"],
     ],
     [
@@ -416,6 +430,7 @@ describe("least-privilege role policies", () => {
         "v1/releases/devel.arm64.json",
         "v1/releases/devel.multiarch.json",
         "v1/state/retention.json",
+        "v1/state/development-cycle.json",
       ],
       ["GetObject", "HeadObject", "ListObjectsV2"],
     ],
@@ -685,7 +700,7 @@ describe("automatic release ISO identity", () => {
     const body = await response.json();
     const session = decodeSession(body.session_token);
     assert.deepEqual(session.paths.prefixPaths, ["v1/state/generations/"]);
-    assert.deepEqual(session.paths.objectPaths, []);
+    assert.deepEqual(session.paths.objectPaths, ["v1/state/development-cycle.json"]);
   });
 
   it("keeps automatic Release coordinator access direct and event-specific", async () => {
