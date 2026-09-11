@@ -510,6 +510,8 @@ require("--owner=0 --group=0 --numeric-owner" in pin_workflow,
 require("tar -C /root --no-same-owner" in pin_target_workflow and
         "safe.directory /root/ports" in pin_target_workflow,
         "guest ports extract must not trip git safe.directory")
+require("git clone --no-checkout /root/ports.git /root/ports" in pin_target_workflow,
+        "guest must turn the cached bare ports repo into a work tree")
 require("split_pin_candidates.py" in pin_workflow and "split_pin_candidates.py" in pin_target_workflow,
         "chunked pin candidates are missing")
 require("strategy:" in pin_target_workflow and "matrix:" in pin_target_workflow,

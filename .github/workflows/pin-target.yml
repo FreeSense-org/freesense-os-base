@@ -177,10 +177,9 @@ jobs:
           rm -f /root/ports.git.tar
           [ -d /root/ports.git ]
           chown -R root:wheel /root/ports.git
-          mkdir -p /root/ports
-          printf '%s\n' 'gitdir: /root/ports.git' >/root/ports/.git
           git config --global --add safe.directory /root/ports.git
           git config --global --add safe.directory /root/ports
+          git clone --no-checkout /root/ports.git /root/ports
           phase ports-ready
           for spec in \
             'FreeSense-org/freesense:$(jq -er .sources.freesense "${common}"):source' \
@@ -226,10 +225,10 @@ jobs:
           PY
           printf '%s' '$(jq -c '.candidates' <<<"${chunk}" | base64 -w0)' | base64 -d >/root/candidates.json
           : >/root/candidate-requirements.jsonl
-          jq -r '.[] | [.commit,.committed_at] | @tsv' /root/candidates.json | while IFS="$(printf '\t')" read -r candidate committed_at; do
+          jq -r '.[] | [.commit,.committed_at] | @tsv' /root/candidates.json >/root/candidates.tsv
+          while IFS="$(printf '\t')" read -r candidate committed_at; do
             phase "candidate-\${candidate}"
-            git --git-dir=/root/ports.git --work-tree=/root/ports checkout -f "\${candidate}"
-            git -C /root/ports reset --hard "\${candidate}"
+            git -C /root/ports checkout -f "\${candidate}"
             git -C /root/ports clean -fdx
             for overlay in /root/system /root/packages; do
               (cd "\${overlay}" && tar --exclude=.git -cf - .) | tar -xf - -C /root/ports
@@ -242,7 +241,7 @@ jobs:
               --slurpfile requirements /root/requirements.json \
               '{commit:\$commit,committed_at:\$committed_at,requirements:\$requirements[0]}' \
               >>/root/candidate-requirements.jsonl
-          done
+          done < /root/candidates.tsv
           jq -s . /root/candidate-requirements.jsonl >/root/candidate-requirements.json
           echo PIN_CANDIDATES_BEGIN
           base64 /root/candidate-requirements.json
