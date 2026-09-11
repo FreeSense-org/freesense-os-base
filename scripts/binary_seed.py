@@ -53,8 +53,8 @@ def dependencies(value: object) -> dict:
 def excluded(requirement: dict) -> str:
     name = requirement["name"].lower()
     origin = requirement["origin"].lower()
-    if (name.startswith(("freesense", "freebsd-", "php85"))
-            or origin.split("/")[1].startswith(("freesense", "php85"))
+    if (name.startswith(("freesense", "freebsd-"))
+            or origin.split("/")[1].startswith("freesense")
             or name.endswith("-kmod") or name in {"world", "kernel"}):
         return "mandatory source-only package"
     for flag in FLAGS:

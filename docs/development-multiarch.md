@@ -27,7 +27,7 @@ The official signed seed is Tier 1. When the pin is unchanged, Tier 2 may import
 packages from the previous signed architecture-qualified FreeSense repository.
 Reuse requires exact ABI, OSVERSION, origin/version, options, recursive
 dependency provenance, port and patch content, relevant Mk content, make
-configuration, and architecture policy. Patched, PHP, kernel-sensitive,
+configuration, and architecture policy. Patched, kernel-sensitive,
 changed, or transitively affected packages rebuild. The final Poudriere pass
 remains authoritative.
 
@@ -45,7 +45,7 @@ The v4 pin validator requires both native worker images/tool bundles, both jail
 archives, verified signed catalogues, and compatible official binary seeds.
 Seeds cover System and Optional requirements together and require official Rust
 for both targets. The collector rejects unaudited make.conf assignments, and the
-selector excludes overlays, custom patches, kernel-sensitive packages and PHP85.
+selector excludes overlays, custom patches and kernel-sensitive packages.
 The v4 pin orchestrator in `pin.yml` resolves common source revisions, runs `pin-target.yml` in parallel on native amd64 and native ARM64 runners, downloads target reports, verifies identical revision and builddate, checks mirrored R2 inputs, assembles the pin via `assemble_multiarch_pin.py`, updates `config/freebsd-16.json` only when both targets pass, and opens or updates the automated pin pull request without force-pushing shared history.
 
 Delta finalizers discard conflicting package variants from their disposable
