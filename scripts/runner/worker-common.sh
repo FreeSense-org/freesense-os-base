@@ -973,6 +973,44 @@ create_source_archive() {
   phase source-archive-ready
 }
 
+# The layered repository's core invariant, made mechanical.
+#
+# FreeSense publishes only the sealed delta, and every name in it is distinct
+# from the mirror's. If a package escapes the delta -- because Poudriere decided
+# a seeded mirror package was stale and rebuilt it, or because a ports overlay
+# change landed without a pin refresh -- it would ship unsuffixed and pkg would
+# be free to substitute it for the upstream build, or the other way round. That
+# failure is silent at install time, so it has to be loud here.
+#
+# All three arguments are newline-separated package-name lists; the caller
+# produces them with pkg query, which keeps this function's logic testable.
+verify_delta_layer() {
+  published=$1 sealed=$2 mirrored=$3
+  phase delta-layer-verify
+  work=$(mktemp -d) || return 1
+  for list in published sealed mirrored; do
+    eval "source_list=\${${list}}"
+    LC_ALL=C sort -u "${source_list}" >"${work}/${list}" || { rm -rf "${work}"; return 1; }
+  done
+  [ -s "${work}/published" ] || {
+    echo "FreeSense layer published no packages" >&2
+    rm -rf "${work}"
+    return 1
+  }
+  escaped=$(LC_ALL=C comm -23 "${work}/published" "${work}/sealed")
+  shadowed=$(LC_ALL=C comm -12 "${work}/published" "${work}/mirrored")
+  rm -rf "${work}"
+  [ -z "${escaped}" ] || {
+    echo "published packages are outside the sealed delta: $(echo ${escaped})" >&2
+    return 1
+  }
+  [ -z "${shadowed}" ] || {
+    echo "published packages shadow the mirror by name: $(echo ${shadowed})" >&2
+    return 1
+  }
+  phase delta-layer-verified
+}
+
 sign_repository() {
   directory=$1
   phase repository-sign
