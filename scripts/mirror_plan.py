@@ -80,6 +80,46 @@ def entry(name: str, upstream: dict, abi: str, catalog_sha256: str) -> dict:
     }
 
 
+def component_roots(delta: dict) -> dict[str, list[str]]:
+    """Split the delta's port origins between the two build stages.
+
+    delta_closure records which component each delta package belongs to, but as
+    package NAMES; a Poudriere bulk list is addressed by ORIGIN. Resolving that
+    here, against the same document the membership decision came from, is what
+    lets the System stage build System's roots and the Optional stage build
+    Optional's -- rather than each one compiling the whole delta because the
+    flat root list cannot tell them apart.
+
+    An origin may legitimately appear in both: a package in both closures is
+    built once by System and taken from the System repository by Optional.
+
+    These are ROOTS, so they are a subset of delta_roots rather than a
+    partition of it. The difference is the reverse-dependency cascade -- ports
+    like devel/doxygen and print/texlive-base that are in our layer only
+    because something we customize reaches them. They are nobody's root, and
+    Poudriere builds them when a root needs them, so putting them in a bulk
+    list would only make each stage build the other stage's cascade.
+    """
+    origins = {item["name"]: item["origin"] for item in delta["build"]}
+    components = delta.get("components")
+    if not isinstance(components, dict) or set(components) != {"system", "optional"}:
+        raise ValueError("the delta closure does not name both components")
+    resolved = {}
+    for component, names in components.items():
+        missing = [name for name in names if name not in origins]
+        if missing:
+            raise ValueError(f"{component} names packages outside the delta: {sorted(missing)[:5]}")
+        resolved[component] = sorted({origins[name] for name in names})
+    covered = set(resolved["system"]) | set(resolved["optional"])
+    if not covered <= set(origins.values()):
+        raise ValueError("the component split names origins outside the delta")
+    if origins and not covered:
+        # Nothing would be built by either stage although the delta is not
+        # empty, so every delta package is cascade with no root reaching it.
+        raise ValueError("the delta has packages but the component split is empty")
+    return resolved
+
+
 def unclaimed(names: set[str], upstream: dict, suffix: str) -> None:
     """Fail unless upstream claims neither shape of the names we are about to use.
 
@@ -144,6 +184,7 @@ def plan(delta: dict, catalogue: list[dict], *, architecture: str, catalog_sha25
         "delta_sha256": digest(delta),
         "packages": mirror,
         "delta_roots": sorted({item["origin"] for item in delta["build"]}),
+        "component_roots": component_roots(delta),
         "collisions": delta["collisions"],
         "counts": {"mirror": len(mirror), "delta": len(build), "churn": len(delta["churn"])},
     }

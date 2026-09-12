@@ -20,12 +20,16 @@ def upstream(name, *, version="1.0", origin=None, size=1024):
             "repopath": f"All/{name}-{version}.pkg", "sum": "0" * 64, "pkgsize": size}
 
 
-def delta(build=(), take=("pkg", "alpha"), churn=None, collisions=()):
+def delta(build=(), take=("pkg", "alpha"), churn=None, collisions=(),
+          components=None):
+    build = list(build)
+    if components is None:
+        components = {"system": build, "optional": []}
     return {
         "schema_version": "freesense.delta-closure/v1", "abi": ABI,
         "build": [{"name": name, "origin": f"devel/{name}", "cause": "overlay"} for name in build],
         "take": sorted(take),
-        "components": {"system": [], "optional": []},
+        "components": components,
         "collisions": [{"name": name, "origin": f"devel/{name}"} for name in collisions],
         "churn": churn or {},
         "counts": {"records": len(build) + len(take), "customized": len(build), "cascade": 0,
@@ -174,6 +178,73 @@ class IdentityTests(unittest.TestCase):
     def test_a_mismatched_architecture_is_rejected(self):
         with self.assertRaisesRegex(ValueError, "different architecture"):
             make(delta(), [upstream("pkg"), upstream("alpha")], architecture="arm64")
+
+
+class ComponentRootTests(unittest.TestCase):
+    """The bulk list is addressed by origin; the closure records names."""
+
+    def test_each_stage_gets_its_own_roots_resolved_to_origins(self):
+        document = make(delta(build=["ours", "theirs"],
+                              components={"system": ["ours"], "optional": ["theirs"]}),
+                        [upstream("pkg"), upstream("alpha")])
+        self.assertEqual(document["component_roots"],
+                         {"system": ["devel/ours"], "optional": ["devel/theirs"]})
+
+    def test_a_package_in_both_closures_is_a_root_of_both(self):
+        # System builds it; Optional takes it from the System repository. The
+        # split records the truth rather than picking a side.
+        document = make(delta(build=["shared"],
+                              components={"system": ["shared"], "optional": ["shared"]}),
+                        [upstream("pkg"), upstream("alpha")])
+        self.assertEqual(document["component_roots"]["system"], ["devel/shared"])
+        self.assertEqual(document["component_roots"]["optional"], ["devel/shared"])
+
+    def test_the_cascade_is_deliberately_nobody_s_root(self):
+        # doxygen is in our layer only because something we customize reaches
+        # it. Poudriere builds it as a dependency; putting it in a bulk list
+        # would make each stage build the other stage's cascade.
+        document = make(delta(build=["ours", "cascade"],
+                              components={"system": ["ours"], "optional": []}),
+                        [upstream("pkg"), upstream("alpha")])
+        self.assertEqual(document["component_roots"], {"system": ["devel/ours"], "optional": []})
+        self.assertIn("devel/cascade", document["delta_roots"])
+        self.assertNotIn("devel/cascade", document["component_roots"]["system"])
+
+    def test_a_component_naming_a_package_outside_the_delta_is_refused(self):
+        with self.assertRaisesRegex(ValueError, "outside the delta"):
+            make(delta(build=["ours"], components={"system": ["ours", "ghost"], "optional": []}),
+                 [upstream("pkg"), upstream("alpha")])
+
+    def test_a_closure_that_names_neither_component_is_refused(self):
+        document = delta(build=["ours"])
+        document["components"] = {"system": ["ours"]}
+        with self.assertRaisesRegex(ValueError, "both components"):
+            make(document, [upstream("pkg"), upstream("alpha")])
+
+    def test_an_empty_split_is_refused(self):
+        with self.assertRaisesRegex(ValueError, "empty"):
+            make(delta(build=["ours"], components={"system": [], "optional": []}),
+                 [upstream("pkg"), upstream("alpha")])
+
+    def test_the_measured_closures_split_the_way_the_farm_expects(self):
+        import gzip
+        import delta_closure
+        root = ROOT / "tests/fixtures/delta-closure"
+        make_conf = (root / "make.conf").read_text(encoding="utf-8")
+        expected = {"amd64": (38, 54, 3), "arm64": (41, 53, 6)}
+        for architecture, (system, optional, cascade) in expected.items():
+            with self.subTest(architecture=architecture):
+                records = json.loads(gzip.open(
+                    root / f"requirements-{architecture}.json.gz", "rt", encoding="utf-8").read())
+                catalogue = json.loads(gzip.open(
+                    root / f"catalogue-{architecture}.json.gz", "rt", encoding="utf-8").read())
+                closure = delta_closure.plan(records, catalogue, make_conf)
+                roots = mirror_plan.component_roots(closure)
+                union = set(roots["system"]) | set(roots["optional"])
+                origins = {item["origin"] for item in closure["build"]}
+                self.assertEqual(len(roots["system"]), system)
+                self.assertEqual(len(roots["optional"]), optional)
+                self.assertEqual(len(origins - union), cascade)
 
 
 if __name__ == "__main__":
