@@ -41,6 +41,11 @@ esac
   exit 1
 }
 case "${FARM_LAYOUT}" in legacy|delta-v1) : ;; *) echo "invalid farm layout" >&2; exit 1 ;; esac
+# The legacy nineteen-shard farm is retired: only the farmless stages may
+# declare it, and System and Optional are built exclusively by the delta farm.
+if [ "${STAGE}" = system ] || [ "${STAGE}" = packages ]; then
+  [ "${FARM_LAYOUT}" = delta-v1 ] || { echo "System and Optional require the delta farm" >&2; exit 1; }
+fi
 if [ "${FARM_LAYOUT}" = delta-v1 ]; then
   [ "${SYSTEM_SHARD_COUNT}" -eq 8 ] || { echo "delta farm requires eight shards" >&2; exit 1; }
   [ "${SHARD_POLICY_VERSION}" = dependency-cost-v2 ] || { echo "invalid shard policy version" >&2; exit 1; }

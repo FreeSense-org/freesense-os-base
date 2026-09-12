@@ -112,6 +112,13 @@ function claimsFor(role, overrides = {}) {
       job_workflow_ref: protocol.workflows.system,
       job_workflow_sha: "b".repeat(40),
     },
+    "mirror-writer": {
+      environment: "build",
+      workflow_ref: protocol.workflows.mirror,
+      job_workflow_ref: protocol.workflows.mirror,
+      job_workflow_sha: "b".repeat(40),
+      event_name: "workflow_dispatch",
+    },
     "artifact-writer": {
       environment: "build",
       runner_environment: "self-hosted",
@@ -257,6 +264,40 @@ describe("multiarch identity boundaries", () => {
     assert.equal((await request("coordinator", claims)).status, 200);
     assert.equal((await request("coordinator", { ...claims, job_workflow_sha: "c".repeat(40) })).status, 403);
     assert.equal((await request("coordinator", { ...claims, event_name: "pull_request" })).status, 403);
+  });
+  it("grants the mirror only its own artifact prefix", async () => {
+    const response = await request("mirror-writer");
+    assert.equal(response.status, 200);
+    const session = decodeSession((await response.json()).session_token);
+    assert.deepEqual(session.paths.prefixPaths, [
+      "v1/inputs/sha256/",
+      "v1/artifacts/mirror/",
+    ]);
+    // Deliberately narrower than artifact-writer, which reaches every artifact
+    // prefix, and than pin-writer, which owns every immutable input.
+    assert.ok(!session.paths.prefixPaths.includes("v1/artifacts/"));
+  });
+  it("refuses mirror writes from any other workflow or trigger", async () => {
+    for (const workflow of [protocol.workflows.pin, protocol.workflows.system,
+      protocol.workflows.multiarch]) {
+      assert.equal((await request("mirror-writer", claimsFor("mirror-writer", {
+        workflow_ref: workflow, job_workflow_ref: workflow,
+      }))).status, 403);
+    }
+    assert.equal((await request("mirror-writer", claimsFor("mirror-writer", {
+      event_name: "schedule",
+    }))).status, 403);
+    assert.equal((await request("mirror-writer", claimsFor("mirror-writer", {
+      environment: "pin",
+    }))).status, 403);
+  });
+  it("refuses other roles to the mirror workflow", async () => {
+    for (const role of ["pin-writer", "artifact-writer", "channel-writer"]) {
+      assert.equal((await request(role, claimsFor(role, {
+        workflow_ref: protocol.workflows.mirror,
+        job_workflow_ref: protocol.workflows.mirror,
+      }))).status, 403);
+    }
   });
   it("does not grant channel writes to component or image subworkflows", async () => {
     for (const workflow of [protocol.workflows.componentFarm, protocol.workflows.release]) {

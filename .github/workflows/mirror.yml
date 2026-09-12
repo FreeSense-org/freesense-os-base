@@ -83,23 +83,18 @@ jobs:
           jq -r '"mirror \(.counts.mirror) packages, delta \(.counts.delta), ports \(.ports_commit)"' \
             "${RUNNER_TEMP}/mirror-plan.json"
 
-      - name: Acquire immutable pin writer
+      # One credential covers both writes this workflow makes, and reaches
+      # nothing else: the plan blob and the mirror's own artifact prefix.
+      - name: Acquire the mirror credential
         run: >-
           "${RUNNER_TEMP}/fsbuild" credentials acquire --broker-url "${R2_CREDENTIAL_BROKER_URL}"
-          --audience "${R2_CREDENTIAL_BROKER_AUDIENCE}" --role pin-writer
+          --audience "${R2_CREDENTIAL_BROKER_AUDIENCE}" --role mirror-writer
           --expected-bucket "${R2_BUCKET}" --expected-prefix v1 --expected-endpoint "${R2_ENDPOINT}"
           --github-env "${GITHUB_ENV}"
       - name: Seal the plan as an immutable input
         run: >-
           "${RUNNER_TEMP}/fsbuild" blob put --file "${RUNNER_TEMP}/mirror-plan.json"
           --output "${RUNNER_TEMP}/mirror-plan.blob.json"
-
-      - name: Acquire artifact credential
-        run: >-
-          "${RUNNER_TEMP}/fsbuild" credentials acquire --broker-url "${R2_CREDENTIAL_BROKER_URL}"
-          --audience "${R2_CREDENTIAL_BROKER_AUDIENCE}" --role artifact-writer
-          --expected-bucket "${R2_BUCKET}" --expected-prefix v1 --expected-endpoint "${R2_ENDPOINT}"
-          --github-env "${GITHUB_ENV}"
 
       - name: Derive the worker inputs from the pin and the plan
         env:

@@ -110,27 +110,14 @@ sysutils/FreeSense-cloud-init
 EOF
       ;;
     shard)
-      if [ "${FARM_LAYOUT}" = delta-v1 ]; then
-        python_bin=$(command -v python3 || command -v python3.11)
-        "${python_bin}" /root/os-definition/scripts/partition_roots.py \
-          --config /root/os-definition/config/multiarch-shards.json --component system \
-          --shard "${SYSTEM_SHARD_INDEX}" --roots "${all_roots}.sorted" --output "${shard_roots}" \
-          --batches-output /tmp/system-shard-batches.json
-      else
-      sed -e '/^net\/cloud-init$/d' -e '/^sysutils\/FreeSense-cloud-init$/d' \
-        "${all_roots}.sorted" >"${all_roots}.general"
-      general_shard_count=$((SYSTEM_SHARD_COUNT - 1))
-      root_count=$(awk 'END { print NR }' "${all_roots}.general")
-      [ "${root_count}" -ge "${general_shard_count}" ] || {
-        echo "System farm has fewer general roots (${root_count}) than shards (${general_shard_count})" >&2
-        return 1
-      }
-      awk -v shard="${SYSTEM_SHARD_INDEX}" -v count="${general_shard_count}" \
-        '((NR - 1) % count) == shard' "${all_roots}.general" >"${shard_roots}"
-      fi
+      python_bin=$(command -v python3 || command -v python3.11)
+      "${python_bin}" /root/os-definition/scripts/partition_roots.py \
+        --config /root/os-definition/config/multiarch-shards.json --component system \
+        --shard "${SYSTEM_SHARD_INDEX}" --roots "${all_roots}.sorted" --output "${shard_roots}" \
+        --batches-output /tmp/system-shard-batches.json
       ;;
   esac
-  if [ "${FARM_LAYOUT}:${roots_mode}" = delta-v1:shard ] && [ ! -s "${shard_roots}" ]; then
+  if [ "${roots_mode}" = shard ] && [ ! -s "${shard_roots}" ]; then
     EMPTY_SOURCE_SHARD=true
     export EMPTY_SOURCE_SHARD
     : >tools/conf/pfPorts/poudriere_bulk
@@ -276,8 +263,7 @@ case "${SYSTEM_PART}" in
     mkdir -p "${shard_seed}/All"
     : >"${shard_inventory}"
     rm -f "${shard_inventory}.rebuild"
-    seed_duplicate_policy=identical
-    if [ "${FARM_LAYOUT}" = delta-v1 ]; then seed_duplicate_policy=rebuild; fi
+    seed_duplicate_policy=rebuild
     shard=0
     while [ "${shard}" -lt "${SYSTEM_SHARD_COUNT}" ]; do
       shard_directory=/root/system-shard-${shard}

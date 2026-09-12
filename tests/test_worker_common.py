@@ -155,27 +155,24 @@ class WorkerVersionValidationTests(unittest.TestCase):
         self.assertIn("gzip -dc /tmp/freesense-built-kernel.gz", system)
         self.assertIn("ELF 64-bit.*ARM aarch64", system)
 
-    def test_amd64_system_farm_uses_all_twenty_hosted_slots(self) -> None:
-        workflow = (ROOT / ".github/workflows/system.yml").read_text(
+    def test_the_delta_farm_is_the_only_way_to_build_system(self) -> None:
+        workflow = (ROOT / ".github/workflows/component-farm.yml").read_text(
             encoding="utf-8"
         )
         reusable = (ROOT / ".github/workflows/runner-build.yml").read_text(
             encoding="utf-8"
         )
-        self.assertIn('max-parallel: 20', workflow)
-        self.assertIn('{"part": "core", "shard": "0", "count": "19"}', workflow)
-        self.assertIn('for index in range(18)', workflow)
-        self.assertIn('system_part: bootstrap', workflow)
-        self.assertIn('needs: [plan, build_bootstrap]', workflow)
-        self.assertIn('system_part: dependent', workflow)
-        self.assertIn('system_shard_index: "18"', workflow)
-        self.assertIn(
-            'needs: [plan, build_parts, build_bootstrap, build_dependent]',
-            workflow,
-        )
+        self.assertIn('max-parallel: 9', workflow)
+        self.assertIn('farm_layout: delta-v1', workflow)
+        self.assertIn('shard_policy_version: dependency-cost-v2', workflow)
+        self.assertIn("system_shard_count: '8'", workflow)
         self.assertIn('system_part: finalize', workflow)
-        self.assertIn('system_shard_count: "19"', workflow)
-        self.assertIn("needs.build_finalize.result == 'success'", workflow)
+        self.assertIn('needs: [prepare, parts]', workflow)
+        component = (ROOT / ".github/workflows/system.yml").read_text(encoding="utf-8")
+        self.assertIn("uses: ./.github/workflows/component-farm.yml", component)
+        for trigger in ("schedule:", "workflow_dispatch:", "workflow_run:"):
+            with self.subTest(trigger=trigger):
+                self.assertNotIn(trigger, component)
         self.assertIn(
             "freesense-hosted-{0}-{1}-{2}-{3}-{4}",
             reusable,
@@ -226,11 +223,11 @@ class WorkerVersionValidationTests(unittest.TestCase):
         ]
         self.assertIn('>>"${meta_dependencies}" || {', shard_roots)
         self.assertIn('dependencies contain unresolved variables', shard_roots)
-        self.assertIn('root_count=$(awk', shard_roots)
         self.assertIn("lang/rust", shard_roots)
         self.assertIn("net/cloud-init", shard_roots)
         self.assertIn("sysutils/FreeSense-cloud-init", shard_roots)
-        self.assertIn('general_shard_count=$((SYSTEM_SHARD_COUNT - 1))', shard_roots)
+        self.assertIn('partition_roots.py', shard_roots)
+        self.assertIn('--batches-output /tmp/system-shard-batches.json', shard_roots)
         self.assertNotIn('@{}$-', shard_roots)
 
     def test_system_farm_workers_do_not_receive_the_private_signing_key(self) -> None:
