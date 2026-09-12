@@ -29,6 +29,7 @@
     "download-smoke",
     "download-writer",
     "input-reader",
+    "mirror-writer",
     "pin-writer",
     "retention-build-deleter",
     "retention-build-reader",
