@@ -58,6 +58,7 @@ on:
       appliance_compression: {type: string, required: false, default: ''}
       build_host: {type: string, required: false, default: dedicated}
       binary_seed_object: {type: string, required: false, default: ''}
+      mirror_plan_object: {type: string, required: false, default: ''}
       binary_seed_provenance_sha256: {type: string, required: false, default: ''}
       previous_freesense_repository: {type: string, required: false, default: ''}
       farm_layout: {type: string, required: false, default: legacy}
@@ -130,6 +131,7 @@ jobs:
       SYSTEM_SHARD_INDEX: ${{ inputs.system_shard_index }}
       SYSTEM_SHARD_COUNT: ${{ inputs.system_shard_count }}
       BINARY_SEED_OBJECT: ${{ inputs.binary_seed_object }}
+      MIRROR_PLAN_OBJECT: ${{ inputs.mirror_plan_object }}
       BINARY_SEED_PROVENANCE_SHA256: ${{ inputs.binary_seed_provenance_sha256 }}
       PREVIOUS_FREESENSE_REPOSITORY: ${{ inputs.previous_freesense_repository }}
       FARM_LAYOUT: ${{ inputs.farm_layout }}

@@ -98,6 +98,7 @@ jobs:
       installer_format: ${{ fromJSON(inputs.plan).installer_format }}
       build_host: ${{ fromJSON(inputs.plan).build_host }}
       binary_seed_object: ${{ fromJSON(inputs.plan).binary_seed_object }}
+      mirror_plan_object: ${{ fromJSON(inputs.plan).mirror_plan_object }}
       binary_seed_provenance_sha256: ${{ fromJSON(inputs.plan).binary_seed_provenance_sha256 }}
       previous_freesense_repository: ${{ fromJSON(inputs.plan).previous_freesense_repository }}
       publish_enabled: ${{ 'false' }}
@@ -147,6 +148,7 @@ jobs:
       installer_format: ${{ fromJSON(inputs.plan).installer_format }}
       build_host: ${{ fromJSON(inputs.plan).build_host }}
       binary_seed_object: ${{ fromJSON(inputs.plan).binary_seed_object }}
+      mirror_plan_object: ${{ fromJSON(inputs.plan).mirror_plan_object }}
       binary_seed_provenance_sha256: ${{ fromJSON(inputs.plan).binary_seed_provenance_sha256 }}
       previous_freesense_repository: ${{ fromJSON(inputs.plan).previous_freesense_repository }}
       publish_enabled: ${{ 'false' }}
