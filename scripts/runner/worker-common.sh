@@ -113,11 +113,18 @@ fi
   echo "invalid build generation" >&2
   exit 1
 }
-for value in "${FINGERPRINT}" "${PLATFORM_ID}" "${SYSTEM_ID}" "${IMAGE_SHA256}" \
-  "${WORKER_TOOLS_SHA256}"; do
+for value in "${FINGERPRINT}" "${IMAGE_SHA256}" "${WORKER_TOOLS_SHA256}"; do
   case "${value}" in ''|*[!0-9a-f]*) echo "invalid SHA-256 build input" >&2; exit 1 ;; esac
   [ "${#value}" -eq 64 ] || { echo "invalid SHA-256 build input" >&2; exit 1; }
 done
+# The mirror republishes packages FreeBSD built. It has no platform image and is
+# not bound to a System repository, so it carries neither identity.
+if [ "${STAGE}" != mirror ]; then
+  for value in "${PLATFORM_ID}" "${SYSTEM_ID}"; do
+    case "${value}" in ''|*[!0-9a-f]*) echo "invalid SHA-256 build input" >&2; exit 1 ;; esac
+    [ "${#value}" -eq 64 ] || { echo "invalid SHA-256 build input" >&2; exit 1; }
+  done
+fi
 if [ "${STAGE}" = iso ] || [ "${STAGE}" = cloud ] || [ "${STAGE}" = appliance ]; then
   case "${PACKAGES_ID}" in ''|*[!0-9a-f]*) echo "invalid release Packages identity" >&2; exit 1 ;; esac
   [ "${#PACKAGES_ID}" -eq 64 ] || { echo "invalid release Packages identity" >&2; exit 1; }
