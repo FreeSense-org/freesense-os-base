@@ -200,6 +200,11 @@ def plan(delta: dict, catalogue: list[dict], *, architecture: str, catalog_sha25
         "packages": mirror,
         "delta_roots": sorted({item["origin"] for item in delta["build"]}),
         "component_roots": component_roots(delta),
+        # Every package this build is allowed to produce. The build compares
+        # what Poudriere actually emitted against this and the mirror's own
+        # names; anything in neither is a port the plan never sanctioned, which
+        # is how a delta build silently turns back into a full one.
+        "delta_packages": sorted({item["name"] for item in delta["build"]}),
         "collisions": delta["collisions"],
         "counts": {"mirror": len(mirror), "delta": len(build), "churn": len(delta["churn"])},
     }

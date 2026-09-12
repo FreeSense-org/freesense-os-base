@@ -210,6 +210,14 @@ class ComponentRootTests(unittest.TestCase):
         self.assertIn("devel/cascade", document["delta_roots"])
         self.assertNotIn("devel/cascade", document["component_roots"]["system"])
 
+    def test_the_plan_names_every_package_the_build_may_produce(self):
+        document = make(delta(build=["ours", "cascade"],
+                              components={"system": ["ours"], "optional": []}),
+                        [upstream("pkg"), upstream("alpha")])
+        # the cascade is nobody's root but is still ours to build
+        self.assertEqual(document["delta_packages"], ["cascade", "ours"])
+        self.assertNotIn("pkg", document["delta_packages"])
+
     def test_two_packages_sharing_one_origin_are_refused(self):
         # package_requirements strips the flavour from PKGORIGIN, so devel/glib20
         # is the origin of both glib and glib-bootstrap. A bulk list addressed by
