@@ -51,13 +51,14 @@ def select(candidates: list[dict], commit: str) -> tuple[dict, str]:
 
 
 def report(candidates: list[dict], records: list[dict], make_conf: str, *,
-           architecture: str, catalog_sha256: str, ceilings: dict) -> tuple[dict, dict, dict]:
+           architecture: str, catalog_sha256: str, ceilings: dict,
+           suffix: str) -> tuple[dict, dict, dict]:
     commit = observed_commit(records, architecture)
     candidate, selection = select(candidates, commit)
     delta = delta_closure.plan(candidate["requirements"], records, make_conf)
     mirror = mirror_plan.plan(delta, records, architecture=architecture,
                               catalog_sha256=catalog_sha256, ports_commit=candidate["commit"],
-                              ceilings=ceilings)
+                              ceilings=ceilings, suffix=suffix)
     summary = {
         "schema_version": "freesense.mirror-report/v1",
         "architecture": architecture,
@@ -84,6 +85,7 @@ def main() -> None:
     parser.add_argument("--policy", type=Path, default=Path("config/mirror-policy.json"))
     parser.add_argument("--output", type=Path, required=True, help="directory for the documents")
     args = parser.parse_args()
+    rules = json.loads(args.policy.read_text(encoding="utf-8"))
     records = verify_catalogue(args.catalog, args.trusted_key_sha256)
     with args.catalog.open("rb") as stream:
         catalog_sha256 = hashlib.file_digest(stream, "sha256").hexdigest()
@@ -91,7 +93,7 @@ def main() -> None:
         json.loads(args.candidates.read_text(encoding="utf-8")), records,
         args.make_conf.read_text(encoding="utf-8"),
         architecture=args.architecture, catalog_sha256=catalog_sha256,
-        ceilings=mirror_plan.policy(json.loads(args.policy.read_text(encoding="utf-8"))))
+        ceilings=mirror_plan.policy(rules), suffix=rules["delta_suffix"])
     args.output.mkdir(parents=True, exist_ok=True)
     for name, document in (("delta-closure", delta), ("mirror-plan", mirror), ("summary", summary)):
         (args.output / f"{name}.json").write_text(

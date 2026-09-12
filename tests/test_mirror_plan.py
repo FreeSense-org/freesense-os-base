@@ -12,6 +12,7 @@ COMMIT = "5052095ee6f48f63c4fd38dd9ffb2632513036d3"
 CATALOG = "a" * 64
 CEILINGS = {"amd64": {"max_delta": 10, "min_mirror": 2, "max_churn": 5},
             "arm64": {"max_delta": 10, "min_mirror": 2, "max_churn": 5}}
+SUFFIX = "-fs"
 
 
 def upstream(name, *, version="1.0", origin=None, size=1024):
@@ -34,7 +35,7 @@ def delta(build=(), take=("pkg", "alpha"), churn=None, collisions=()):
 
 def make(document, catalogue, **kwargs):
     options = {"architecture": "amd64", "catalog_sha256": CATALOG,
-               "ports_commit": COMMIT, "ceilings": CEILINGS}
+               "ports_commit": COMMIT, "ceilings": CEILINGS, "suffix": SUFFIX}
     options.update(kwargs)
     return mirror_plan.plan(document, catalogue, **options)
 
@@ -48,6 +49,17 @@ class PolicyTests(unittest.TestCase):
         for architecture, measured in (("amd64", 92), ("arm64", 95)):
             self.assertGreater(ceilings[architecture]["max_delta"], measured)
 
+    def test_the_checked_in_policy_names_the_suffix_the_renaming_uses(self):
+        document = json.loads((ROOT / "config" / "mirror-policy.json").read_text())
+        mirror_plan.policy(document)
+        self.assertRegex(document["delta_suffix"], r"^-[a-z0-9]+$")
+
+    def test_a_policy_without_a_usable_suffix_is_rejected(self):
+        document = json.loads((ROOT / "config" / "mirror-policy.json").read_text())
+        for value in (None, "", "fs", "-FS", "-", "-fs!"):
+            with self.subTest(value=value), self.assertRaisesRegex(ValueError, "delta suffix"):
+                mirror_plan.policy(dict(document, delta_suffix=value))
+
     def test_incomplete_policy_is_rejected(self):
         for document in (
             {"schema_version": "wrong", "ceilings": {}},
@@ -58,6 +70,34 @@ class PolicyTests(unittest.TestCase):
         ):
             with self.subTest(document=document), self.assertRaises(ValueError):
                 mirror_plan.policy(document)
+
+
+class RenamingTests(unittest.TestCase):
+    """The suffix only separates the layers if both shapes of the name are free."""
+
+    def test_a_plan_is_refused_when_upstream_already_publishes_the_renamed_name(self):
+        catalogue = [upstream("pkg"), upstream("alpha"), upstream("unbound"), upstream("unbound-fs")]
+        with self.assertRaisesRegex(ValueError, r"already publishes the renamed packages.*unbound"):
+            make(delta(build=["unbound"], take=["pkg", "alpha"]), catalogue)
+
+    def test_a_collision_that_is_not_built_is_checked_too(self):
+        # Cascade members are renamed by the same make.conf region, so an
+        # upstream name for one of them is just as ambiguous.
+        catalogue = [upstream("pkg"), upstream("alpha"), upstream("libgd-fs")]
+        with self.assertRaisesRegex(ValueError, "already publishes the renamed packages"):
+            make(delta(build=["ours"], take=["pkg", "alpha"], collisions=["libgd"]), catalogue)
+
+    def test_a_plan_is_refused_when_upstream_publishes_a_freesense_name(self):
+        # FreeSense's own ports stay unsuffixed because exact names are
+        # load-bearing across the product, so upstream must not claim any.
+        catalogue = [upstream("pkg"), upstream("alpha"), upstream("FreeSense-pkg-bind")]
+        with self.assertRaisesRegex(ValueError, "FreeSense-named packages"):
+            make(delta(build=["ours"], take=["pkg", "alpha"]), catalogue)
+
+    def test_the_ordinary_catalogue_claims_neither_shape(self):
+        catalogue = [upstream("pkg"), upstream("alpha"), upstream("unbound")]
+        document = make(delta(build=["unbound"], take=["pkg", "alpha"]), catalogue)
+        self.assertEqual(document["counts"]["delta"], 1)
 
 
 class MembershipTests(unittest.TestCase):
