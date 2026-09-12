@@ -70,6 +70,16 @@ def validate(pin: dict, *, now: datetime | None = None) -> None:
         for field in ("worker_image", "worker_tools"):
             if target[field].get("architecture") != arch or target[field].get("boot_verified") is not True:
                 raise ValueError(f"{arch} {field} has not passed a native boot test")
+        # Optional until the pin cycle cuts one. When present it binds the
+        # mirror, the plan it came from and the ports commit both were
+        # computed at, so the build cannot mix one snapshot with another.
+        mirror = target.get("mirror")
+        if mirror is not None:
+            if (not isinstance(mirror, dict)
+                    or not str(mirror.get("object", "")).startswith("inputs/sha256/")
+                    or not SHA256.fullmatch(str(mirror.get("fingerprint", "")))
+                    or not re.fullmatch(r"[0-9a-f]{40}", str(mirror.get("ports_commit", "")))):
+                raise ValueError(f"{arch} mirror pin is incomplete")
     if not any("rust" in pin["targets"][arch]["binary_seed"].get("verified_roots", []) for arch in ARCHES):
         raise ValueError("pin has no official lang/rust package on any architecture")
 
@@ -91,6 +101,8 @@ def worker(pin: dict, target: str, host: str) -> dict:
         "worker_image": inputs["worker_image"],
         "worker_tools": inputs["worker_tools"],
         "binary_seed": pin["targets"][target]["binary_seed"],
+        # Per target, not per host: the mirror is the ABI's lower layer.
+        "mirror": pin["targets"][target].get("mirror", {}),
     }
 
 

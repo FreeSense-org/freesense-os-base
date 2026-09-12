@@ -288,6 +288,10 @@ def main() -> int:
     if not selected_target["build_enabled"]:
         raise SystemExit(f"target {args.target} builds are disabled")
     target_pin = pin_target(lock, args.target)
+    # A frozen mirror is cut at the ports commit upstream actually published
+    # from. Poudriere judges a seeded package stale at any other commit and
+    # rebuilds it from source, so the build has to use the mirror's.
+    target_mirror = target_pin.get("mirror") or {}
     execution_inputs = {}
     worker_image = lock.get("worker_image", {})
     worker_tools = lock.get("worker_tools", {})
@@ -503,7 +507,7 @@ def main() -> int:
         packages_sha = "0" * 40
         os_base_sha = args.os_base_sha
         freebsd_sha = lock["freebsd_source"]["commit"]
-        ports_sha = lock["freebsd_ports"]["commit"]
+        ports_sha = target_mirror.get("ports_commit") or lock["freebsd_ports"]["commit"]
         image_sha256 = worker_image["sha256"]
         worker_tools_sha256 = worker_tools_lock_sha256
         jail_object = jail_seed["object"]
@@ -670,6 +674,7 @@ def main() -> int:
         "os_base_sha": os_base_sha,
         "freebsd_sha": freebsd_sha,
         "ports_sha": ports_sha,
+        "mirror_plan_object": target_mirror.get("object", ""),
         "image_sha256": image_sha256,
         "worker_tools_sha256": worker_tools_sha256,
         "build_host": execution_inputs.get("host", "github-amd64"),
