@@ -244,9 +244,70 @@ class WorkerVersionValidationTests(unittest.TestCase):
         ]
         self.assertIn('>>"${meta_dependencies}" || {', shard_roots)
         self.assertIn('dependencies contain unresolved variables', shard_roots)
-        self.assertIn('partition_roots.py', shard_roots)
-        self.assertIn('--batches-output /tmp/system-shard-batches.json', shard_roots)
+        # The partition step is shared with the delta path, so the function
+        # delegates rather than inlining it.
+        self.assertIn('partition_system_shard', shard_roots)
+        system = (ROOT / "scripts/runner/stages/system.sh").read_text(encoding="utf-8")
+        partition = system[system.index("partition_system_shard() {"):]
+        partition = partition[:partition.index(chr(10) + "}" + chr(10))]
+        self.assertIn('partition_roots.py', partition)
+        self.assertIn('--batches-output /tmp/system-shard-batches.json', partition)
         self.assertNotIn('@{}$-', shard_roots)
+
+    def test_the_delta_path_is_opt_in_and_leaves_the_old_one_alone(self) -> None:
+        # Nothing passes MIRROR_PLAN_OBJECT yet. Every delta behaviour has to
+        # sit behind it, so a build without one is byte-for-byte what it was.
+        system = (ROOT / "scripts/runner/stages/system.sh").read_text(encoding="utf-8")
+        prepare = system[system.index("prepare_system_ports() {"):]
+        prepare = prepare[:prepare.index(chr(10) + "}" + chr(10))]
+        for guarded in ("fetch_delta_mirror", "write_delta_bulk system",
+                        "seed_poudriere_repository /root/mirror-repo"):
+            with self.subTest(guarded=guarded):
+                self.assertIn(guarded, prepare)
+        # the legacy root list and the legacy seed both survive
+        self.assertIn("cp tools/conf/pfPorts/poudriere_system tools/conf/pfPorts/poudriere_bulk",
+                      prepare)
+        self.assertIn("prepare_merged_binary_seed", prepare)
+        self.assertIn('elif [ -n "${BINARY_SEED_OBJECT}" ]; then', prepare)
+
+    def test_the_delta_path_does_not_expand_the_metaports(self) -> None:
+        # The metaport expansion discovers the whole System closure. With a
+        # sealed plan that would add back every package the mirror provides.
+        system = (ROOT / "scripts/runner/stages/system.sh").read_text(encoding="utf-8")
+        roots = system[system.index("write_system_farm_roots() {"):]
+        roots = roots[:roots.index(chr(10) + "}" + chr(10))]
+        delta_at = roots.index('if [ -n "${MIRROR_PLAN_OBJECT}" ]; then')
+        self.assertLess(delta_at, roots.index("-V RUN_DEPENDS -V LIB_DEPENDS"))
+        self.assertIn("return 0", roots[delta_at:roots.index("  fi", delta_at)])
+        self.assertIn("/tmp/delta-roots", roots[delta_at:roots.index("  fi", delta_at)])
+
+    def test_the_mirror_is_bound_to_the_plan_it_was_cut_from(self) -> None:
+        # Two independent inputs would let a stale copy-paste seed one
+        # snapshot's bytes while building another's roots, with nothing failing
+        # because each artifact is internally consistent.
+        common = (ROOT / "scripts/runner/worker-common.sh").read_text(encoding="utf-8")
+        fetch = common[common.index("fetch_delta_mirror() {"):]
+        fetch = fetch[:fetch.index(chr(10) + "}" + chr(10))]
+        # the mirror id comes from the plan, never from a separate input
+        self.assertIn("MIRROR_ID=$(jq -r .fingerprint /root/mirror-plan.json)", fetch)
+        self.assertNotIn("${MIRROR_ID_INPUT", fetch)
+        # and the mirror must name this plan back
+        self.assertIn('.inputs.mirror_plan == $object', fetch)
+        self.assertIn("/root/mirror-repo/complete.json", fetch)
+        # the ports tree must be at the commit the mirror was computed from
+        self.assertIn(".ports_commit == $ports", fetch)
+        # and the escape check's data must exist before the path can be used
+        self.assertIn(".delta_packages", fetch)
+
+    def test_a_delta_bulk_list_refuses_an_unknown_component(self) -> None:
+        common = (ROOT / "scripts/runner/worker-common.sh").read_text(encoding="utf-8")
+        bulk = common[common.index("write_delta_bulk() {"):]
+        bulk = bulk[:bulk.index(chr(10) + "}" + chr(10))]
+        self.assertIn("system|optional", bulk)
+        self.assertIn("unknown delta component", bulk)
+        self.assertIn("component_roots[$component][]", bulk)
+        # an empty root list is a failure, not an empty build
+        self.assertIn("no roots to build", bulk)
 
     def test_system_farm_workers_do_not_receive_the_private_signing_key(self) -> None:
         workflow = (ROOT / ".github/workflows/runner-build.yml").read_text(
