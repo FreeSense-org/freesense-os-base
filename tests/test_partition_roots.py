@@ -46,3 +46,32 @@ class PartitionRootsTests(unittest.TestCase):
         self.assertEqual(partition_roots.batches(roots, {root: 5000 for root in roots}),
                          [["devel/a", "devel/b"], roots])
         self.assertEqual(partition_roots.batches(["devel/a"], {"devel/a": 10801}), [["devel/a"]])
+
+
+class ProductNameSubstitutionTests(unittest.TestCase):
+    """The Optional root list is a template; partitioning it raw never worked."""
+
+    def test_a_templated_origin_is_not_a_partitionable_root(self):
+        # poudriere_packages spells 34 of its origins %%PRODUCT_NAME%%-pkg-*.
+        # ORIGIN does not admit '%', so the whole plan is rejected -- not the
+        # one bad entry -- before any package is built.
+        with self.assertRaisesRegex(ValueError, "invalid shard root plan"):
+            partition_roots.partition(
+                ["dns/%%PRODUCT_NAME%%-pkg-bind", "dns/dnsmasq"], [], 8)
+        self.assertEqual(
+            [["dns/FreeSense-pkg-bind", "dns/dnsmasq"]][0],
+            sorted(sum(partition_roots.partition(
+                ["dns/FreeSense-pkg-bind", "dns/dnsmasq"], [], 8), [])))
+
+    def test_both_farm_stages_substitute_before_partitioning(self):
+        # System substituted and Optional did not, so the Optional shard path
+        # raised on every run. Assert the two stages agree.
+        root = Path(__file__).resolve().parents[1] / "scripts/runner/stages"
+        for stage in ("system.sh", "packages.sh"):
+            text = (root / stage).read_text(encoding="utf-8")
+            # Anchor on the invocation, not a mention in a comment.
+            partition_at = text.index("scripts/partition_roots.py")
+            preceding = text[:partition_at]
+            with self.subTest(stage=stage):
+                self.assertIn("s/%%PRODUCT_NAME%%/FreeSense/g", preceding,
+                              f"{stage} partitions roots it has not substituted")
