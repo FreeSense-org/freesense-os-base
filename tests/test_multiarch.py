@@ -98,8 +98,9 @@ class BinarySeedTests(unittest.TestCase):
             with self.subTest(flag=flag):
                 req = requirement()
                 req[flag] = True
-                with self.assertRaisesRegex(ValueError, "requires a compatible official"):
-                    binary_seed.select(requirements(req), [catalogue(req)], "amd64")
+                result = binary_seed.select(requirements(req), [catalogue(req)], "amd64")
+                self.assertNotIn("rust", result["accepted"])
+                self.assertIn("rust", result["rejected"])
                 del req[flag]
                 with self.assertRaisesRegex(ValueError, "eligibility audit"):
                     binary_seed.select(requirements(req), [catalogue(req)], "amd64")
@@ -113,8 +114,9 @@ class BinarySeedTests(unittest.TestCase):
                 req = requirement()
                 pkg = catalogue(req)
                 pkg[field] = value
-                with self.assertRaises(ValueError):
-                    binary_seed.select(requirements(req), [pkg], "amd64")
+                result = binary_seed.select(requirements(req), [pkg], "amd64")
+                self.assertNotIn("rust", result["accepted"])
+                self.assertIn("rust", result["rejected"])
 
     def test_rejects_duplicate_catalogue_names_and_cross_arch_requirements(self):
         req = requirement()
@@ -128,8 +130,9 @@ class BinarySeedTests(unittest.TestCase):
         middle = requirement("middle", "devel/middle", {"lib": {"version": lib["version"], "origin": lib["origin"]}})
         rust = requirement(deps={"middle": {"version": middle["version"], "origin": middle["origin"]}})
         lib["custom_patches"] = True
-        with self.assertRaisesRegex(ValueError, "requires a compatible official"):
-            binary_seed.select(requirements(rust, middle, lib), list(map(catalogue, (rust, middle, lib))), "amd64")
+        result = binary_seed.select(requirements(rust, middle, lib), list(map(catalogue, (rust, middle, lib))), "amd64")
+        self.assertNotIn("rust", result["accepted"])
+        self.assertIn("lib", result["rejected"])
 
     def test_bundle_is_deterministic_and_records_upstream_provenance(self):
         req = requirement()

@@ -68,6 +68,28 @@ class AssembleTests(unittest.TestCase):
         self.assertEqual(candidate["freebsd_ports"]["commit"], commits[1])
         self.assertEqual(candidate["pin_evidence"]["selected"]["score"]["minimum_accepted"], 9)
 
+    def test_skips_candidates_without_seeds_on_every_architecture(self):
+        common, reports = fixture(); commits = ["1" * 40, "2" * 40]
+        common["ports_candidates"] = [{"commit": commits[0], "committed_at":"2026-09-10T00:00:00Z"},
+                                      {"commit": commits[1], "committed_at":"2026-09-11T00:00:00Z"}]
+        for index, arch in enumerate(module.ARCHES):
+            base = reports[arch].pop("binary_seed")
+            reports[arch]["evidence"].pop("requirements_sha256")
+            seeded = {**base, "commit":commits[1], "committed_at":"2026-09-11T00:00:00Z",
+                      "accepted_count":8, "package_count":8, "verified_roots":["rust"]}
+            bare = {"commit":commits[0], "committed_at":"2026-09-10T00:00:00Z",
+                    "accepted_count":9, "package_count":0, "candidate_error":"pin requires rust"}
+            if arch == "arm64":
+                reports[arch]["candidates"] = [bare, seeded]
+            else:
+                reports[arch]["candidates"] = [
+                    {**base, "commit":commits[0], "committed_at":"2026-09-10T00:00:00Z",
+                     "accepted_count":9, "package_count":9, "verified_roots":["rust"]},
+                    seeded,
+                ]
+        candidate = module.assemble(common, reports)
+        self.assertEqual(candidate["freebsd_ports"]["commit"], commits[1])
+
     def test_requires_both_complete_native_reports(self):
         common, reports = fixture()
         candidate = module.assemble(common, reports)

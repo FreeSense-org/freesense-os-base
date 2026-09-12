@@ -40,7 +40,14 @@ def score_candidates(candidates: list[dict]) -> dict:
             raise ValueError("invalid ports candidate timestamp") from error
         if stamp.tzinfo is None:
             raise ValueError("ports candidate timestamp has no timezone")
-        ranked.append(((min(accepted.values()), sum(accepted.values()), stamp, commit), candidate))
+        rust = candidate.get("rust_official") or {arch: True for arch in TARGETS}
+        if set(rust) != set(TARGETS) or any(type(rust[arch]) is not bool for arch in TARGETS):
+            rust = {arch: True for arch in TARGETS}
+        ranked.append((
+            (int(rust["arm64"]), int(rust["amd64"]), min(accepted.values()),
+             sum(accepted.values()), stamp, commit),
+            candidate,
+        ))
     winner = max(ranked, key=lambda item: item[0])[1]
     # Preserve full rejection evidence; callers seal this alongside the pin.
     return {**winner, "score": {

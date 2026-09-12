@@ -99,6 +99,8 @@ def select(requirements: dict, records: list[dict], architecture: str) -> dict:
         if name in catalogue:
             ambiguous.add(name)
         catalogue[name] = record
+    if ambiguous:
+        raise ValueError("duplicate official package names in catalogue")
     accepted, rejected = {}, {}
     for name, req in sorted(requested.items()):
         reason = excluded(req)
@@ -127,7 +129,7 @@ def select(requirements: dict, records: list[dict], architecture: str) -> dict:
             rejected[name] = "dependency is source-only"
             del accepted[name]
     if "rust" not in accepted or accepted["rust"]["origin"] != "lang/rust":
-        raise ValueError("pin requires a compatible official lang/rust package")
+        rejected.setdefault("rust", "no compatible official lang/rust package")
     return {"accepted": accepted, "rejected": rejected, "requirements_sha256": digest(requirements)}
 
 
@@ -190,7 +192,8 @@ def bundle(selection: dict, directory: Path, output: Path, *, abi: str, catalog_
         "requirements_sha256": selection["requirements_sha256"],
         "requirements_components": ["system", "packages"],
         "provenance_sha256": hashlib.sha256(encoded).hexdigest(),
-        "verified_roots": ["rust"], "package_count": len(packages),
+        "verified_roots": (["rust"] if "rust" in selection["accepted"] else []),
+        "package_count": len(packages),
         "accepted_count": len(packages), "rejected_count": len(selection["rejected"]),
         "rejection_reasons": dict(sorted(reasons.items())),
         "rejected": dict(sorted(selection["rejected"].items())),

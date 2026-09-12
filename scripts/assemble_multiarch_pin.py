@@ -28,21 +28,31 @@ def assemble(common: dict, reports: dict[str, dict]) -> dict:
             raise ValueError("architectures did not evaluate the complete frozen candidate window")
         commits = set(expected)
         evidence = []
+        seedable = []
         for source in common.get("ports_candidates", []):
             commit = source.get("commit")
             if commit not in commits:
                 raise ValueError("invalid common ports candidate")
-            evidence.append({**source, "accepted": {arch: indexed[arch][commit].get("accepted_count", 0) for arch in ARCHES},
-                             "rejected": {arch: {"count": indexed[arch][commit].get("rejected_count", 0),
-                                                  "reasons": indexed[arch][commit].get("rejection_reasons", {}),
-                                                  "error": indexed[arch][commit].get("candidate_error", "")} for arch in ARCHES}})
-        selected = score_candidates(evidence)
+            row = {**source, "accepted": {arch: indexed[arch][commit].get("accepted_count", 0) for arch in ARCHES},
+                   "rejected": {arch: {"count": indexed[arch][commit].get("rejected_count", 0),
+                                        "reasons": indexed[arch][commit].get("rejection_reasons", {}),
+                                        "error": indexed[arch][commit].get("candidate_error", "")} for arch in ARCHES},
+                   "rust_official": {arch: ("rust" not in (indexed[arch][commit].get("rejected") or {})
+                                            and "rust" in (indexed[arch][commit].get("verified_roots") or []))
+                                     for arch in ARCHES}}
+            evidence.append(row)
+            if all(indexed[arch][commit].get("object") or indexed[arch][commit].get("key") for arch in ARCHES):
+                seedable.append(row)
+        if not seedable:
+            raise ValueError("no ports candidate produced official binary seeds on every architecture")
+        selected = score_candidates(seedable)
         common["freebsd_ports"] = {"commit": selected["commit"]}
         common["pin_evidence"] = {"schema_version":"freesense.ports-candidate-selection/v1",
                                   "candidate_count":len(evidence), "selected":selected}
         for arch in ARCHES:
             chosen = indexed[arch][selected["commit"]]
-            if "object" not in chosen: raise ValueError(f"selected {arch} candidate has no binary seed")
+            if not (chosen.get("object") or chosen.get("key")):
+                raise ValueError(f"selected {arch} candidate has no binary seed")
             reports[arch] = {**reports[arch], "binary_seed":chosen,
                              "evidence":{**reports[arch]["evidence"], "requirements_sha256":chosen["requirements_sha256"]}}
     candidate = {
