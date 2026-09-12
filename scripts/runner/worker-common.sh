@@ -35,7 +35,7 @@ case "${STAGE}" in system|packages|iso|cloud|appliance|mirror) : ;; *) echo "inv
 case "${SYSTEM_SHARD_INDEX}:${SYSTEM_SHARD_COUNT}" in
   *[!0-9:]*|:*|*:) echo "invalid System shard coordinates" >&2; exit 1 ;;
 esac
-[ "${SYSTEM_SHARD_COUNT}" -ge 1 ] && [ "${SYSTEM_SHARD_COUNT}" -le 19 ] && \
+[ "${SYSTEM_SHARD_COUNT}" -ge 1 ] && [ "${SYSTEM_SHARD_COUNT}" -le 8 ] && \
   [ "${SYSTEM_SHARD_INDEX}" -lt "${SYSTEM_SHARD_COUNT}" ] || {
   echo "invalid System shard coordinates" >&2
   exit 1
@@ -68,7 +68,7 @@ if [ "${FARM_LAYOUT}" = delta-v1 ]; then
     echo "core/finalizer requires shard index zero" >&2; exit 1
   fi
 elif [ "${STAGE}" = system ]; then
-  case "${SYSTEM_PART}" in full|core|bootstrap|shard|dependent|finalize) : ;; *)
+  case "${SYSTEM_PART}" in full|core|shard|finalize) : ;; *)
     echo "invalid System farm part" >&2; exit 1 ;;
   esac
   case "${SYSTEM_PART}" in
@@ -77,21 +77,14 @@ elif [ "${STAGE}" = system ]; then
         echo "a full System build requires default shard coordinates" >&2; exit 1;
       }
       ;;
-    core|bootstrap|finalize)
+    core|finalize)
       [ "${SYSTEM_SHARD_INDEX}" -eq 0 ] || {
         echo "System ${SYSTEM_PART} requires shard index zero" >&2; exit 1;
       }
       ;;
     shard)
-      [ "${SYSTEM_SHARD_COUNT}" -gt 1 ] && \
-        [ "${SYSTEM_SHARD_INDEX}" -lt "$((SYSTEM_SHARD_COUNT - 1))" ] || {
+      [ "${SYSTEM_SHARD_INDEX}" -lt "${SYSTEM_SHARD_COUNT}" ] || {
         echo "invalid general System package shard" >&2; exit 1;
-      }
-      ;;
-    dependent)
-      [ "${SYSTEM_SHARD_COUNT}" -gt 1 ] && \
-        [ "${SYSTEM_SHARD_INDEX}" -eq "$((SYSTEM_SHARD_COUNT - 1))" ] || {
-        echo "invalid dependent System package shard" >&2; exit 1;
       }
       ;;
   esac
@@ -464,11 +457,9 @@ merge_package() {
 publish_system_checkpoint() {
   checkpoint_kind=$1 checkpoint_id=$2 checkpoint_directory=$3
   checkpoint_batch=${CHECKPOINT_BATCH:-0}
-  checkpoint_farm="${RESULT}/checkpoints/farm-${SYSTEM_SHARD_COUNT}"
-  if [ "${FARM_LAYOUT}" = delta-v1 ]; then checkpoint_farm="${RESULT}/checkpoints/${ARCHITECTURE}/${FREEBSD_PIN_ID}/${PREVIOUS_FREESENSE_REPOSITORY:-none}/${SHARD_POLICY_VERSION}/farm-${SYSTEM_SHARD_COUNT}"; fi
+  checkpoint_farm="${RESULT}/checkpoints/${ARCHITECTURE}/${FREEBSD_PIN_ID}/${PREVIOUS_FREESENSE_REPOSITORY:-none}/${SHARD_POLICY_VERSION}/farm-${SYSTEM_SHARD_COUNT}"
   case "${checkpoint_kind}" in
     core) checkpoint_result="${checkpoint_farm}/core/batch-${checkpoint_batch}" ;;
-    bootstrap) checkpoint_result="${checkpoint_farm}/bootstrap/batch-${checkpoint_batch}" ;;
     shard) checkpoint_result="${checkpoint_farm}/shards/${checkpoint_id}/batch-${checkpoint_batch}" ;;
     *) echo "invalid System checkpoint kind" >&2; return 1 ;;
   esac
@@ -478,7 +469,7 @@ publish_system_checkpoint() {
   checkpoint_count=0
 
   case "${checkpoint_kind}:${checkpoint_id}" in
-    core:core|bootstrap:bootstrap|shard:[0-9]|shard:1[0-8]) : ;;
+    core:core|shard:[0-7]) : ;;
     *) echo "invalid System checkpoint identity" >&2; return 1 ;;
   esac
   [ -d "${checkpoint_directory}/All" ] || {
@@ -549,7 +540,6 @@ publish_system_checkpoint() {
       previous_batch=$((checkpoint_batch - 1))
       case "${checkpoint_kind}" in
         core) previous_result="${checkpoint_farm}/core/batch-${previous_batch}" ;;
-        bootstrap) previous_result="${checkpoint_farm}/bootstrap/batch-${previous_batch}" ;;
         shard) previous_result="${checkpoint_farm}/shards/${checkpoint_id}/batch-${previous_batch}" ;;
       esac
       rclone cat "${previous_result}/complete.json" >"${checkpoint_marker}.previous" || {
@@ -579,20 +569,17 @@ publish_system_checkpoint() {
 
 latest_checkpoint_batch() {
   latest_kind=$1 latest_id=$2
-  latest_farm="${RESULT}/checkpoints/farm-${SYSTEM_SHARD_COUNT}"
-  if [ "${FARM_LAYOUT}" = delta-v1 ]; then latest_farm="${RESULT}/checkpoints/${ARCHITECTURE}/${FREEBSD_PIN_ID}/${PREVIOUS_FREESENSE_REPOSITORY:-none}/${SHARD_POLICY_VERSION}/farm-${SYSTEM_SHARD_COUNT}"; fi
-  case "${latest_kind}" in core) latest_source="${latest_farm}/core" ;; bootstrap) latest_source="${latest_farm}/bootstrap" ;; shard) latest_source="${latest_farm}/shards/${latest_id}" ;; *) return 1 ;; esac
+  latest_farm="${RESULT}/checkpoints/${ARCHITECTURE}/${FREEBSD_PIN_ID}/${PREVIOUS_FREESENSE_REPOSITORY:-none}/${SHARD_POLICY_VERSION}/farm-${SYSTEM_SHARD_COUNT}"
+  case "${latest_kind}" in core) latest_source="${latest_farm}/core" ;; shard) latest_source="${latest_farm}/shards/${latest_id}" ;; *) return 1 ;; esac
   rclone lsf --dirs-only "${latest_source}" 2>/dev/null | sed -nE 's#^batch-([0-9]+)/$#\1#p' | sort -n | tail -1
 }
 
 fetch_system_checkpoint() {
   checkpoint_kind=$1 checkpoint_id=$2 checkpoint_destination=$3
   checkpoint_batch=${CHECKPOINT_BATCH:-0}
-  checkpoint_farm="${RESULT}/checkpoints/farm-${SYSTEM_SHARD_COUNT}"
-  if [ "${FARM_LAYOUT}" = delta-v1 ]; then checkpoint_farm="${RESULT}/checkpoints/${ARCHITECTURE}/${FREEBSD_PIN_ID}/${PREVIOUS_FREESENSE_REPOSITORY:-none}/${SHARD_POLICY_VERSION}/farm-${SYSTEM_SHARD_COUNT}"; fi
+  checkpoint_farm="${RESULT}/checkpoints/${ARCHITECTURE}/${FREEBSD_PIN_ID}/${PREVIOUS_FREESENSE_REPOSITORY:-none}/${SHARD_POLICY_VERSION}/farm-${SYSTEM_SHARD_COUNT}"
   case "${checkpoint_kind}" in
     core) checkpoint_source="${checkpoint_farm}/core/batch-${checkpoint_batch}" ;;
-    bootstrap) checkpoint_source="${checkpoint_farm}/bootstrap/batch-${checkpoint_batch}" ;;
     shard) checkpoint_source="${checkpoint_farm}/shards/${checkpoint_id}/batch-${checkpoint_batch}" ;;
     *) echo "invalid System checkpoint kind" >&2; return 1 ;;
   esac
@@ -986,9 +973,8 @@ configure_signing() {
     printf '%s' "${FREESENSE_REPO_SIGNING_KEY}" >/root/sign/repo.key
     chmod 400 /root/sign/repo.key
     openssl pkey -in /root/sign/repo.key -pubout -out /root/sign/repo.pub >/dev/null 2>&1
-  elif { [ "${STAGE}" = system ] || [ "${STAGE}:${FARM_LAYOUT}" = packages:delta-v1 ]; } && { [ "${SYSTEM_PART}" = core ] || \
-      [ "${SYSTEM_PART}" = bootstrap ] || [ "${SYSTEM_PART}" = shard ] || \
-      [ "${SYSTEM_PART}" = dependent ]; }; then
+  elif { [ "${STAGE}" = system ] || [ "${STAGE}" = packages ]; } && \
+      { [ "${SYSTEM_PART}" = core ] || [ "${SYSTEM_PART}" = shard ]; }; then
     cp /root/os-definition/config/channel-signing-public.pem /root/sign/repo.pub
   else
     echo "repository signing key is missing" >&2

@@ -177,7 +177,10 @@ class WorkerVersionValidationTests(unittest.TestCase):
             "freesense-hosted-{0}-{1}-{2}-{3}-{4}",
             reusable,
         )
-        self.assertIn("inputs.system_part == 'bootstrap' && '20700'", reusable)
+        self.assertIn("inputs.system_part == 'core'", reusable)
+        for part in ("bootstrap", "dependent"):
+            with self.subTest(part=part):
+                self.assertNotIn(f"system_part == '{part}'", reusable)
 
     def test_system_farm_checkpoints_are_verified_and_repaired(self) -> None:
         common = (ROOT / "scripts/runner/worker-common.sh").read_text(
@@ -196,7 +199,6 @@ class WorkerVersionValidationTests(unittest.TestCase):
             'checkpoint payload differs from its marker',
             'checkpoint package integrity mismatch',
             'checkpoint package metadata mismatch',
-            'checkpoint_farm}/bootstrap',
         ):
             with self.subTest(value=value):
                 self.assertIn(value, common)
@@ -205,8 +207,6 @@ class WorkerVersionValidationTests(unittest.TestCase):
             'while [ "${shard}" -lt "${SYSTEM_SHARD_COUNT}" ]',
             'merge_package "${package}" "${shard_seed}/All" "${shard_inventory}" "${seed_duplicate_policy}"',
             'seed_poudriere_repository "${shard_seed}"',
-            'fetch_system_checkpoint bootstrap bootstrap',
-            'seed_poudriere_repository "/root/system-bootstrap-checkpoint/${PACKAGE_ARCH}"',
             'prepare_system_ports full',
             'phase system-closure-check',
         ):
@@ -223,9 +223,6 @@ class WorkerVersionValidationTests(unittest.TestCase):
         ]
         self.assertIn('>>"${meta_dependencies}" || {', shard_roots)
         self.assertIn('dependencies contain unresolved variables', shard_roots)
-        self.assertIn("lang/rust", shard_roots)
-        self.assertIn("net/cloud-init", shard_roots)
-        self.assertIn("sysutils/FreeSense-cloud-init", shard_roots)
         self.assertIn('partition_roots.py', shard_roots)
         self.assertIn('--batches-output /tmp/system-shard-batches.json', shard_roots)
         self.assertNotIn('@{}$-', shard_roots)
@@ -236,7 +233,7 @@ class WorkerVersionValidationTests(unittest.TestCase):
         )
         self.assertIn("name: Render credential-free System farm worker", workflow)
         self.assertIn("FREESENSE_REPO_SIGNING_KEY: ''", workflow)
-        for part in ("core", "bootstrap", "shard", "dependent"):
+        for part in ("core", "shard"):
             with self.subTest(part=part):
                 self.assertIn(f"inputs.system_part != '{part}'", workflow)
         common = (ROOT / "scripts/runner/worker-common.sh").read_text(

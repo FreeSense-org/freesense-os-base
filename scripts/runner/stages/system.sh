@@ -99,24 +99,13 @@ EOF
   sed -e '/^security\/FreeSense$/d' -e '/^security\/FreeSense-system$/d' \
     "${all_roots}" | LC_ALL=C sort -u >"${all_roots}.sorted"
 
-  case "${roots_mode}" in
-    bootstrap)
-      printf '%s\n' lang/rust >"${shard_roots}"
-      ;;
-    dependent)
-      cat >"${shard_roots}" <<'EOF'
-net/cloud-init
-sysutils/FreeSense-cloud-init
-EOF
-      ;;
-    shard)
-      python_bin=$(command -v python3 || command -v python3.11)
-      "${python_bin}" /root/os-definition/scripts/partition_roots.py \
-        --config /root/os-definition/config/multiarch-shards.json --component system \
-        --shard "${SYSTEM_SHARD_INDEX}" --roots "${all_roots}.sorted" --output "${shard_roots}" \
-        --batches-output /tmp/system-shard-batches.json
-      ;;
-  esac
+  if [ "${roots_mode}" = shard ]; then
+    python_bin=$(command -v python3 || command -v python3.11)
+    "${python_bin}" /root/os-definition/scripts/partition_roots.py \
+      --config /root/os-definition/config/multiarch-shards.json --component system \
+      --shard "${SYSTEM_SHARD_INDEX}" --roots "${all_roots}.sorted" --output "${shard_roots}" \
+      --batches-output /tmp/system-shard-batches.json
+  fi
   if [ "${roots_mode}" = shard ] && [ ! -s "${shard_roots}" ]; then
     EMPTY_SOURCE_SHARD=true
     export EMPTY_SOURCE_SHARD
@@ -155,7 +144,7 @@ prepare_system_ports() {
     done
   fi
   case "${roots_mode}" in
-    shard|bootstrap|dependent) write_system_farm_roots "${roots_mode}" ;;
+    shard) write_system_farm_roots shard ;;
   esac
   create_source_archive
   if [ -n "${BINARY_SEED_OBJECT}" ]; then
@@ -209,11 +198,6 @@ case "${SYSTEM_PART}" in
     build_system_core
     publish_system_checkpoint core core "${core_repository}"
     ;;
-  bootstrap)
-    prepare_system_ports bootstrap
-    build_system_packages
-    publish_system_checkpoint bootstrap bootstrap "${latest}"
-    ;;
   shard)
     prepare_system_ports shard
     if [ "${EMPTY_SOURCE_SHARD:-false}" = true ]; then
@@ -244,15 +228,6 @@ case "${SYSTEM_PART}" in
       publish_system_checkpoint shard "${SYSTEM_SHARD_INDEX}" "${latest}"
       next_batch=$((next_batch + 1))
     done
-    ;;
-  dependent)
-    prepare_system_ports dependent
-    fetch_system_checkpoint bootstrap bootstrap /root/system-bootstrap-checkpoint
-    phase system-bootstrap-seed
-    seed_poudriere_repository "/root/system-bootstrap-checkpoint/${PACKAGE_ARCH}"
-    phase system-bootstrap-seed-ready
-    build_system_packages
-    publish_system_checkpoint shard "${SYSTEM_SHARD_INDEX}" "${latest}"
     ;;
   finalize)
     phase system-checkpoints-collect
