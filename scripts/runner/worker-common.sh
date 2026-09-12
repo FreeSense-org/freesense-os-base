@@ -733,13 +733,22 @@ seed_poudriere_repository() {
   [ -f "${repository}/Latest/pkg.pkg" ] || return 1
   rm -f "${seed_inventory}"
 
-  # Everything just written is outside the bulk list by construction, so the
-  # pkgclean that follows every Poudriere bulk would delete it and the next
-  # batch would rebuild it from source -- succeeding, slowly, without a word.
-  # The product build honours this from freesense#59 onward; on an older pinned
-  # source it is an unread variable and nothing changes.
-  FREESENSE_KEEP_SEEDED_PACKAGES=1
-  export FREESENSE_KEEP_SEEDED_PACKAGES
+  # A mirror is deliberately larger than the bulk list: it supplies the whole
+  # lower layer, and the roots we build reach only part of it. pkgclean would
+  # delete the rest and the next batch would rebuild it from source --
+  # succeeding, slowly, without a word -- so that seed opts out.
+  #
+  # The pin-time binary seed is the opposite case and must NOT opt out. It is
+  # accepted only where it lies inside the bulk list's closure, and pkgclean is
+  # what prunes the Poudriere repository back to that closure before
+  # compose_system_repository merges it into the signed artifact. Skip it there
+  # and the seed's whole contents -- including the upstream closure of the
+  # Optional roots, which share one seed bundle -- get published inside the
+  # System repository.
+  if [ -n "${MIRROR_PLAN_OBJECT}" ]; then
+    FREESENSE_KEEP_SEEDED_PACKAGES=1
+    export FREESENSE_KEEP_SEEDED_PACKAGES
+  fi
 }
 
 poudriere_latest_repository() {

@@ -223,6 +223,12 @@ class WorkerVersionValidationTests(unittest.TestCase):
         seed = common[start:end]
         self.assertIn("FREESENSE_KEEP_SEEDED_PACKAGES=1", seed)
         self.assertIn("export FREESENSE_KEEP_SEEDED_PACKAGES", seed)
+        # Only a mirror opts out. The pin-time binary seed is accepted only
+        # inside the bulk list's closure, and pkgclean is what prunes Poudriere
+        # back to that closure before the repository is composed and signed --
+        # so on that path it must still run.
+        guard = seed[:seed.index("FREESENSE_KEEP_SEEDED_PACKAGES=1")]
+        self.assertIn('if [ -n "${MIRROR_PLAN_OBJECT}" ]; then', guard)
         # Set only once the repository is in place, so a failure part-way
         # through cannot leave the flag on with a half-written seed.
         self.assertLess(seed.index('mv "${staging}" "${repository}"'),
