@@ -16,16 +16,20 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+import re
 
 from multiarch_pin import ARCHES, digest
 from resolve_worker_tools import _safe_name, _safe_origin, _safe_remote_path, _safe_version, parse_checksum
 
 REQUIRED_MIRROR_PACKAGES = ("pkg",)
+SUFFIX = re.compile(r"^-[a-z0-9]+$")
 
 
 def policy(document: dict) -> dict:
     if document.get("schema_version") != "freesense.mirror-policy/v1":
         raise ValueError("invalid mirror policy")
+    if not SUFFIX.fullmatch(str(document.get("delta_suffix", ""))):
+        raise ValueError("mirror policy has no usable delta suffix")
     ceilings = document.get("ceilings")
     if not isinstance(ceilings, dict) or set(ceilings) != set(ARCHES):
         raise ValueError("mirror policy must bound every architecture")
@@ -76,8 +80,32 @@ def entry(name: str, upstream: dict, abi: str, catalog_sha256: str) -> dict:
     }
 
 
+def unclaimed(names: set[str], upstream: dict, suffix: str) -> None:
+    """Fail unless upstream claims neither shape of the names we are about to use.
+
+    Renaming our layer with PKGNAMESUFFIX is only a separation if the renamed
+    name is free. It is also only a separation if upstream publishes nothing
+    called FreeSense*, because FreeSense's own ports are deliberately left
+    unsuffixed -- exact names are load-bearing across the product.
+
+    Measured against the live catalogues (37,908 amd64 / 35,276 aarch64): no
+    FreeSense* package exists on either, and four packages already end in -fs
+    (R-cran-fs, py312-fs, rubygem-chef-winrm-fs, rubygem-winrm-fs), two of them
+    alongside their own unsuffixed stem. None is in the delta, so this is checked
+    against the names we actually rename rather than against the suffix: a
+    catalogue-wide ban on the suffix would refuse today's mirror over packages
+    we never touch.
+    """
+    taken = sorted(name for name in names if name + suffix in upstream)
+    if taken:
+        raise ValueError(f"upstream already publishes the renamed packages: {taken}")
+    branded = sorted(name for name in upstream if name.startswith("FreeSense"))
+    if branded:
+        raise ValueError(f"upstream publishes FreeSense-named packages: {branded}")
+
+
 def plan(delta: dict, catalogue: list[dict], *, architecture: str, catalog_sha256: str,
-         ports_commit: str, ceilings: dict) -> dict:
+         ports_commit: str, ceilings: dict, suffix: str) -> dict:
     if delta.get("schema_version") != "freesense.delta-closure/v1":
         raise ValueError("invalid delta closure document")
     abi = ARCHES[architecture]
@@ -91,6 +119,7 @@ def plan(delta: dict, catalogue: list[dict], *, architecture: str, catalog_sha25
     unpublished = sorted(take - set(upstream))
     if unpublished:
         raise ValueError(f"the closure needs packages upstream does not publish: {unpublished}")
+    unclaimed(build | {item["name"] for item in delta["collisions"]}, upstream, suffix)
     mirror = [entry(name, upstream[name], abi, catalog_sha256) for name in sorted(take)]
 
     bound = ceilings[architecture]
@@ -133,13 +162,14 @@ def main() -> None:
     parser.add_argument("--policy", type=Path, default=Path("config/mirror-policy.json"))
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
+    rules = json.loads(args.policy.read_text(encoding="utf-8"))
     catalogue = [json.loads(line) for line in
                  args.catalogue.read_text(encoding="utf-8").splitlines() if line.strip()]
     document = plan(
         json.loads(args.delta.read_text(encoding="utf-8")), catalogue,
         architecture=args.architecture, catalog_sha256=args.catalog_sha256,
         ports_commit=args.ports_commit,
-        ceilings=policy(json.loads(args.policy.read_text(encoding="utf-8"))))
+        ceilings=policy(rules), suffix=rules["delta_suffix"])
     args.output.write_text(json.dumps(document, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
