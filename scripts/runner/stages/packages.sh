@@ -59,7 +59,13 @@ if [ "${SYSTEM_PART}" = finalize ]; then
     shard=$((shard + 1))
   done
 else
-  sed -e '/^[[:space:]]*#/d' -e '/^[[:space:]]*$/d' tools/conf/pfPorts/poudriere_bulk \
+  # poudriere_packages is a template: 34 of its origins are spelled
+  # %%PRODUCT_NAME%%-pkg-*. partition_roots.py's ORIGIN pattern does not admit
+  # '%', so feeding it the raw list raises "invalid shard root plan" before a
+  # single package is built. The System stage already substitutes at the same
+  # point; this one never did, which is why no Optional shard has ever run.
+  sed 's/%%PRODUCT_NAME%%/FreeSense/g' tools/conf/pfPorts/poudriere_bulk \
+    | sed -e '/^[[:space:]]*#/d' -e '/^[[:space:]]*$/d' \
     | LC_ALL=C sort -u >/tmp/optional-all-roots
   python_bin=$(command -v python3 || command -v python3.11)
   "${python_bin}" /root/os-definition/scripts/partition_roots.py \

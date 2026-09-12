@@ -46,3 +46,50 @@ class PartitionRootsTests(unittest.TestCase):
         self.assertEqual(partition_roots.batches(roots, {root: 5000 for root in roots}),
                          [["devel/a", "devel/b"], roots])
         self.assertEqual(partition_roots.batches(["devel/a"], {"devel/a": 10801}), [["devel/a"]])
+
+
+class ProductNameSubstitutionTests(unittest.TestCase):
+    """The Optional root list is a template; partitioning it raw never worked."""
+
+    def test_a_templated_origin_is_not_a_partitionable_root(self):
+        # poudriere_packages spells 34 of its origins %%PRODUCT_NAME%%-pkg-*.
+        # ORIGIN does not admit '%', so the whole plan is rejected -- not the
+        # one bad entry -- before any package is built.
+        with self.assertRaisesRegex(ValueError, "invalid shard root plan"):
+            partition_roots.partition(
+                ["dns/%%PRODUCT_NAME%%-pkg-bind", "dns/dnsmasq"], [], 8)
+        self.assertEqual(
+            [["dns/FreeSense-pkg-bind", "dns/dnsmasq"]][0],
+            sorted(sum(partition_roots.partition(
+                ["dns/FreeSense-pkg-bind", "dns/dnsmasq"], [], 8), [])))
+
+    def test_no_farm_stage_turns_the_template_into_roots_unsubstituted(self):
+        """The root list a stage partitions must never hold %%PRODUCT_NAME%%.
+
+        Asserted against the pipelines themselves rather than their position in
+        the file: the partition call is shared between the plan path and the
+        legacy path, so it does not sit after the substitution in source order
+        and an ordering test would only measure where the function happens to
+        be defined.
+        """
+        root = Path(__file__).resolve().parents[1] / "scripts/runner/stages"
+        template = "tools/conf/pfPorts/poudriere_bulk"
+        substitution = "s/%%PRODUCT_NAME%%/FreeSense/g"
+        checked = 0
+        for stage in ("system.sh", "packages.sh"):
+            text = (root / stage).read_text(encoding="utf-8")
+            self.assertIn("scripts/partition_roots.py", text)
+            # Join backslash continuations so a pipeline is one logical line.
+            logical = text.replace(chr(92) + chr(10), " ").splitlines()
+            for line in logical:
+                # A pipeline that reads the template and writes a roots file.
+                if template not in line:
+                    continue
+                if not any(sink in line for sink in
+                           ('>"${all_roots}"', ">/tmp/optional-all-roots")):
+                    continue
+                checked += 1
+                with self.subTest(stage=stage, line=line.strip()[:70]):
+                    self.assertIn(substitution, line,
+                                  f"{stage} builds roots from the template without substituting")
+        self.assertEqual(checked, 2, "expected one roots pipeline per farm stage")
