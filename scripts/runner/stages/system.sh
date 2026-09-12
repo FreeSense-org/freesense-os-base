@@ -89,33 +89,32 @@ EOF
     # including every package the mirror provides, and we would compile the
     # packages we just downloaded.
     LC_ALL=C sort -u /tmp/delta-roots >"${all_roots}.sorted"
-    partition_system_shard
-    return 0
-  fi
-  sed 's/%%PRODUCT_NAME%%/FreeSense/g' tools/conf/pfPorts/poudriere_bulk \
-    | sed -e '/^[[:space:]]*#/d' -e '/^[[:space:]]*$/d' >"${all_roots}"
-  : >"${meta_dependencies}"
-  for meta_origin in security/FreeSense security/FreeSense-system; do
-    env __MAKE_CONF="${make_conf}" make -C "${ports_root}/${meta_origin}" \
-      -V RUN_DEPENDS -V LIB_DEPENDS >>"${meta_dependencies}" || {
-      echo "failed to expand System metaport dependencies: ${meta_origin}" >&2
+  else
+    sed 's/%%PRODUCT_NAME%%/FreeSense/g' tools/conf/pfPorts/poudriere_bulk \
+      | sed -e '/^[[:space:]]*#/d' -e '/^[[:space:]]*$/d' >"${all_roots}"
+    : >"${meta_dependencies}"
+    for meta_origin in security/FreeSense security/FreeSense-system; do
+      env __MAKE_CONF="${make_conf}" make -C "${ports_root}/${meta_origin}" \
+        -V RUN_DEPENDS -V LIB_DEPENDS >>"${meta_dependencies}" || {
+        echo "failed to expand System metaport dependencies: ${meta_origin}" >&2
+        return 1
+      }
+    done
+    if grep -Eq '[$][{(]|%%[^%]+%%' "${meta_dependencies}"; then
+      echo "System metaport dependencies contain unresolved variables" >&2
+      cat "${meta_dependencies}" >&2
       return 1
-    }
-  done
-  if grep -Eq '[$][{(]|%%[^%]+%%' "${meta_dependencies}"; then
-    echo "System metaport dependencies contain unresolved variables" >&2
-    cat "${meta_dependencies}" >&2
-    return 1
-  fi
-  tr '[:space:]' '\n' <"${meta_dependencies}" | awk -F: '
-    NF >= 2 {
-      origin=$NF
-      if (origin ~ "^[A-Za-z0-9+_.-]+/[A-Za-z0-9+_.@-]+$") print origin
-    }
-  ' >>"${all_roots}"
+    fi
+    tr '[:space:]' '\n' <"${meta_dependencies}" | awk -F: '
+      NF >= 2 {
+        origin=$NF
+        if (origin ~ "^[A-Za-z0-9+_.-]+/[A-Za-z0-9+_.@-]+$") print origin
+      }
+    ' >>"${all_roots}"
 
-  sed -e '/^security\/FreeSense$/d' -e '/^security\/FreeSense-system$/d' \
-    "${all_roots}" | LC_ALL=C sort -u >"${all_roots}.sorted"
+    sed -e '/^security\/FreeSense$/d' -e '/^security\/FreeSense-system$/d' \
+      "${all_roots}" | LC_ALL=C sort -u >"${all_roots}.sorted"
+  fi
 
   partition_system_shard
   if [ "${roots_mode}" = shard ] && [ ! -s "${shard_roots}" ]; then

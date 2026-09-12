@@ -277,9 +277,29 @@ class WorkerVersionValidationTests(unittest.TestCase):
         roots = system[system.index("write_system_farm_roots() {"):]
         roots = roots[:roots.index(chr(10) + "}" + chr(10))]
         delta_at = roots.index('if [ -n "${MIRROR_PLAN_OBJECT}" ]; then')
+        # the expansion is the else-branch, so the plan never reaches it
         self.assertLess(delta_at, roots.index("-V RUN_DEPENDS -V LIB_DEPENDS"))
-        self.assertIn("return 0", roots[delta_at:roots.index("  fi", delta_at)])
-        self.assertIn("/tmp/delta-roots", roots[delta_at:roots.index("  fi", delta_at)])
+        delta_body = roots[delta_at:roots.index("  else", delta_at)]
+        self.assertIn("/tmp/delta-roots", delta_body)
+        self.assertNotIn("meta_dependencies", delta_body)
+
+    def test_both_root_paths_reach_the_shard_slice(self) -> None:
+        # The delta branch must not return early: the tail after it partitions
+        # the roots, handles an empty shard, and copies the shard's slice into
+        # poudriere_bulk. Skipping it builds the whole component in every shard.
+        system = (ROOT / "scripts/runner/stages/system.sh").read_text(encoding="utf-8")
+        roots = system[system.index("write_system_farm_roots() {"):]
+        roots = roots[:roots.index(chr(10) + "}" + chr(10))]
+        branch = roots.index('if [ -n "${MIRROR_PLAN_OBJECT}" ]; then')
+        delta_body = roots[branch:roots.index("  else", branch)]
+        self.assertIn("/tmp/delta-roots", delta_body)
+        self.assertNotIn("return", delta_body)
+        # the shared tail is after the conditional closes, and both reach it
+        close = roots.index(chr(10) + "  fi" + chr(10), branch)
+        tail = roots[close:]
+        self.assertIn("partition_system_shard", tail)
+        self.assertIn('cp "${shard_roots}" tools/conf/pfPorts/poudriere_bulk', tail)
+        self.assertIn("EMPTY_SOURCE_SHARD=true", tail)
 
     def test_the_mirror_is_bound_to_the_plan_it_was_cut_from(self) -> None:
         # Two independent inputs would let a stale copy-paste seed one
