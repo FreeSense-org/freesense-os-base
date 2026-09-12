@@ -50,7 +50,7 @@ jobs:
               print(field)
           PY
           )
-          for stage in system packages iso cloud appliance; do
+          for stage in system packages iso cloud appliance mirror; do
             export STAGE=${stage}
             python3 scripts/render-worker.py --common scripts/runner/worker-common.sh \
               --stages scripts/runner/stages --output "${render_dir}/${stage}.sh"

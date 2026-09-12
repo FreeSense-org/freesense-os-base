@@ -22,7 +22,7 @@ for name in AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN R2_ENDPOIN
   CHANNEL_PAYLOAD_B64 CHANNEL_SIGNATURE_B64 BUNDLE_ID CLOUD_FILESYSTEM CLOUD_VIRTUAL_SIZE_GIB \
   TARGET ARCHITECTURE PACKAGE_ARCH ABI OSVERSION ALTABI FREEBSD_TARGET FREEBSD_TARGET_ARCH POUDRIERE_ARCH KERNEL \
   EXECUTOR IMAGE_PROFILE FIRMWARE IMAGE_CAPABILITIES INSTALLER_FORMAT PUBLISH_ENABLED \
-  SYSTEM_PART SYSTEM_SHARD_INDEX SYSTEM_SHARD_COUNT BINARY_SEED_OBJECT BINARY_SEED_PROVENANCE_SHA256 PREVIOUS_FREESENSE_REPOSITORY FARM_LAYOUT SHARD_POLICY_VERSION \
+  SYSTEM_PART SYSTEM_SHARD_INDEX SYSTEM_SHARD_COUNT BINARY_SEED_OBJECT BINARY_SEED_PROVENANCE_SHA256 PREVIOUS_FREESENSE_REPOSITORY FARM_LAYOUT SHARD_POLICY_VERSION MIRROR_PLAN_OBJECT \
   BOOT_INPUTS TARGET_MODELS PARTITION_SCHEME APPLIANCE_FILESYSTEM APPLIANCE_FORMAT APPLIANCE_COMPRESSION; do
   eval "$name=\$(decode \"\${${name}_B64}\")"
 done
@@ -31,7 +31,7 @@ unset FREESENSE_REPO_SIGNING_KEY_B64
 export HOME=/root PATH="/usr/local/sbin:/usr/local/bin:${PATH}"
 export ASSUME_ALWAYS_YES=yes LC_ALL=C LANG=C TZ=UTC
 umask 022
-case "${STAGE}" in system|packages|iso|cloud|appliance) : ;; *) echo "invalid build stage" >&2; exit 1 ;; esac
+case "${STAGE}" in system|packages|iso|cloud|appliance|mirror) : ;; *) echo "invalid build stage" >&2; exit 1 ;; esac
 case "${SYSTEM_SHARD_INDEX}:${SYSTEM_SHARD_COUNT}" in
   *[!0-9:]*|:*|*:) echo "invalid System shard coordinates" >&2; exit 1 ;;
 esac
@@ -113,11 +113,18 @@ fi
   echo "invalid build generation" >&2
   exit 1
 }
-for value in "${FINGERPRINT}" "${PLATFORM_ID}" "${SYSTEM_ID}" "${IMAGE_SHA256}" \
-  "${WORKER_TOOLS_SHA256}"; do
+for value in "${FINGERPRINT}" "${IMAGE_SHA256}" "${WORKER_TOOLS_SHA256}"; do
   case "${value}" in ''|*[!0-9a-f]*) echo "invalid SHA-256 build input" >&2; exit 1 ;; esac
   [ "${#value}" -eq 64 ] || { echo "invalid SHA-256 build input" >&2; exit 1; }
 done
+# The mirror republishes packages FreeBSD built. It has no platform image and is
+# not bound to a System repository, so it carries neither identity.
+if [ "${STAGE}" != mirror ]; then
+  for value in "${PLATFORM_ID}" "${SYSTEM_ID}"; do
+    case "${value}" in ''|*[!0-9a-f]*) echo "invalid SHA-256 build input" >&2; exit 1 ;; esac
+    [ "${#value}" -eq 64 ] || { echo "invalid SHA-256 build input" >&2; exit 1; }
+  done
+fi
 if [ "${STAGE}" = iso ] || [ "${STAGE}" = cloud ] || [ "${STAGE}" = appliance ]; then
   case "${PACKAGES_ID}" in ''|*[!0-9a-f]*) echo "invalid release Packages identity" >&2; exit 1 ;; esac
   [ "${#PACKAGES_ID}" -eq 64 ] || { echo "invalid release Packages identity" >&2; exit 1; }
@@ -251,30 +258,7 @@ configure_source() {
   export FREESENSE_SOURCE_COMMIT_TIME SOURCE_DATE_EPOCH DATESTRING BUILTDATESTRING
   export FREESENSE_REQUIRE_SOURCE_DATE_EPOCH
 
-  if [ -n "${FREESENSE_REPO_SIGNING_KEY}" ]; then
-    printf '%s' "${FREESENSE_REPO_SIGNING_KEY}" >/root/sign/repo.key
-    chmod 400 /root/sign/repo.key
-    openssl pkey -in /root/sign/repo.key -pubout -out /root/sign/repo.pub >/dev/null 2>&1
-  elif { [ "${STAGE}" = system ] || [ "${STAGE}:${FARM_LAYOUT}" = packages:delta-v1 ]; } && { [ "${SYSTEM_PART}" = core ] || \
-      [ "${SYSTEM_PART}" = bootstrap ] || [ "${SYSTEM_PART}" = shard ] || \
-      [ "${SYSTEM_PART}" = dependent ]; }; then
-    cp /root/os-definition/config/channel-signing-public.pem /root/sign/repo.pub
-  else
-    echo "repository signing key is missing" >&2
-    return 1
-  fi
-  chmod 444 /root/sign/repo.pub
-  cp /root/sign/repo.pub /root/sign/channel-public.pem
-  chmod 444 /root/sign/channel-public.pem
-  trusted_fingerprint=$(sed -n \
-    's/^[[:space:]]*fingerprint:[[:space:]]*"\([0-9a-fA-F]\{64\}\)"[[:space:]]*$/\1/p' \
-    /root/freesense-src/src/usr/local/share/FreeSense/keys/pkg/trusted/freesense | \
-    tr '[:upper:]' '[:lower:]')
-  derived_fingerprint=$(sha256 -q /root/sign/repo.pub)
-  if [ "${trusted_fingerprint}" != "${derived_fingerprint}" ]; then
-    echo "trusted package fingerprint does not match the repository signing key" >&2
-    return 1
-  fi
+  configure_signing || return 1
   cat >>build.conf <<EOF
 export PRODUCT_NAME_SUFFIX=""
 export PRODUCT_VERSION="${PRODUCT_VERSION}"
@@ -971,6 +955,118 @@ create_source_archive() {
     --exclude='freesense-src/.git' --exclude='freesense-src/tmp' \
     --exclude='freesense-src/logs' freesense-src
   phase source-archive-ready
+}
+
+# The layered repository's core invariant, made mechanical.
+#
+# FreeSense publishes only the sealed delta, and every name in it is distinct
+# from the mirror's. If a package escapes the delta -- because Poudriere decided
+# a seeded mirror package was stale and rebuilt it, or because a ports overlay
+# change landed without a pin refresh -- it would ship unsuffixed and pkg would
+# be free to substitute it for the upstream build, or the other way round. That
+# failure is silent at install time, so it has to be loud here.
+#
+# All three arguments are newline-separated package-name lists; the caller
+# produces them with pkg query, which keeps this function's logic testable.
+# Install the repository signing key and bind it to the product's trust anchor.
+#
+# Split out of configure_source so a stage that signs a repository without
+# building one -- the frozen upstream mirror -- gets the same three-way check:
+# the key the runner verified against config/channel-signing-public.pem, the
+# public half derived here, and the fingerprint compiled into the product's
+# trusted keys directory must all agree.
+configure_signing() {
+  phase repository-signing-key
+  if [ -n "${FREESENSE_REPO_SIGNING_KEY}" ]; then
+    printf '%s' "${FREESENSE_REPO_SIGNING_KEY}" >/root/sign/repo.key
+    chmod 400 /root/sign/repo.key
+    openssl pkey -in /root/sign/repo.key -pubout -out /root/sign/repo.pub >/dev/null 2>&1
+  elif { [ "${STAGE}" = system ] || [ "${STAGE}:${FARM_LAYOUT}" = packages:delta-v1 ]; } && { [ "${SYSTEM_PART}" = core ] || \
+      [ "${SYSTEM_PART}" = bootstrap ] || [ "${SYSTEM_PART}" = shard ] || \
+      [ "${SYSTEM_PART}" = dependent ]; }; then
+    cp /root/os-definition/config/channel-signing-public.pem /root/sign/repo.pub
+  else
+    echo "repository signing key is missing" >&2
+    return 1
+  fi
+  chmod 444 /root/sign/repo.pub
+  cp /root/sign/repo.pub /root/sign/channel-public.pem
+  chmod 444 /root/sign/channel-public.pem
+  trusted_fingerprint=$(sed -n \
+    's/^[[:space:]]*fingerprint:[[:space:]]*"\([0-9a-fA-F]\{64\}\)"[[:space:]]*$/\1/p' \
+    /root/freesense-src/src/usr/local/share/FreeSense/keys/pkg/trusted/freesense | \
+    tr '[:upper:]' '[:lower:]')
+  derived_fingerprint=$(sha256 -q /root/sign/repo.pub)
+  if [ "${trusted_fingerprint}" != "${derived_fingerprint}" ]; then
+    echo "trusted package fingerprint does not match the repository signing key" >&2
+    return 1
+  fi
+  phase repository-signing-key-ready
+}
+
+# Publish the frozen upstream mirror.
+#
+# Deliberately not publish_repository: that records package provenance by
+# re-deriving port directory hashes from the overlays, which says nothing about
+# a package FreeBSD built. The mirror's provenance is its chain back to the
+# signed catalogue instead, and complete.json records that rather than a build.
+publish_mirror() {
+  directory=$1
+  phase mirror-publish
+  test -s "${directory}/mirror-provenance.json"
+  test -n "$(find "${directory}/All" -type f -name '*.pkg' -print -quit)"
+  find "${directory}" -type f ! -name complete.json | while IFS= read -r file; do
+    relative=${file#"${directory}/"}
+    upload_immutable "${file}" "${RESULT}/${PACKAGE_ARCH}/${relative}"
+  done
+  jq -n --arg stage "${STAGE}" --arg fingerprint "${FINGERPRINT}" \
+    --arg architecture "${ARCHITECTURE}" --arg package_arch "${PACKAGE_ARCH}" \
+    --arg abi "${ABI}" --arg freebsd_pin_id "${FREEBSD_PIN_ID}" \
+    --arg mirror_plan "${MIRROR_PLAN_OBJECT}" \
+    --arg mirror_provenance "$(sha256 -q "${directory}/mirror-provenance.json")" \
+    --arg catalog_sha256 "$(jq -er .catalog_sha256 "${directory}/mirror-provenance.json")" \
+    --arg ports_commit "$(jq -er .ports_commit "${directory}/mirror-provenance.json")" \
+    --arg os_definition "${OS_BASE_SHA}" --arg worker_image "${IMAGE_SHA256}" \
+    --arg worker_tools "${WORKER_TOOLS_SHA256}" \
+    --arg signing_public_key "${derived_fingerprint}" \
+    --argjson generation "${GENERATION}" \
+    '{schema_version:"freesense.artifact/v1",stage:$stage,fingerprint:$fingerprint,
+      generation:$generation,architecture:$architecture,package_arch:$package_arch,
+      inputs:{abi:$abi,freebsd_pin_id:$freebsd_pin_id,mirror_plan:$mirror_plan,
+              mirror_provenance_sha256:$mirror_provenance,catalog_sha256:$catalog_sha256,
+              ports_commit:$ports_commit,os_definition:$os_definition,
+              worker_image:$worker_image,worker_tools:$worker_tools,
+              signing_public_key:$signing_public_key}}' \
+    >"${directory}/complete.json"
+  upload_immutable "${directory}/complete.json" "${RESULT}/complete.json"
+  phase mirror-complete
+}
+
+verify_delta_layer() {
+  published=$1 sealed=$2 mirrored=$3
+  phase delta-layer-verify
+  work=$(mktemp -d) || return 1
+  for list in published sealed mirrored; do
+    eval "source_list=\${${list}}"
+    LC_ALL=C sort -u "${source_list}" >"${work}/${list}" || { rm -rf "${work}"; return 1; }
+  done
+  [ -s "${work}/published" ] || {
+    echo "FreeSense layer published no packages" >&2
+    rm -rf "${work}"
+    return 1
+  }
+  escaped=$(LC_ALL=C comm -23 "${work}/published" "${work}/sealed")
+  shadowed=$(LC_ALL=C comm -12 "${work}/published" "${work}/mirrored")
+  rm -rf "${work}"
+  [ -z "${escaped}" ] || {
+    echo "published packages are outside the sealed delta: $(echo ${escaped})" >&2
+    return 1
+  }
+  [ -z "${shadowed}" ] || {
+    echo "published packages shadow the mirror by name: $(echo ${shadowed})" >&2
+    return 1
+  }
+  phase delta-layer-verified
 }
 
 sign_repository() {

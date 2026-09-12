@@ -1,0 +1,157 @@
+name: Publish the frozen FreeBSD mirror
+
+# Publishes the bottom layer of the layered repository stack: the packages in
+# FreeSense's dependency closure that FreeSense does not build itself, pinned to
+# one signed upstream catalogue and re-signed with the FreeSense key.
+#
+# The plan comes from an observation run rather than being recomputed here, so
+# the mirror is bound to the requirements a native worker actually evaluated at
+# the ports commit upstream published from.
+
+on:
+  workflow_dispatch:
+    inputs:
+      architecture:
+        description: Target architecture
+        type: choice
+        options: [amd64, arm64]
+        default: amd64
+      observe_run_id:
+        description: Run of "Observe the upstream ports commit" that produced the mirror plan
+        type: string
+        required: true
+      source_sha:
+        description: freesense commit whose trusted fingerprint the signing key must match
+        type: string
+        required: true
+      generation:
+        description: Generation to record on the published artifact
+        type: string
+        default: '1'
+
+permissions: {contents: read, id-token: write}
+concurrency:
+  group: mirror-${{ inputs.architecture }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ${{ inputs.architecture == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
+    timeout-minutes: 240
+    environment: build
+    env:
+      R2_CREDENTIAL_BROKER_URL: ${{ vars.R2_CREDENTIAL_BROKER_URL }}
+      R2_CREDENTIAL_BROKER_AUDIENCE: ${{ vars.R2_CREDENTIAL_BROKER_AUDIENCE }}
+      R2_BUCKET: ${{ vars.R2_BUILD_BUCKET }}
+      R2_ENDPOINT: ${{ vars.R2_ENDPOINT }}
+      ARCH: ${{ inputs.architecture }}
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with: {go-version-file: go.mod, cache: false}
+      - run: go build -trimpath -o "${RUNNER_TEMP}/fsbuild" ./cmd/fsbuild
+
+      - name: Verify repository signing trust root
+        env: {SIGNING_KEY: "${{ secrets.FREESENSE_PKG_SIGNING_KEY }}"}
+        run: |
+          umask 077
+          printf '%s' "${SIGNING_KEY}" >"${RUNNER_TEMP}/repo.key"
+          openssl pkey -in "${RUNNER_TEMP}/repo.key" -pubout -out "${RUNNER_TEMP}/repo.pub"
+          cmp "${RUNNER_TEMP}/repo.pub" config/channel-signing-public.pem
+
+      - name: Collect the sealed mirror plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OBSERVE_RUN_ID: ${{ inputs.observe_run_id }}
+        run: |
+          set -euo pipefail
+          gh run download "${OBSERVE_RUN_ID}" --repo "${GITHUB_REPOSITORY}" \
+            --name "freebsd-pin-${ARCH}-observed" --dir "${RUNNER_TEMP}/observed"
+          plan=$(find "${RUNNER_TEMP}/observed" -name mirror-plan.json -print -quit)
+          [[ -n ${plan} ]]
+          summary=$(find "${RUNNER_TEMP}/observed" -name summary.json -print -quit)
+          [[ -n ${summary} ]]
+          # An estimated delta was computed at a commit upstream did not publish
+          # from, so the mirror it describes would not match the catalogue.
+          jq -e '.exact == true' "${summary}" >/dev/null || {
+            echo "that run did not evaluate the observed ports commit" >&2
+            exit 1
+          }
+          jq -e --arg abi "$(jq -er --arg arch "${ARCH}" '.targets[$arch].abi' config/build-policy.json)" \
+            '.schema_version == "freesense.mirror-plan/v1" and .abi == $abi' "${plan}" >/dev/null
+          cp "${plan}" "${RUNNER_TEMP}/mirror-plan.json"
+          jq -r '"mirror \(.counts.mirror) packages, delta \(.counts.delta), ports \(.ports_commit)"' \
+            "${RUNNER_TEMP}/mirror-plan.json"
+
+      - name: Acquire immutable pin writer
+        run: >-
+          "${RUNNER_TEMP}/fsbuild" credentials acquire --broker-url "${R2_CREDENTIAL_BROKER_URL}"
+          --audience "${R2_CREDENTIAL_BROKER_AUDIENCE}" --role pin-writer
+          --expected-bucket "${R2_BUCKET}" --expected-prefix v1 --expected-endpoint "${R2_ENDPOINT}"
+          --github-env "${GITHUB_ENV}"
+      - name: Seal the plan as an immutable input
+        run: >-
+          "${RUNNER_TEMP}/fsbuild" blob put --file "${RUNNER_TEMP}/mirror-plan.json"
+          --output "${RUNNER_TEMP}/mirror-plan.blob.json"
+
+      - name: Acquire artifact credential
+        run: >-
+          "${RUNNER_TEMP}/fsbuild" credentials acquire --broker-url "${R2_CREDENTIAL_BROKER_URL}"
+          --audience "${R2_CREDENTIAL_BROKER_AUDIENCE}" --role artifact-writer
+          --expected-bucket "${R2_BUCKET}" --expected-prefix v1 --expected-endpoint "${R2_ENDPOINT}"
+          --github-env "${GITHUB_ENV}"
+
+      - name: Derive the worker inputs from the pin and the plan
+        env:
+          SOURCE_SHA_INPUT: ${{ inputs.source_sha }}
+          GENERATION_INPUT: ${{ inputs.generation }}
+        run: |
+          set -euo pipefail
+          object=$(jq -er '.object // .key' "${RUNNER_TEMP}/mirror-plan.blob.json")
+          python3 scripts/mirror_worker_env.py --architecture "${ARCH}" \
+            --plan "${RUNNER_TEMP}/mirror-plan.json" --plan-object "${object}" \
+            --source-sha "${SOURCE_SHA_INPUT}" --os-base-sha "${GITHUB_SHA}" \
+            --generation "${GENERATION_INPUT}" --output "${GITHUB_ENV}"
+
+      - name: Prepare native virtualization tools
+        run: |
+          sudo apt-get update
+          if [[ "${ARCH}" == "arm64" ]]; then
+            sudo apt-get install -y --no-install-recommends qemu-system-arm qemu-utils qemu-efi-aarch64 cloud-image-utils
+          else
+            sudo apt-get install -y --no-install-recommends qemu-system-x86 qemu-utils ovmf cloud-image-utils
+          fi
+          if [[ -e /dev/kvm ]]; then sudo chmod a+rw /dev/kvm; fi
+
+      - name: Render the mirror worker
+        env:
+          FREESENSE_REPO_SIGNING_KEY: ${{ secrets.FREESENSE_PKG_SIGNING_KEY }}
+        run: |
+          python3 scripts/render-worker.py --common scripts/runner/worker-common.sh \
+            --stages scripts/runner/stages --output "${RUNNER_TEMP}/worker.sh"
+          sh -n "${RUNNER_TEMP}/worker.sh"
+
+      - name: Mirror and publish in a fresh FreeBSD VM
+        env:
+          FSBUILD: ${{ runner.temp }}/fsbuild
+        run: >-
+          scripts/runner/run-vm.sh --image-sha256 "${IMAGE_SHA256}"
+          --host-architecture "${{ inputs.architecture == 'arm64' && 'arm64' || 'amd64' }}"
+          --script "${RUNNER_TEMP}/worker.sh" --timeout 14400
+          --vcpus auto --memory-mib auto --disk-gib 60 --minimum-free-gib 25
+          --failure-dir "${RUNNER_TEMP}/mirror-failure"
+
+      - name: Clean sensitive runner files
+        if: always()
+        run: rm -f "${RUNNER_TEMP}/repo.key" "${RUNNER_TEMP}/repo.pub" "${RUNNER_TEMP}/worker.sh"
+
+      - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        if: always()
+        with:
+          name: mirror-${{ inputs.architecture }}
+          path: |
+            ${{ runner.temp }}/mirror-plan.json
+            ${{ runner.temp }}/mirror-plan.blob.json
+            ${{ runner.temp }}/mirror-failure/
+          if-no-files-found: ignore
+          retention-days: 14

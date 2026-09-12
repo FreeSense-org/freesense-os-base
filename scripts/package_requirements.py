@@ -25,6 +25,11 @@ METADATA_KNOBS = {
     "FREESENSE_PACKAGE_TRAIN", "PRODUCT_NAME", "PRODUCT_VERSION", "POUDRIERE_PORTS_NAME",
     "MASTER_SITE_OVERRIDE", "DEFAULT_VERSIONS", "CUR_ARCH", "NATIVE_BUILD",
     "IGNORE_OSVERSION", "PKG_ENV",
+    # Renames FreeSense's own layer of the repository so the pkg solver can never
+    # substitute it for the upstream package of the same name. It changes
+    # packaging identity, not compiled interfaces, which is what this set is for.
+    # Rendered at build time by delta_suffix.py from the sealed mirror plan.
+    "PKGNAMESUFFIX",
 }
 SOURCE_KNOBS = {"ETCDIR": r"net/frr"}
 PORT = re.compile(r"^[A-Za-z0-9][A-Za-z0-9+_.-]*/[A-Za-z0-9][A-Za-z0-9+_.-]*(?:@[A-Za-z0-9][A-Za-z0-9+_.-]*)?$")

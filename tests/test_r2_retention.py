@@ -166,6 +166,46 @@ class RetentionPlanTests(unittest.TestCase):
         self.assertNotIn(f"v1/artifacts/system/{active_system['fingerprint']}/", candidates)
         self.assertNotIn(f"v1/artifacts/packages/1.1/{active_packages['fingerprint']}/", candidates)
 
+    def test_mirror_artifacts_are_invisible_to_retention(self):
+        # The frozen upstream mirror is a new artifact kind that classification
+        # does not recognise, so retention neither protects nor collects it.
+        # That is safe today -- a published mirror cannot be swept away before
+        # anything references it -- but it means mirrors accumulate until the
+        # pin carries them and classification is taught about them. Pinning the
+        # behaviour here so that change has to be deliberate.
+        build = inventory("build", "builds")
+        downloads = inventory("downloads", "downloads")
+        mirror = fingerprint(7)
+        add_artifact(build, f"v1/artifacts/mirror/{mirror}", system_marker(7, 1))
+        report = retention.plan_retention(
+            build, downloads, {"channels": {"devel": {"package_train": "1.1"}}},
+            set(), NOW, keep_devel=1, grace=timedelta(0), completed_grace=timedelta(0))
+        candidates = {item["prefix"] for item in report["candidates"]}
+        self.assertNotIn(f"v1/artifacts/mirror/{mirror}/", candidates)
+        self.assertIsNone(retention.classify_artifact_key(
+            f"v1/artifacts/mirror/{mirror}/amd64/All/curl-8.22.0.pkg"))
+
+    def test_an_unreferenced_mirror_plan_blob_is_collected_after_the_grace(self):
+        # The plan a mirror was built from lives in inputs/sha256. Nothing
+        # protects it until the pin document names it, and pinned_inputs only
+        # walks config/. Until then complete.json's inputs.mirror_plan can end
+        # up dangling -- an audit-trail loss, not a functional one.
+        build = inventory("build", "builds")
+        downloads = inventory("downloads", "downloads")
+        plan_sha = fingerprint(8)
+        build["objects"].append(object_record(f"v1/inputs/sha256/{plan_sha}", size=4096))
+        report = retention.plan_retention(
+            build, downloads, {"channels": {"devel": {"package_train": "1.1"}}},
+            set(), NOW, keep_devel=1, grace=timedelta(0), completed_grace=timedelta(0))
+        candidates = {item["prefix"] for item in report["candidates"]}
+        self.assertIn(f"v1/inputs/sha256/{plan_sha}", candidates)
+        # Naming it from config/ is what saves it, which is how the pin will.
+        protected = retention.plan_retention(
+            build, downloads, {"channels": {"devel": {"package_train": "1.1"}}},
+            {plan_sha}, NOW, keep_devel=1, grace=timedelta(0), completed_grace=timedelta(0))
+        self.assertNotIn(f"v1/inputs/sha256/{plan_sha}",
+                         {item["prefix"] for item in protected["candidates"]})
+
     def test_authoritative_multiarch_completion_protects_its_component_pair(self):
         build = inventory("build", "builds")
         downloads = inventory("downloads", "downloads")
