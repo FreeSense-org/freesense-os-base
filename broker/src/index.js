@@ -47,6 +47,8 @@ const BROKER_WORKFLOW =
   `${GITHUB_REPOSITORY}/.github/workflows/broker.yml@${MAIN_REF}`;
 const RETENTION_WORKFLOW =
   `${GITHUB_REPOSITORY}/.github/workflows/retention.yml@${MAIN_REF}`;
+const MIRROR_WORKFLOW =
+  `${GITHUB_REPOSITORY}/.github/workflows/mirror.yml@${MAIN_REF}`;
 
 const REQUEST_SCHEMA = "fsbuild.credential-request/v1";
 const RESPONSE_SCHEMA = "fsbuild.temporary-r2-credentials/v1";
@@ -100,6 +102,21 @@ const ROLE_DEFINITIONS = Object.freeze({
     ttlSeconds: 345 * 60,
     paths() {
       return [`${R2_PREFIX}/inputs/sha256/`];
+    },
+  },
+  // The frozen upstream mirror is a distinct artifact kind, so it gets its own
+  // least-privilege role rather than borrowing artifact-writer's reach over
+  // every artifact prefix or pin-writer's over every immutable input.
+  "mirror-writer": {
+    environments: ["build"],
+    workflow: "mirror",
+    actions: ["GetObject", "HeadObject", "ListObjectsV2", "PutObject"],
+    ttlSeconds: 345 * 60,
+    paths() {
+      return [
+        `${R2_PREFIX}/inputs/sha256/`,
+        `${R2_PREFIX}/artifacts/mirror/`,
+      ];
     },
   },
   "channel-writer": {
@@ -673,6 +690,8 @@ function authorizedWorkflow(claims, kind) {
         "schedule",
         "workflow_dispatch",
       ]);
+    case "mirror":
+      return directWorkflow(claims, MIRROR_WORKFLOW, ["workflow_dispatch"]);
     default:
       return false;
   }
@@ -1013,6 +1032,7 @@ export const protocol = Object.freeze({
     stable: STABLE_WORKFLOW,
     pin: PIN_WORKFLOW,
     pinTarget: PIN_TARGET_WORKFLOW,
+    mirror: MIRROR_WORKFLOW,
     release: RELEASE_WORKFLOW,
     broker: BROKER_WORKFLOW,
     retention: RETENTION_WORKFLOW,
