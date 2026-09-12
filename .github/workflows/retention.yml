@@ -81,6 +81,7 @@ jobs:
             --public-key config/channel-signing-public.pem \
             --config config \
             --keep-devel 4 \
+            --keep-mirrors 2 \
             --completed-grace-hours 0 \
             --orphan-grace-hours 168 \
             --keep-smoke 1 \

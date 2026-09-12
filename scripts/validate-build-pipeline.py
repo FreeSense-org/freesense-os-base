@@ -118,7 +118,7 @@ require("cron: '0 6 * * *'" in multiarch_workflow,
         "the daily multiarch cycle is not fixed at 06:00 UTC")
 retention_workflow = read(".github/workflows/retention.yml")
 for value in ('cron: "30 4 * * *"', "scripts/r2_retention.py",
-              "--keep-devel 4", "--orphan-grace-hours 168",
+              "--keep-devel 4", "--keep-mirrors 2", "--orphan-grace-hours 168",
               "--completed-grace-hours 0", "--keep-smoke 1",
               "--role retention-build-reader",
               "--role retention-download-reader",
