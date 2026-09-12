@@ -224,7 +224,15 @@ case "${SYSTEM_PART}" in
   shard)
     prepare_system_ports shard
     if [ "${EMPTY_SOURCE_SHARD:-false}" = true ]; then
-      publish_system_checkpoint shard "${SYSTEM_SHARD_INDEX}" /root/merged-binary-seed
+      # A shard with nothing of its own still has to publish a checkpoint the
+      # finalizer can collect. It publishes the lower layer it was given, which
+      # on the delta path is the mirror and otherwise the merged binary seed --
+      # /root/merged-binary-seed does not exist on the delta path at all.
+      if [ -n "${MIRROR_PLAN_OBJECT}" ]; then
+        publish_system_checkpoint shard "${SYSTEM_SHARD_INDEX}" /root/mirror-repo
+      else
+        publish_system_checkpoint shard "${SYSTEM_SHARD_INDEX}" /root/merged-binary-seed
+      fi
       exit 0
     fi
     batch_count=$(jq -r length /tmp/system-shard-batches.json)
