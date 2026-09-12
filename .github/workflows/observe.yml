@@ -27,7 +27,7 @@ on:
         type: string
         default: ''
 
-permissions: {contents: read, id-token: write}
+permissions: {contents: read}
 concurrency:
   group: observe-${{ inputs.architecture }}
   cancel-in-progress: true
@@ -36,18 +36,10 @@ jobs:
   observe:
     runs-on: ${{ inputs.architecture == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
     timeout-minutes: 180
-    environment: build
     env:
-      R2_CREDENTIAL_BROKER_URL: ${{ vars.R2_CREDENTIAL_BROKER_URL }}
-      R2_CREDENTIAL_BROKER_AUDIENCE: ${{ vars.R2_CREDENTIAL_BROKER_AUDIENCE }}
-      R2_BUCKET: ${{ vars.R2_BUILD_BUCKET }}
-      R2_ENDPOINT: ${{ vars.R2_ENDPOINT }}
       ARCH: ${{ inputs.architecture }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with: {go-version-file: go.mod, cache: false}
-      - run: go build -trimpath -o "${RUNNER_TEMP}/fsbuild" ./cmd/fsbuild
 
       - name: Read what upstream published
         id: observed
@@ -68,12 +60,19 @@ jobs:
           [[ ${commit} =~ ^[0-9a-f]{40}$ ]]
           echo "commit=${commit}" >>"${GITHUB_OUTPUT}"
 
-      - name: Acquire read-only worker input credential
-        run: >-
-          "${RUNNER_TEMP}/fsbuild" credentials acquire --broker-url "${R2_CREDENTIAL_BROKER_URL}"
-          --audience "${R2_CREDENTIAL_BROKER_AUDIENCE}" --role input-reader
-          --expected-bucket "${R2_BUCKET}" --expected-prefix v1 --expected-endpoint "${R2_ENDPOINT}"
-          --github-env "${GITHUB_ENV}"
+      - name: Cache the pinned worker image from the public store
+        run: |
+          set -euo pipefail
+          # Immutable build inputs are served publicly, so observing needs no
+          # credentials at all. Placing a verified image in run-vm.sh's cache
+          # keeps it off the brokered download path.
+          image_sha=$(jq -er --arg arch "${ARCH}" '.targets[$arch].worker_image.sha256' config/freebsd-16.json)
+          public_base=$(jq -er .public_base_url config/build-policy.json)
+          cache="${HOME}/.cache/freesense-build/images"
+          mkdir -p "${cache}"
+          chmod 700 "${cache}"
+          curl --proto '=https' --fail --location --silent --show-error --retry 5 --retry-all-errors             "${public_base}/inputs/sha256/${image_sha}" --output "${cache}/${image_sha}.qcow2"
+          echo "${image_sha}  ${cache}/${image_sha}.qcow2" | sha256sum -c -
 
       - name: Cache the ports repository on the host
         run: |
@@ -98,7 +97,6 @@ jobs:
 
       - name: Evaluate the ports tree at that commit
         env:
-          FSBUILD: ${{ runner.temp }}/fsbuild
           OBSERVED: ${{ steps.observed.outputs.commit }}
         run: |
           set -euo pipefail
