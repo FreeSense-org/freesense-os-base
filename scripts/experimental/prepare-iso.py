@@ -27,9 +27,17 @@ def render(values):
         raise ValueError("experiment requires a verified System/Packages pair")
     common = (ROOT / "scripts/runner/worker-common.sh").read_text()
     configure = function(common, "configure_source", "configure_poudriere")
-    start = configure.index('  if [ -n "${FREESENSE_REPO_SIGNING_KEY}" ]; then')
-    end = configure.index("  trusted_fingerprint=", start)
-    configure = configure[:start] + "  cp /root/sign/repo.pub /root/sign/channel-public.pem\n" + configure[end:]
+    # Inline a public-only configure_signing: the experiment is handed the
+    # public half directly and must never see private key material, but it keeps
+    # the check that binds that key to the product's trusted fingerprint.
+    signing = function(common, "configure_signing", "publish_mirror")
+    fingerprint_check = signing[signing.index("  trusted_fingerprint="):
+                                signing.index("  phase repository-signing-key-ready")]
+    call = "  configure_signing || return 1\n"
+    if configure.count(call) != 1:
+        raise ValueError("repository signing contract changed")
+    configure = configure.replace(
+        call, "  cp /root/sign/repo.pub /root/sign/channel-public.pem\n" + fingerprint_check)
     installer = (ROOT / "scripts/runner/install-worker-tools.sh").read_text()
     installer_entry = "install_worker_tools() (\n  set -eu\n"
     if installer.count(installer_entry) != 1:

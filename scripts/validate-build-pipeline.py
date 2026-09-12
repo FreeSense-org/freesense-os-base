@@ -270,8 +270,11 @@ require("pkg add -f" not in installer,
         "worker-tool installation bypasses package ABI checks")
 
 stage_dir = ROOT / "scripts" / "runner" / "stages"
-require({path.stem for path in stage_dir.glob("*.sh")} == {"system", "packages", "iso", "cloud", "appliance"},
-        "stage surface differs from system/packages/iso/cloud/appliance")
+# "mirror" publishes a frozen subset of FreeBSD's signed catalogue under the
+# FreeSense key. It builds nothing, so it is the one stage that neither creates
+# a jail nor runs Poudriere.
+require({path.stem for path in stage_dir.glob("*.sh")} == {"system", "packages", "iso", "cloud", "appliance", "mirror"},
+        "stage surface differs from system/packages/iso/cloud/appliance/mirror")
 system_stage = read("scripts/runner/stages/system.sh")
 packages_stage = read("scripts/runner/stages/packages.sh")
 iso_stage = read("scripts/runner/stages/iso.sh")
