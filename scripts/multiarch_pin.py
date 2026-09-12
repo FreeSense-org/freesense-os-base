@@ -65,12 +65,13 @@ def validate(pin: dict, *, now: datetime | None = None) -> None:
                 or seed.get("verified") is not True
                 or seed.get("requirements_components") != ["system", "packages"]
                 or not SHA256.fullmatch(str(seed.get("requirements_sha256", "")))
-                or not SHA256.fullmatch(str(seed.get("provenance_sha256", "")))
-                or "rust" not in seed.get("verified_roots", [])):
-            raise ValueError(f"{arch} has no verified union seed with mandatory Rust")
+                or not SHA256.fullmatch(str(seed.get("provenance_sha256", "")))):
+            raise ValueError(f"{arch} has no verified union seed")
         for field in ("worker_image", "worker_tools"):
             if target[field].get("architecture") != arch or target[field].get("boot_verified") is not True:
                 raise ValueError(f"{arch} {field} has not passed a native boot test")
+    if not any("rust" in pin["targets"][arch]["binary_seed"].get("verified_roots", []) for arch in ARCHES):
+        raise ValueError("pin has no official lang/rust package on any architecture")
 
 
 def worker(pin: dict, target: str, host: str) -> dict:

@@ -181,12 +181,21 @@ class MultiarchPinTests(unittest.TestCase):
             del pin["targets"]["arm64"][field]
             with self.subTest(field=field), self.assertRaises(ValueError):
                 multiarch_pin.validate(pin)
-        for field, key, value in (("binary_seed", "verified_roots", []), ("binary_seed", "abi", "FreeBSD:16:amd64"),
+        for field, key, value in (("binary_seed", "abi", "FreeBSD:16:amd64"),
                                   ("package_catalog", "signature_verified", False), ("worker_image", "boot_verified", False)):
             pin = pin_fixture()
             pin["targets"]["arm64"][field][key] = value
             with self.subTest(field=field, key=key), self.assertRaises(ValueError):
                 multiarch_pin.validate(pin)
+
+    def test_official_rust_may_be_missing_on_one_architecture(self):
+        pin = pin_fixture()
+        now = datetime(2026, 9, 6, tzinfo=timezone.utc)
+        pin["targets"]["amd64"]["binary_seed"]["verified_roots"] = []
+        multiarch_pin.validate(pin, now=now)
+        pin["targets"]["arm64"]["binary_seed"]["verified_roots"] = []
+        with self.assertRaisesRegex(ValueError, "no official lang/rust"):
+            multiarch_pin.validate(pin, now=now)
 
     def test_rollover_preserves_previous_and_requires_explicit_security_movement(self):
         previous = pin_fixture()
