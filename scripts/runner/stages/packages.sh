@@ -12,7 +12,12 @@ cat >>/usr/local/etc/poudriere.d/FreeSense_main-make.conf <<'EOF'
 IGNORE_OSVERSION=yes
 PKG_ENV+= IGNORE_OSVERSION=yes
 EOF
-cp tools/conf/pfPorts/poudriere_packages tools/conf/pfPorts/poudriere_bulk
+if [ -n "${MIRROR_PLAN_OBJECT}" ]; then
+  fetch_delta_mirror
+  write_delta_bulk optional
+else
+  cp tools/conf/pfPorts/poudriere_packages tools/conf/pfPorts/poudriere_bulk
+fi
 policy=/root/freesense-packages/architecture-policy.json
 jq -e --arg arch "${PACKAGE_ARCH}" '
   .schema_version == "freesense.optional-package-architectures/v1" and
@@ -37,13 +42,22 @@ while IFS= read -r origin; do
 done </tmp/optional-exclusions
 
 phase optional-system-seed
-prepare_merged_binary_seed
 combined=/root/optional-farm-seed
 mkdir -p "${combined}/All"
 inventory=/tmp/optional-farm-seed-inventory
 : >"${inventory}"
 rm -f "${inventory}.rebuild"
-for package in /root/system-repo/All/*.pkg /root/merged-binary-seed/All/*.pkg; do
+# Optional builds on top of System's result and on top of the same lower
+# layer System used -- the mirror where there is one, the pin-time binary
+# seed otherwise. System's packages win any overlap, which is what
+# `identical` enforces.
+if [ -n "${MIRROR_PLAN_OBJECT}" ]; then
+  lower=/root/mirror-repo
+else
+  prepare_merged_binary_seed
+  lower=/root/merged-binary-seed
+fi
+for package in /root/system-repo/All/*.pkg "${lower}"/All/*.pkg; do
   merge_package "${package}" "${combined}/All" "${inventory}" identical
 done
 if [ "${SYSTEM_PART}" = finalize ]; then
@@ -106,6 +120,9 @@ if [ "${SYSTEM_PART}" = shard ]; then
     run_poudriere_build env NOLINUX=yes IGNORE_OSVERSION=yes ASSUME_ALWAYS_YES=yes ./build.sh --update-pkg-repo
     phase optional-packages-ready
     latest=$(poudriere_latest_repository)
+    if [ -n "${MIRROR_PLAN_OBJECT}" ]; then
+      verify_delta_build "${latest}" /root/mirror-plan.json
+    fi
     CHECKPOINT_BATCH=${next_batch}; export CHECKPOINT_BATCH
     publish_system_checkpoint shard "${SYSTEM_SHARD_INDEX}" "${latest}"
     next_batch=$((next_batch + 1))
@@ -116,6 +133,9 @@ phase optional-packages-build
 run_poudriere_build env NOLINUX=yes IGNORE_OSVERSION=yes ASSUME_ALWAYS_YES=yes ./build.sh --update-pkg-repo
 phase optional-packages-ready
 latest=$(poudriere_latest_repository)
+if [ -n "${MIRROR_PLAN_OBJECT}" ]; then
+  verify_delta_build "${latest}" /root/mirror-plan.json
+fi
 mkdir -p /root/work/packages/All
 inventory=/tmp/combined-package-inventory
 : >"${inventory}"

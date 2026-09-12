@@ -301,6 +301,24 @@ class WorkerVersionValidationTests(unittest.TestCase):
         self.assertIn('cp "${shard_roots}" tools/conf/pfPorts/poudriere_bulk', tail)
         self.assertIn("EMPTY_SOURCE_SHARD=true", tail)
 
+    def test_both_farm_stages_take_the_same_lower_layer(self) -> None:
+        # System and Optional must layer on the same bytes. If one seeds the
+        # mirror and the other the pin-time binary seed, Optional resolves
+        # dependencies against a different lower layer than System built on.
+        stages = ROOT / "scripts/runner/stages"
+        for stage, component in (("system.sh", "system"), ("packages.sh", "optional")):
+            text = (stages / stage).read_text(encoding="utf-8")
+            with self.subTest(stage=stage):
+                self.assertIn("fetch_delta_mirror", text)
+                self.assertIn(f"write_delta_bulk {component}", text)
+                self.assertIn("/root/mirror-repo", text)
+                # and the escape check runs wherever the stage builds
+                self.assertIn("verify_delta_build", text)
+        packages = (stages / "packages.sh").read_text(encoding="utf-8")
+        # both build sites are covered, not only the finalize one
+        self.assertEqual(packages.count("verify_delta_build"), 2)
+        self.assertEqual(packages.count("poudriere_latest_repository"), 2)
+
     def test_the_mirror_is_bound_to_the_plan_it_was_cut_from(self) -> None:
         # Two independent inputs would let a stale copy-paste seed one
         # snapshot's bytes while building another's roots, with nothing failing
