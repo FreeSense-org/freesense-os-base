@@ -18,6 +18,18 @@ class CandidateScoringTests(unittest.TestCase):
         ]
         self.assertEqual(score_candidates(candidates)["commit"], base + "3")
 
+    def test_prefers_official_rust_on_arm64(self):
+        base = "0" * 39
+        candidates = [
+            {"commit": base + "1", "committed_at": "2026-09-10T00:00:00Z",
+             "accepted": {"amd64": 316, "arm64": 200},
+             "rust_official": {"amd64": True, "arm64": False}},
+            {"commit": base + "2", "committed_at": "2026-09-01T00:00:00Z",
+             "accepted": {"amd64": 300, "arm64": 284},
+             "rust_official": {"amd64": False, "arm64": True}},
+        ]
+        self.assertEqual(score_candidates(candidates)["commit"], base + "2")
+
 
 class PreviousReuseTests(unittest.TestCase):
     def package(self):
