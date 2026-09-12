@@ -732,6 +732,14 @@ seed_poudriere_repository() {
   mv "${staging}" "${repository}"
   [ -f "${repository}/Latest/pkg.pkg" ] || return 1
   rm -f "${seed_inventory}"
+
+  # Everything just written is outside the bulk list by construction, so the
+  # pkgclean that follows every Poudriere bulk would delete it and the next
+  # batch would rebuild it from source -- succeeding, slowly, without a word.
+  # The product build honours this from freesense#59 onward; on an older pinned
+  # source it is an unread variable and nothing changes.
+  FREESENSE_KEEP_SEEDED_PACKAGES=1
+  export FREESENSE_KEEP_SEEDED_PACKAGES
 }
 
 poudriere_latest_repository() {

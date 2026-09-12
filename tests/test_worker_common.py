@@ -213,6 +213,21 @@ class WorkerVersionValidationTests(unittest.TestCase):
             with self.subTest(value=value):
                 self.assertIn(value, system)
 
+    def test_seeding_opts_the_repository_out_of_pkgclean(self) -> None:
+        # pkgclean removes whatever the bulk list does not reach, which is
+        # precisely the seed. Without this the next batch rebuilds it from
+        # source and the build succeeds -- slowly, and without a word.
+        common = (ROOT / "scripts/runner/worker-common.sh").read_text(encoding="utf-8")
+        start = common.index("seed_poudriere_repository() {")
+        end = common.index(chr(10) + "}" + chr(10), start)
+        seed = common[start:end]
+        self.assertIn("FREESENSE_KEEP_SEEDED_PACKAGES=1", seed)
+        self.assertIn("export FREESENSE_KEEP_SEEDED_PACKAGES", seed)
+        # Set only once the repository is in place, so a failure part-way
+        # through cannot leave the flag on with a half-written seed.
+        self.assertLess(seed.index('mv "${staging}" "${repository}"'),
+                        seed.index("FREESENSE_KEEP_SEEDED_PACKAGES=1"))
+
     def test_system_shard_dependency_expansion_fails_closed(self) -> None:
         system = (ROOT / "scripts/runner/stages/system.sh").read_text(
             encoding="utf-8"
