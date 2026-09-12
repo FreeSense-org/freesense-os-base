@@ -19,8 +19,10 @@ concurrency: {group: development-multiarch, cancel-in-progress: false}
 
 jobs:
   readiness:
-    # Opt-in until a publish-disabled canary has passed. The legacy schedule
-    # remains responsible for Development until the rollout is explicitly enabled.
+    # Opt-in until a publish-disabled canary has passed. There is no longer a
+    # legacy single-architecture schedule behind this: with the nineteen-shard
+    # farm retired, the scheduled cycle runs only once this variable is set, and
+    # a dispatch is the way to exercise it before then.
     if: github.event_name == 'workflow_dispatch' || vars.MULTIARCH_DEVELOPMENT_ENABLED == 'true'
     runs-on: ubuntu-24.04
     steps:

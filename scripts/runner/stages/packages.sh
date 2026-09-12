@@ -37,50 +37,46 @@ while IFS= read -r origin; do
 done </tmp/optional-exclusions
 
 phase optional-system-seed
-if [ "${FARM_LAYOUT}" = delta-v1 ]; then
-  prepare_merged_binary_seed
-  combined=/root/optional-farm-seed
-  mkdir -p "${combined}/All"
-  inventory=/tmp/optional-farm-seed-inventory
-  : >"${inventory}"
-  rm -f "${inventory}.rebuild"
-  for package in /root/system-repo/All/*.pkg /root/merged-binary-seed/All/*.pkg; do
-    merge_package "${package}" "${combined}/All" "${inventory}" identical
-  done
-  if [ "${SYSTEM_PART}" = finalize ]; then
-    shard=0
-    while [ "${shard}" -lt "${SYSTEM_SHARD_COUNT}" ]; do
-      checkpoint=/root/optional-shard-${shard}
-      CHECKPOINT_BATCH=$(latest_checkpoint_batch shard "${shard}" || true); export CHECKPOINT_BATCH
-      [ -n "${CHECKPOINT_BATCH}" ] || { echo "missing completed Optional checkpoint: ${shard}" >&2; exit 1; }
-      fetch_system_checkpoint shard "${shard}" "${checkpoint}"
-      for package in "${checkpoint}/${PACKAGE_ARCH}/All"/*.pkg; do
-        merge_package "${package}" "${combined}/All" "${inventory}" rebuild
-      done
-      shard=$((shard + 1))
+prepare_merged_binary_seed
+combined=/root/optional-farm-seed
+mkdir -p "${combined}/All"
+inventory=/tmp/optional-farm-seed-inventory
+: >"${inventory}"
+rm -f "${inventory}.rebuild"
+for package in /root/system-repo/All/*.pkg /root/merged-binary-seed/All/*.pkg; do
+  merge_package "${package}" "${combined}/All" "${inventory}" identical
+done
+if [ "${SYSTEM_PART}" = finalize ]; then
+  shard=0
+  while [ "${shard}" -lt "${SYSTEM_SHARD_COUNT}" ]; do
+    checkpoint=/root/optional-shard-${shard}
+    CHECKPOINT_BATCH=$(latest_checkpoint_batch shard "${shard}" || true); export CHECKPOINT_BATCH
+    [ -n "${CHECKPOINT_BATCH}" ] || { echo "missing completed Optional checkpoint: ${shard}" >&2; exit 1; }
+    fetch_system_checkpoint shard "${shard}" "${checkpoint}"
+    for package in "${checkpoint}/${PACKAGE_ARCH}/All"/*.pkg; do
+      merge_package "${package}" "${combined}/All" "${inventory}" rebuild
     done
-  else
-    sed -e '/^[[:space:]]*#/d' -e '/^[[:space:]]*$/d' tools/conf/pfPorts/poudriere_bulk \
-      | LC_ALL=C sort -u >/tmp/optional-all-roots
-    python_bin=$(command -v python3 || command -v python3.11)
-    "${python_bin}" /root/os-definition/scripts/partition_roots.py \
-      --config /root/os-definition/config/multiarch-shards.json --component packages \
-      --shard "${SYSTEM_SHARD_INDEX}" --roots /tmp/optional-all-roots \
-      --output tools/conf/pfPorts/poudriere_bulk --batches-output /tmp/optional-shard-batches.json
-    if [ ! -s tools/conf/pfPorts/poudriere_bulk ]; then
-      echo "FreeSense Optional shard ${SYSTEM_SHARD_INDEX}/${SYSTEM_SHARD_COUNT} has no source deltas."
-      publish_system_checkpoint shard "${SYSTEM_SHARD_INDEX}" "${combined}"
-      exit 0
-    fi
-  fi
-  seed_poudriere_repository "${combined}"
+    shard=$((shard + 1))
+  done
 else
-  seed_poudriere_repository /root/system-repo
+  sed -e '/^[[:space:]]*#/d' -e '/^[[:space:]]*$/d' tools/conf/pfPorts/poudriere_bulk \
+    | LC_ALL=C sort -u >/tmp/optional-all-roots
+  python_bin=$(command -v python3 || command -v python3.11)
+  "${python_bin}" /root/os-definition/scripts/partition_roots.py \
+    --config /root/os-definition/config/multiarch-shards.json --component packages \
+    --shard "${SYSTEM_SHARD_INDEX}" --roots /tmp/optional-all-roots \
+    --output tools/conf/pfPorts/poudriere_bulk --batches-output /tmp/optional-shard-batches.json
+  if [ ! -s tools/conf/pfPorts/poudriere_bulk ]; then
+    echo "FreeSense Optional shard ${SYSTEM_SHARD_INDEX}/${SYSTEM_SHARD_COUNT} has no source deltas."
+    publish_system_checkpoint shard "${SYSTEM_SHARD_INDEX}" "${combined}"
+    exit 0
+  fi
 fi
+seed_poudriere_repository "${combined}"
 phase optional-system-seed-ready
 
 create_source_archive
-if [ "${FARM_LAYOUT}:${SYSTEM_PART}" = delta-v1:shard ]; then
+if [ "${SYSTEM_PART}" = shard ]; then
   batch_count=$(jq -r length /tmp/optional-shard-batches.json)
   [ "${batch_count}" -gt 0 ] || { echo "non-empty Optional shard has no cumulative batches" >&2; exit 1; }
   completed_batch=$(latest_checkpoint_batch shard "${SYSTEM_SHARD_INDEX}" || true)
