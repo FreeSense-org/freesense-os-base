@@ -1265,6 +1265,58 @@ fetch_delta_mirror() {
   phase delta-mirror-ready
 }
 
+# Everything a delta build produced must be something the plan meant us to
+# build, or something the mirror supplied. A third category means Poudriere
+# pulled a port into the queue that nothing sanctioned -- a stale seed, a
+# dependency that did not match, a root that resolved differently -- and built
+# it from source. That is how a delta build turns back into a full one, and it
+# does it without failing: the repository signs, verifies and publishes, only
+# slower and larger than it should be.
+#
+# The roots cannot bound this, because Poudriere resolves dependencies itself.
+# Only the delta's package names can.
+verify_delta_build() {
+  delta_repository=$1 delta_plan=$2
+  phase delta-build-verify
+  delta_work=$(mktemp -d) || return 1
+  # comm compares byte for byte, so a plan serialised with CRLF would put
+  # every name in a file of its own and make every package look escaped.
+  jq -r '.packages[].name' "${delta_plan}" | tr -d '\r' \
+    | LC_ALL=C sort -u >"${delta_work}/mirrored"
+  jq -r '.delta_packages[]' "${delta_plan}" | tr -d '\r' \
+    | LC_ALL=C sort -u >"${delta_work}/sealed"
+  LC_ALL=C sort -u "${delta_work}/mirrored" "${delta_work}/sealed" \
+    >"${delta_work}/allowed"
+  [ -s "${delta_work}/allowed" ] || {
+    echo "the sealed plan allows no packages at all" >&2
+    rm -rf "${delta_work}"
+    return 1
+  }
+  : >"${delta_work}/built"
+  for delta_package in "${delta_repository}"/All/*.pkg; do
+    [ -f "${delta_package}" ] || continue
+    delta_metadata=$(package_metadata "${delta_package}") || {
+      rm -rf "${delta_work}"
+      return 1
+    }
+    printf '%s\n' "${delta_metadata%%|*}" >>"${delta_work}/built"
+  done
+  LC_ALL=C sort -u -o "${delta_work}/built" "${delta_work}/built"
+  [ -s "${delta_work}/built" ] || {
+    echo "the delta build produced no packages" >&2
+    rm -rf "${delta_work}"
+    return 1
+  }
+  delta_escaped=$(LC_ALL=C comm -23 "${delta_work}/built" "${delta_work}/allowed")
+  rm -rf "${delta_work}"
+  [ -z "${delta_escaped}" ] || {
+    echo "the build produced packages the sealed plan does not sanction:" >&2
+    printf '  %s\n' ${delta_escaped} >&2
+    return 1
+  }
+  phase delta-build-verified
+}
+
 # The roots one stage must build, from the sealed plan. The other stage's roots
 # and the reverse-dependency cascade are deliberately absent: Poudriere resolves
 # a cascade port when a root reaches it, so listing it here would only make each

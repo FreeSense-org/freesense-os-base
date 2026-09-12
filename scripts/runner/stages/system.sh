@@ -181,6 +181,9 @@ build_system_packages() {
   run_poudriere_build env NOLINUX=yes IGNORE_OSVERSION=yes ASSUME_ALWAYS_YES=yes ./build.sh --update-pkg-repo
   phase system-packages-ready
   latest=$(poudriere_latest_repository)
+  if [ -n "${MIRROR_PLAN_OBJECT}" ]; then
+    verify_delta_build "${latest}" /root/mirror-plan.json
+  fi
 }
 
 compose_system_repository() {
