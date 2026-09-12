@@ -1207,6 +1207,142 @@ PY
   done
 }
 
+# Fetch the frozen mirror this build layers on, bound to the plan it was cut
+# from.
+#
+# One input rather than two. The plan's fingerprint IS the mirror's artifact id,
+# and the mirror's own marker records the plan it was built from, so the two
+# identities check each other instead of being trusted separately. Given
+# MIRROR_ID and MIRROR_PLAN_OBJECT as independent inputs, a stale copy-paste
+# between two workflow blocks would seed one snapshot's bytes while building
+# another's root list -- and nothing would fail, because each artifact is
+# internally consistent. The result would be a signed repository built against
+# the wrong lower layer.
+#
+# The ports commit is checked too. Poudriere decides a seeded package is current
+# by comparing it against the ports tree; if the tree is not at the commit the
+# mirror was computed from, that comparison fails and Poudriere rebuilds from
+# source -- quietly turning a delta build back into a full one.
+#
+# delta_packages is required although nothing here reads it yet. It is the name
+# list the post-build escape check needs, and demanding it now means this path
+# cannot be switched on before that check can exist -- which is how
+# verify_delta_layer came to be written, tested and called from nowhere.
+fetch_delta_mirror() {
+  case "${MIRROR_PLAN_OBJECT}" in
+    inputs/sha256/*) : ;;
+    *) echo "a delta build requires a pinned mirror plan object" >&2; return 1 ;;
+  esac
+  phase delta-mirror-plan
+  fetch_input "${MIRROR_PLAN_OBJECT}" /root/mirror-plan.json
+  jq -e --arg abi "${ABI}" --arg architecture "${ARCHITECTURE}" --arg ports "${PORTS_SHA}" '
+    .schema_version == "freesense.mirror-plan/v1" and .abi == $abi and
+    .architecture == $architecture and
+    (.packages | type == "array" and length > 0) and
+    (.fingerprint | test("^[0-9a-f]{64}$")) and
+    (.component_roots | type) == "object" and
+    (.component_roots.system | type) == "array" and
+    (.component_roots.optional | type) == "array" and
+    (.delta_packages | type == "array" and length > 0) and
+    .ports_commit == $ports
+  ' /root/mirror-plan.json >/dev/null || {
+    echo "the mirror plan does not describe this target" >&2
+    echo "  plan ports commit: $(jq -r '.ports_commit // "?"' /root/mirror-plan.json)" >&2
+    echo "  this build's tree:  ${PORTS_SHA}" >&2
+    return 1
+  }
+  MIRROR_ID=$(jq -r .fingerprint /root/mirror-plan.json)
+  export MIRROR_ID
+  phase delta-mirror-fetch
+  fetch_repository mirror "${MIRROR_ID}" /root/mirror-repo
+  # fetch_repository proved the artifact is the one the plan names. Prove the
+  # converse: this mirror must have been built from this plan.
+  jq -e --arg object "${MIRROR_PLAN_OBJECT}" '.inputs.mirror_plan == $object' \
+    /root/mirror-repo/complete.json >/dev/null || {
+    echo "the fetched mirror was not built from this plan" >&2
+    return 1
+  }
+  phase delta-mirror-ready
+}
+
+# Everything a delta build produced must be something the plan meant us to
+# build, or something the mirror supplied. A third category means Poudriere
+# pulled a port into the queue that nothing sanctioned -- a stale seed, a
+# dependency that did not match, a root that resolved differently -- and built
+# it from source. That is how a delta build turns back into a full one, and it
+# does it without failing: the repository signs, verifies and publishes, only
+# slower and larger than it should be.
+#
+# The roots cannot bound this, because Poudriere resolves dependencies itself.
+# Only the delta's package names can.
+verify_delta_build() {
+  delta_repository=$1 delta_plan=$2
+  phase delta-build-verify
+  delta_work=$(mktemp -d) || return 1
+  # comm compares byte for byte, so a plan serialised with CRLF would put
+  # every name in a file of its own and make every package look escaped.
+  jq -r '.packages[].name' "${delta_plan}" | tr -d '\r' \
+    | LC_ALL=C sort -u >"${delta_work}/mirrored"
+  jq -r '.delta_packages[]' "${delta_plan}" | tr -d '\r' \
+    | LC_ALL=C sort -u >"${delta_work}/sealed"
+  LC_ALL=C sort -u "${delta_work}/mirrored" "${delta_work}/sealed" \
+    >"${delta_work}/allowed"
+  [ -s "${delta_work}/allowed" ] || {
+    echo "the sealed plan allows no packages at all" >&2
+    rm -rf "${delta_work}"
+    return 1
+  }
+  : >"${delta_work}/built"
+  for delta_package in "${delta_repository}"/All/*.pkg; do
+    [ -f "${delta_package}" ] || continue
+    delta_metadata=$(package_metadata "${delta_package}") || {
+      rm -rf "${delta_work}"
+      return 1
+    }
+    printf '%s\n' "${delta_metadata%%|*}" >>"${delta_work}/built"
+  done
+  LC_ALL=C sort -u -o "${delta_work}/built" "${delta_work}/built"
+  [ -s "${delta_work}/built" ] || {
+    echo "the delta build produced no packages" >&2
+    rm -rf "${delta_work}"
+    return 1
+  }
+  delta_escaped=$(LC_ALL=C comm -23 "${delta_work}/built" "${delta_work}/allowed")
+  rm -rf "${delta_work}"
+  [ -z "${delta_escaped}" ] || {
+    echo "the build produced packages the sealed plan does not sanction:" >&2
+    printf '  %s\n' ${delta_escaped} >&2
+    return 1
+  }
+  phase delta-build-verified
+}
+
+# The roots one stage must build, from the sealed plan. The other stage's roots
+# and the reverse-dependency cascade are deliberately absent: Poudriere resolves
+# a cascade port when a root reaches it, so listing it here would only make each
+# stage build the other stage's cascade.
+write_delta_bulk() {
+  delta_component=$1
+  case "${delta_component}" in
+    system|optional) : ;;
+    *) echo "unknown delta component: ${delta_component}" >&2; return 1 ;;
+  esac
+  jq -r --arg component "${delta_component}" '.component_roots[$component][]' \
+    /root/mirror-plan.json >/tmp/delta-roots
+  [ -s /tmp/delta-roots ] || {
+    echo "the sealed plan gives ${delta_component} no roots to build" >&2
+    return 1
+  }
+  grep -Eqv '^[A-Za-z0-9][A-Za-z0-9+_.@-]*/[A-Za-z0-9][A-Za-z0-9+_.@-]*$' /tmp/delta-roots && {
+    echo "the sealed plan contains an unusable port origin" >&2
+    return 1
+  }
+  cp /tmp/delta-roots tools/conf/pfPorts/poudriere_bulk
+  printf 'FreeSense %s delta roots (%s):\n' \
+    "${delta_component}" "$(awk 'END { print NR }' /tmp/delta-roots)"
+  cat /tmp/delta-roots
+}
+
 prepare_merged_binary_seed() {
   load_binary_seed
   load_previous_freesense_seed

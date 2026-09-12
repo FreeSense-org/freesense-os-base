@@ -54,6 +54,15 @@ build_system_core() {
   rm -f /tmp/freesense-built-kernel
 }
 
+partition_system_shard() {
+  [ "${roots_mode}" = shard ] || return 0
+  python_bin=$(command -v python3 || command -v python3.11)
+  "${python_bin}" /root/os-definition/scripts/partition_roots.py \
+    --config /root/os-definition/config/multiarch-shards.json --component system \
+    --shard "${SYSTEM_SHARD_INDEX}" --roots "${all_roots}.sorted" --output "${shard_roots}" \
+    --batches-output /tmp/system-shard-batches.json
+}
+
 write_system_farm_roots() {
   roots_mode=$1
   all_roots=/tmp/system-farm-roots
@@ -74,38 +83,40 @@ POUDRIERE_PORTS_NAME=FreeSense_main
 IGNORE_OSVERSION=yes
 PKG_ENV+= IGNORE_OSVERSION=yes
 EOF
-  sed 's/%%PRODUCT_NAME%%/FreeSense/g' tools/conf/pfPorts/poudriere_bulk \
-    | sed -e '/^[[:space:]]*#/d' -e '/^[[:space:]]*$/d' >"${all_roots}"
-  : >"${meta_dependencies}"
-  for meta_origin in security/FreeSense security/FreeSense-system; do
-    env __MAKE_CONF="${make_conf}" make -C "${ports_root}/${meta_origin}" \
-      -V RUN_DEPENDS -V LIB_DEPENDS >>"${meta_dependencies}" || {
-      echo "failed to expand System metaport dependencies: ${meta_origin}" >&2
+  if [ -n "${MIRROR_PLAN_OBJECT}" ]; then
+    # The sealed plan already names exactly what this stage builds.
+    # Expanding the metaports here would put the whole System closure back,
+    # including every package the mirror provides, and we would compile the
+    # packages we just downloaded.
+    LC_ALL=C sort -u /tmp/delta-roots >"${all_roots}.sorted"
+  else
+    sed 's/%%PRODUCT_NAME%%/FreeSense/g' tools/conf/pfPorts/poudriere_bulk \
+      | sed -e '/^[[:space:]]*#/d' -e '/^[[:space:]]*$/d' >"${all_roots}"
+    : >"${meta_dependencies}"
+    for meta_origin in security/FreeSense security/FreeSense-system; do
+      env __MAKE_CONF="${make_conf}" make -C "${ports_root}/${meta_origin}" \
+        -V RUN_DEPENDS -V LIB_DEPENDS >>"${meta_dependencies}" || {
+        echo "failed to expand System metaport dependencies: ${meta_origin}" >&2
+        return 1
+      }
+    done
+    if grep -Eq '[$][{(]|%%[^%]+%%' "${meta_dependencies}"; then
+      echo "System metaport dependencies contain unresolved variables" >&2
+      cat "${meta_dependencies}" >&2
       return 1
-    }
-  done
-  if grep -Eq '[$][{(]|%%[^%]+%%' "${meta_dependencies}"; then
-    echo "System metaport dependencies contain unresolved variables" >&2
-    cat "${meta_dependencies}" >&2
-    return 1
-  fi
-  tr '[:space:]' '\n' <"${meta_dependencies}" | awk -F: '
-    NF >= 2 {
-      origin=$NF
-      if (origin ~ "^[A-Za-z0-9+_.-]+/[A-Za-z0-9+_.@-]+$") print origin
-    }
-  ' >>"${all_roots}"
+    fi
+    tr '[:space:]' '\n' <"${meta_dependencies}" | awk -F: '
+      NF >= 2 {
+        origin=$NF
+        if (origin ~ "^[A-Za-z0-9+_.-]+/[A-Za-z0-9+_.@-]+$") print origin
+      }
+    ' >>"${all_roots}"
 
-  sed -e '/^security\/FreeSense$/d' -e '/^security\/FreeSense-system$/d' \
-    "${all_roots}" | LC_ALL=C sort -u >"${all_roots}.sorted"
-
-  if [ "${roots_mode}" = shard ]; then
-    python_bin=$(command -v python3 || command -v python3.11)
-    "${python_bin}" /root/os-definition/scripts/partition_roots.py \
-      --config /root/os-definition/config/multiarch-shards.json --component system \
-      --shard "${SYSTEM_SHARD_INDEX}" --roots "${all_roots}.sorted" --output "${shard_roots}" \
-      --batches-output /tmp/system-shard-batches.json
+    sed -e '/^security\/FreeSense$/d' -e '/^security\/FreeSense-system$/d' \
+      "${all_roots}" | LC_ALL=C sort -u >"${all_roots}.sorted"
   fi
+
+  partition_system_shard
   if [ "${roots_mode}" = shard ] && [ ! -s "${shard_roots}" ]; then
     EMPTY_SOURCE_SHARD=true
     export EMPTY_SOURCE_SHARD
@@ -130,8 +141,13 @@ prepare_system_ports() {
   export REPO_KIND=system OVERLAY_DIR=/root/freesense-system-ports
   phase system-ports-tree
   ./build.sh --update-poudriere-ports
-  cp tools/conf/pfPorts/poudriere_system tools/conf/pfPorts/poudriere_bulk
-  if [ "${PACKAGE_ARCH}" = aarch64 ]; then
+  if [ -n "${MIRROR_PLAN_OBJECT}" ]; then
+    fetch_delta_mirror
+    write_delta_bulk system
+  else
+    cp tools/conf/pfPorts/poudriere_system tools/conf/pfPorts/poudriere_bulk
+  fi
+  if [ "${PACKAGE_ARCH}" = aarch64 ] && [ -z "${MIRROR_PLAN_OBJECT}" ]; then
     for excluded in \
       sysutils/xe-guest-utilities \
       dns/coredns \
@@ -147,7 +163,14 @@ prepare_system_ports() {
     shard) write_system_farm_roots shard ;;
   esac
   create_source_archive
-  if [ -n "${BINARY_SEED_OBJECT}" ]; then
+  if [ -n "${MIRROR_PLAN_OBJECT}" ]; then
+    # The mirror replaces the pin-time binary seed rather than joining it.
+    # It is a superset computed from the same signed catalogue, so merging
+    # both would only offer Poudriere two candidates for one name.
+    phase system-mirror-seed
+    seed_poudriere_repository /root/mirror-repo
+    phase system-mirror-seed-ready
+  elif [ -n "${BINARY_SEED_OBJECT}" ]; then
     prepare_merged_binary_seed
     seed_poudriere_repository /root/merged-binary-seed
   fi
@@ -158,6 +181,9 @@ build_system_packages() {
   run_poudriere_build env NOLINUX=yes IGNORE_OSVERSION=yes ASSUME_ALWAYS_YES=yes ./build.sh --update-pkg-repo
   phase system-packages-ready
   latest=$(poudriere_latest_repository)
+  if [ -n "${MIRROR_PLAN_OBJECT}" ]; then
+    verify_delta_build "${latest}" /root/mirror-plan.json
+  fi
 }
 
 compose_system_repository() {
@@ -201,7 +227,15 @@ case "${SYSTEM_PART}" in
   shard)
     prepare_system_ports shard
     if [ "${EMPTY_SOURCE_SHARD:-false}" = true ]; then
-      publish_system_checkpoint shard "${SYSTEM_SHARD_INDEX}" /root/merged-binary-seed
+      # A shard with nothing of its own still has to publish a checkpoint the
+      # finalizer can collect. It publishes the lower layer it was given, which
+      # on the delta path is the mirror and otherwise the merged binary seed --
+      # /root/merged-binary-seed does not exist on the delta path at all.
+      if [ -n "${MIRROR_PLAN_OBJECT}" ]; then
+        publish_system_checkpoint shard "${SYSTEM_SHARD_INDEX}" /root/mirror-repo
+      else
+        publish_system_checkpoint shard "${SYSTEM_SHARD_INDEX}" /root/merged-binary-seed
+      fi
       exit 0
     fi
     batch_count=$(jq -r length /tmp/system-shard-batches.json)
