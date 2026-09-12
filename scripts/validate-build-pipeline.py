@@ -27,7 +27,8 @@ expected_workflows = {
     "qualified-repository-document.yml", "publish-qualified-development.yml",
     "github-hosted-experiment.yml",
     "github-hosted-system.yml",
-    "arm64-experimental.yml", "broker.yml", "ci.yml", "mirror.yml", "packages.yml", "pin.yml",
+    "arm64-experimental.yml", "broker.yml", "ci.yml", "mirror.yml", "observe.yml",
+    "packages.yml", "pin.yml",
     "pin-target.yml", "release.yml",
     "retention.yml", "runner-build.yml", "stable.yml", "system.yml",
 }

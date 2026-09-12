@@ -4,9 +4,9 @@ name: Publish the frozen FreeBSD mirror
 # FreeSense's dependency closure that FreeSense does not build itself, pinned to
 # one signed upstream catalogue and re-signed with the FreeSense key.
 #
-# The plan comes from a pin run's observe job rather than being recomputed here,
-# so the mirror is bound to the requirements the native worker actually evaluated
-# at the ports commit upstream published from.
+# The plan comes from an observation run rather than being recomputed here, so
+# the mirror is bound to the requirements a native worker actually evaluated at
+# the ports commit upstream published from.
 
 on:
   workflow_dispatch:
@@ -16,8 +16,8 @@ on:
         type: choice
         options: [amd64, arm64]
         default: amd64
-      pin_run_id:
-        description: Pin run whose observe job produced the mirror plan
+      observe_run_id:
+        description: Run of "Observe the upstream ports commit" that produced the mirror plan
         type: string
         required: true
       source_sha:
@@ -62,10 +62,10 @@ jobs:
       - name: Collect the sealed mirror plan
         env:
           GH_TOKEN: ${{ github.token }}
-          PIN_RUN_ID: ${{ inputs.pin_run_id }}
+          OBSERVE_RUN_ID: ${{ inputs.observe_run_id }}
         run: |
           set -euo pipefail
-          gh run download "${PIN_RUN_ID}" --repo "${GITHUB_REPOSITORY}" \
+          gh run download "${OBSERVE_RUN_ID}" --repo "${GITHUB_REPOSITORY}" \
             --name "freebsd-pin-${ARCH}-observed" --dir "${RUNNER_TEMP}/observed"
           plan=$(find "${RUNNER_TEMP}/observed" -name mirror-plan.json -print -quit)
           [[ -n ${plan} ]]
@@ -74,7 +74,7 @@ jobs:
           # An estimated delta was computed at a commit upstream did not publish
           # from, so the mirror it describes would not match the catalogue.
           jq -e '.exact == true' "${summary}" >/dev/null || {
-            echo "the pin run did not evaluate the observed ports commit" >&2
+            echo "that run did not evaluate the observed ports commit" >&2
             exit 1
           }
           jq -e --arg abi "$(jq -er --arg arch "${ARCH}" '.targets[$arch].abi' config/build-policy.json)" \

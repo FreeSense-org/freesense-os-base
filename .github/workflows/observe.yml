@@ -1,0 +1,251 @@
+name: Observe the upstream ports commit
+
+# Computes the exact layered-repository delta and the mirror plan for one
+# architecture, and publishes nothing.
+#
+# It deliberately does not run inside the pin. The pin samples one ports commit
+# per day and picks from that window, but FreeBSD builds from whatever commit its
+# own run started at -- which is essentially never one of the samples. Reading
+# the revision out of the signed catalogue and evaluating the ports tree there is
+# both exact and independent of the pin's fourteen-day window, so this can run at
+# any time without advancing anything.
+#
+# The pinned worker image, worker tools and package-catalogue trust root come
+# from the committed pin; the catalogue itself is fetched fresh, because the
+# whole point is to observe what upstream has published now.
+
+on:
+  workflow_dispatch:
+    inputs:
+      architecture:
+        description: Target architecture
+        type: choice
+        options: [amd64, arm64]
+        default: amd64
+      ports_commit:
+        description: Evaluate this ports commit instead of the one the catalogue reports
+        type: string
+        default: ''
+
+permissions: {contents: read, id-token: write}
+concurrency:
+  group: observe-${{ inputs.architecture }}
+  cancel-in-progress: true
+
+jobs:
+  observe:
+    runs-on: ${{ inputs.architecture == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
+    timeout-minutes: 180
+    environment: build
+    env:
+      R2_CREDENTIAL_BROKER_URL: ${{ vars.R2_CREDENTIAL_BROKER_URL }}
+      R2_CREDENTIAL_BROKER_AUDIENCE: ${{ vars.R2_CREDENTIAL_BROKER_AUDIENCE }}
+      R2_BUCKET: ${{ vars.R2_BUILD_BUCKET }}
+      R2_ENDPOINT: ${{ vars.R2_ENDPOINT }}
+      ARCH: ${{ inputs.architecture }}
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with: {go-version-file: go.mod, cache: false}
+      - run: go build -trimpath -o "${RUNNER_TEMP}/fsbuild" ./cmd/fsbuild
+
+      - name: Read what upstream published
+        id: observed
+        run: |
+          set -euo pipefail
+          target="${RUNNER_TEMP}/observe"; mkdir -p "${target}/serve"
+          abi=$(jq -er --arg arch "${ARCH}" '.targets[$arch].abi' config/build-policy.json)
+          key=$(jq -er --arg arch "${ARCH}" \
+            '.targets[$arch].package_catalog.trusted_key_sha256' config/freebsd-16.json)
+          curl --proto '=https' --fail --location --silent --show-error --retry 5 --retry-all-errors \
+            "https://pkg.freebsd.org/${abi}/latest/packagesite.pkg" \
+            --output "${target}/packagesite.pkg"
+          python3 scripts/observe_catalogue.py --catalog "${target}/packagesite.pkg" \
+            --trusted-key-sha256 "${key}" --architecture "${ARCH}" \
+            --output "${target}/observed.json"
+          commit="${{ inputs.ports_commit }}"
+          [[ -n ${commit} ]] || commit=$(jq -er .ports_commit "${target}/observed.json")
+          [[ ${commit} =~ ^[0-9a-f]{40}$ ]]
+          echo "commit=${commit}" >>"${GITHUB_OUTPUT}"
+
+      - name: Acquire read-only worker input credential
+        run: >-
+          "${RUNNER_TEMP}/fsbuild" credentials acquire --broker-url "${R2_CREDENTIAL_BROKER_URL}"
+          --audience "${R2_CREDENTIAL_BROKER_AUDIENCE}" --role input-reader
+          --expected-bucket "${R2_BUCKET}" --expected-prefix v1 --expected-endpoint "${R2_ENDPOINT}"
+          --github-env "${GITHUB_ENV}"
+
+      - name: Cache the ports repository on the host
+        run: |
+          set -euo pipefail
+          target="${RUNNER_TEMP}/observe"
+          # One bare clone served to the guest beats cloning 1.5 GB through the
+          # VM's user-mode network.
+          git clone --quiet --bare https://github.com/freebsd/freebsd-ports.git "${target}/ports.git"
+          git -C "${target}/ports.git" cat-file -e "${{ steps.observed.outputs.commit }}^{commit}"
+          tar -C "${target}" --owner=0 --group=0 --numeric-owner -cf "${target}/serve/ports.git.tar" ports.git
+          rm -rf "${target}/ports.git"
+
+      - name: Prepare native virtualization tools
+        run: |
+          sudo apt-get update
+          if [[ "${ARCH}" == "arm64" ]]; then
+            sudo apt-get install -y --no-install-recommends qemu-system-arm qemu-utils qemu-efi-aarch64 cloud-image-utils
+          else
+            sudo apt-get install -y --no-install-recommends qemu-system-x86 qemu-utils ovmf cloud-image-utils
+          fi
+          if [[ -e /dev/kvm ]]; then sudo chmod a+rw /dev/kvm; fi
+
+      - name: Evaluate the ports tree at that commit
+        env:
+          FSBUILD: ${{ runner.temp }}/fsbuild
+          OBSERVED: ${{ steps.observed.outputs.commit }}
+        run: |
+          set -euo pipefail
+          target="${RUNNER_TEMP}/observe"
+          image_sha=$(jq -er --arg arch "${ARCH}" '.targets[$arch].worker_image.sha256' config/freebsd-16.json)
+          tools_sha=$(jq -er --arg arch "${ARCH}" '.targets[$arch].worker_tools.sha256' config/freebsd-16.json)
+          public_base=$(jq -er .public_base_url config/build-policy.json)
+          for repo in freesense freesense-system-ports freesense-packages freesense-os-base; do
+            sha=$(git ls-remote "https://github.com/FreeSense-org/${repo}.git" refs/heads/main | cut -f1)
+            [[ ${sha} =~ ^[0-9a-f]{40}$ ]]
+            printf '%s\n' "${sha}" >"${target}/${repo}.sha"
+          done
+          cat <<'EOF' >"${target}/observe.sh"
+          #!/bin/sh
+          set -eu
+          export HOME=/root
+          export PATH="/usr/local/sbin:/usr/local/bin:${PATH}"
+          LAST_PHASE=initialization
+          phase() {
+            LAST_PHASE=$1
+            printf 'FreeSense phase: %s\n' "${LAST_PHASE}"
+          }
+          report_phase_failure() {
+            status=$?
+            if [ "${status}" -ne 0 ]; then
+              printf 'FreeSense phase failed: %s status=%s\n' "${LAST_PHASE}" "${status}" >&2
+            fi
+          }
+          trap report_phase_failure EXIT
+          EOF
+          cat scripts/runner/install-worker-tools.sh >>"${target}/observe.sh"
+          cat >>"${target}/observe.sh" <<EOF
+          PUBLIC_BASE_URL='${public_base}'
+          WORKER_TOOLS_SHA256='${tools_sha}'
+          install_worker_tools
+          if command -v python3.11 >/dev/null && ! command -v python3 >/dev/null; then
+            ln -s "\$(command -v python3.11)" /usr/local/bin/python3
+          fi
+          phase ports-fetch
+          fetch -o /root/ports.git.tar 'http://10.0.2.2:8765/ports.git.tar'
+          [ -s /root/ports.git.tar ]
+          phase ports-unpack
+          tar -C /root --no-same-owner -xf /root/ports.git.tar
+          rm -f /root/ports.git.tar
+          chown -R root:wheel /root/ports.git
+          git config --global --add safe.directory /root/ports.git
+          git config --global --add safe.directory /root/ports
+          git clone --no-checkout /root/ports.git /root/ports
+          phase sources
+          for spec in \
+            'FreeSense-org/freesense:$(cat "${target}/freesense.sha"):source' \
+            'FreeSense-org/freesense-system-ports:$(cat "${target}/freesense-system-ports.sha"):system' \
+            'FreeSense-org/freesense-packages:$(cat "${target}/freesense-packages.sha"):packages' \
+            'FreeSense-org/freesense-os-base:$(cat "${target}/freesense-os-base.sha"):os-definition'; do
+            IFS=: read -r repo revision name <<SPEC
+          \${spec}
+          SPEC
+            git clone "https://github.com/\${repo}.git" "/root/\${name}"
+            git -C "/root/\${name}" checkout --detach "\${revision}"
+          done
+          mkdir -p /usr/local/etc/poudriere.d
+          sed -e 's,%%PRODUCT_NAME%%,FreeSense,g' -e 's,%%PRODUCT_VERSION%%,1.1.0,g' \
+            -e 's,%%FREESENSE_PACKAGE_TRAIN%%,1.1,g' /root/source/tools/conf/pfPorts/make.conf \
+            >/usr/local/etc/poudriere.d/FreeSense_main-make.conf
+          printf 'PRODUCT_NAME=FreeSense\nPRODUCT_VERSION=1.1.0\nFREESENSE_PACKAGE_TRAIN=1.1\nPOUDRIERE_PORTS_NAME=FreeSense_main\n' \
+            >>/usr/local/etc/poudriere.d/FreeSense_main-make.conf
+          PIN_ARCH='${ARCH}' python3 - <<'PY' >/root/roots.json
+          import json
+          import os
+          from pathlib import Path
+          def roots(name):
+              items = []
+              for line in Path('/root/source/tools/conf/pfPorts/' + name).read_text().splitlines():
+                  line = line.replace('%%PRODUCT_NAME%%', 'FreeSense').strip()
+                  if not line or line.startswith('#'):
+                      continue
+                  if line == 'emulators/qemu-guest-agent':
+                      line = 'emulators/qemu@guestagent'
+                  items.append(line)
+              return sorted(set(items))
+          system = roots('poudriere_system')
+          packages = roots('poudriere_packages')
+          if os.environ['PIN_ARCH'] == 'arm64':
+              system = [x for x in system if x not in {
+                  'sysutils/xe-guest-utilities', 'dns/coredns', 'net/speedtest-go',
+                  'net/cloud-init', 'sysutils/FreeSense-cloud-init'}]
+              policy = json.loads(Path('/root/packages/architecture-policy.json').read_text())
+              excluded = {item['origin'] for item in policy['architectures']['aarch64']['exclude']}
+              packages = [x for x in packages if x not in excluded]
+          print(json.dumps({'system': system, 'packages': packages}))
+          PY
+          phase observed-${OBSERVED}
+          git -C /root/ports checkout -f '${OBSERVED}'
+          git -C /root/ports clean -fdx
+          for overlay in /root/system /root/packages; do
+            (cd "\${overlay}" && tar --exclude=.git -cf - .) | tar -xf - -C /root/ports
+          done
+          python3 /root/os-definition/scripts/package_requirements.py \
+            --ports /root/ports --make-conf /usr/local/etc/poudriere.d/FreeSense_main-make.conf \
+            --architecture '${ARCH}' --ports-sha '${OBSERVED}' \
+            --roots /root/roots.json --output /root/requirements.json
+          jq -n --arg commit '${OBSERVED}' \
+            --rawfile make_conf /usr/local/etc/poudriere.d/FreeSense_main-make.conf \
+            --slurpfile requirements /root/requirements.json \
+            '{commit:\$commit,committed_at:"1970-01-01T00:00:00Z",make_conf:\$make_conf,requirements:\$requirements[0]}' \
+            >/root/observed.json
+          echo PIN_OBSERVED_BEGIN
+          base64 /root/observed.json
+          echo PIN_OBSERVED_END
+          EOF
+          scripts/runner/run-vm.sh --host-architecture "${ARCH}" --image-sha256 "${image_sha}" \
+            --script "${target}/observe.sh" --timeout 9000 --vcpus auto --memory-mib auto \
+            --disk-gib 60 --minimum-free-gib 25 --serial-output "${target}/serial.log" \
+            --failure-dir "${RUNNER_TEMP}/observe-failure" \
+            --serve-dir "${target}/serve" --serve-port 8765
+          python3 scripts/extract_serial_payload.py --log "${target}/serial.log" \
+            --name PIN_OBSERVED --output "${target}/evaluated.json"
+
+      - name: Compute the exact delta and mirror plan
+        run: |
+          set -euo pipefail
+          target="${RUNNER_TEMP}/observe"
+          jq -r .make_conf "${target}/evaluated.json" >"${target}/make.conf"
+          jq '[{commit, committed_at, requirements}]' "${target}/evaluated.json" >"${target}/candidates.json"
+          python3 scripts/mirror_report.py \
+            --catalog "${target}/packagesite.pkg" \
+            --trusted-key-sha256 "$(jq -er --arg arch "${ARCH}" \
+              '.targets[$arch].package_catalog.trusted_key_sha256' config/freebsd-16.json)" \
+            --candidates "${target}/candidates.json" --make-conf "${target}/make.conf" \
+            --architecture "${ARCH}" --output "${target}/report"
+          cp "${target}/observed.json" "${target}/report/observed-catalogue.json"
+          {
+            echo "## Layered repository observation (${ARCH})"
+            echo
+            echo '```json'
+            cat "${target}/report/summary.json"
+            echo '```'
+          } >>"${GITHUB_STEP_SUMMARY}"
+
+      - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        if: always()
+        with:
+          name: freebsd-pin-${{ inputs.architecture }}-observed
+          path: |
+            ${{ runner.temp }}/observe/report/
+            ${{ runner.temp }}/observe/evaluated.json
+            ${{ runner.temp }}/observe-failure/
+            ${{ runner.temp }}/observe/serial.log
+          if-no-files-found: ignore
+          retention-days: 14
