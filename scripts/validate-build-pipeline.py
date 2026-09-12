@@ -90,15 +90,13 @@ for value in ("freesense-hosted-{0}-{1}-{2}-{3}-{4}",
               "Reuse completed System farm checkpoint",
               "Render credential-free System farm worker",
               "FREESENSE_REPO_SIGNING_KEY: ''",
-              "inputs.system_part == 'bootstrap' && '20700'"):
+              "inputs.system_part == 'core'"):
     require(value in reusable,
             f"reusable System farm isolation is missing {value!r}")
 for value in ('fetch_system_checkpoint core core',
-              'fetch_system_checkpoint bootstrap bootstrap',
               'while [ "${shard}" -lt "${SYSTEM_SHARD_COUNT}" ]',
               'seed_poudriere_repository "${shard_seed}"',
-              'seed_poudriere_repository "/root/system-bootstrap-checkpoint/${PACKAGE_ARCH}"',
-              "lang/rust", "net/cloud-init", "sysutils/FreeSense-cloud-init",
+              "net/cloud-init", "sysutils/%%PRODUCT_NAME%%-cloud-init",
               'partition_roots.py', '--batches-output /tmp/system-shard-batches.json',
               'prepare_system_ports full', "phase system-closure-check",
               '>>"${meta_dependencies}" || {',

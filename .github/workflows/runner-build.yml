@@ -144,7 +144,7 @@ jobs:
       BUILD_MEMORY_MIB: ${{ inputs.build_host != 'dedicated' && 'auto' || '32768' }}
       BUILD_DISK_GIB: ${{ inputs.build_host != 'dedicated' && '110' || '160' }}
       BUILD_MINIMUM_FREE_GIB: ${{ inputs.build_host != 'dedicated' && '70' || '80' }}
-      BUILD_TIMEOUT_SECONDS: ${{ inputs.build_host != 'dedicated' && (inputs.system_part == 'bootstrap' && '20700' || '19800') || '18000' }}
+      BUILD_TIMEOUT_SECONDS: ${{ inputs.build_host != 'dedicated' && '19800' || '18000' }}
     steps:
       - name: Validate selected executor
         env:
@@ -179,9 +179,8 @@ jobs:
       - run: go build -trimpath -o "${RUNNER_TEMP}/fsbuild" ./cmd/fsbuild
       - name: Verify repository signing trust root
         if: >-
-          (inputs.stage != 'system' && !(inputs.stage == 'packages' && inputs.farm_layout == 'delta-v1')) ||
-          (inputs.system_part != 'core' && inputs.system_part != 'bootstrap' &&
-           inputs.system_part != 'shard' && inputs.system_part != 'dependent')
+          (inputs.stage != 'system' && inputs.stage != 'packages') ||
+          (inputs.system_part != 'core' && inputs.system_part != 'shard')
         env: {SIGNING_KEY: "${{ secrets.FREESENSE_PKG_SIGNING_KEY }}"}
         run: |
           umask 077
@@ -217,25 +216,16 @@ jobs:
         name: Reuse completed System farm checkpoint
         if: >-
           steps.reuse.outputs.complete != 'true' &&
-          (inputs.stage == 'system' || (inputs.stage == 'packages' && inputs.farm_layout == 'delta-v1')) &&
-          (inputs.system_part == 'core' || inputs.system_part == 'bootstrap' ||
-           inputs.system_part == 'dependent' || (inputs.system_part == 'shard' && inputs.farm_layout != 'delta-v1'))
+          (inputs.stage == 'system' || inputs.stage == 'packages') &&
+          inputs.system_part == 'core'
         run: |
-          case "${SYSTEM_PART}" in
-            core) checkpoint="core" ;;
-            bootstrap) checkpoint="bootstrap" ;;
-            shard|dependent) checkpoint="shards/${SYSTEM_SHARD_INDEX}" ;;
-          esac
-          key="${FSBUILD_STORE_PREFIX}/artifacts/system/${FINGERPRINT}/checkpoints/farm-${SYSTEM_SHARD_COUNT}/${checkpoint}/complete.json"
-          if [[ "${FARM_LAYOUT}" == delta-v1 ]]; then
-            component="${STAGE}"
-            if [[ "${STAGE}" == packages ]]; then component="packages/${PACKAGE_TRAIN}"; fi
-            previous="${PREVIOUS_FREESENSE_REPOSITORY:-none}"
-            key="${FSBUILD_STORE_PREFIX}/artifacts/${component}/${FINGERPRINT}/checkpoints/${ARCHITECTURE}/${FREEBSD_PIN_ID}/${previous}/${SHARD_POLICY_VERSION}/farm-${SYSTEM_SHARD_COUNT}/${checkpoint}/batch-0/complete.json"
-          fi
+          component="${STAGE}"
+          if [[ "${STAGE}" == packages ]]; then component="packages/${PACKAGE_TRAIN}"; fi
+          previous="${PREVIOUS_FREESENSE_REPOSITORY:-none}"
+          key="${FSBUILD_STORE_PREFIX}/artifacts/${component}/${FINGERPRINT}/checkpoints/${ARCHITECTURE}/${FREEBSD_PIN_ID}/${previous}/${SHARD_POLICY_VERSION}/farm-${SYSTEM_SHARD_COUNT}/core/batch-0/complete.json"
           if aws s3api head-object --endpoint-url "${R2_ENDPOINT}" \
               --bucket "${R2_BUCKET}" --key "${key}" >/dev/null 2>&1; then
-            echo "Reusing completed System checkpoint ${checkpoint}"
+            echo "Reusing completed System core checkpoint"
             echo "complete=true" >>"${GITHUB_OUTPUT}"
           else
             echo "complete=false" >>"${GITHUB_OUTPUT}"
@@ -254,9 +244,8 @@ jobs:
       - name: Render credential-free System farm worker
         if: >-
           steps.reuse.outputs.complete != 'true' && steps.checkpoint.outputs.complete != 'true' &&
-          (inputs.stage == 'system' || (inputs.stage == 'packages' && inputs.farm_layout == 'delta-v1')) &&
-          (inputs.system_part == 'core' || inputs.system_part == 'bootstrap' ||
-           inputs.system_part == 'shard' || inputs.system_part == 'dependent')
+          (inputs.stage == 'system' || inputs.stage == 'packages') &&
+          (inputs.system_part == 'core' || inputs.system_part == 'shard')
         env:
           FREESENSE_REPO_SIGNING_KEY: ''
         run: |
@@ -267,9 +256,8 @@ jobs:
         if: >-
           steps.reuse.outputs.complete != 'true' && steps.reuse.outputs.assembled != 'true' &&
           steps.checkpoint.outputs.complete != 'true' &&
-          !((inputs.stage == 'system' || (inputs.stage == 'packages' && inputs.farm_layout == 'delta-v1')) &&
-            (inputs.system_part == 'core' || inputs.system_part == 'bootstrap' ||
-             inputs.system_part == 'shard' || inputs.system_part == 'dependent'))
+          !((inputs.stage == 'system' || inputs.stage == 'packages') &&
+            (inputs.system_part == 'core' || inputs.system_part == 'shard'))
         env:
           FREESENSE_REPO_SIGNING_KEY: ${{ secrets.FREESENSE_PKG_SIGNING_KEY }}
         run: |
