@@ -210,6 +210,27 @@ class ComponentRootTests(unittest.TestCase):
         self.assertIn("devel/cascade", document["delta_roots"])
         self.assertNotIn("devel/cascade", document["component_roots"]["system"])
 
+    def test_two_packages_sharing_one_origin_are_refused(self):
+        # package_requirements strips the flavour from PKGORIGIN, so devel/glib20
+        # is the origin of both glib and glib-bootstrap. A bulk list addressed by
+        # that origin builds the default flavour only; the sibling is then in
+        # neither layer, because the delta claims it and the mirror excludes it.
+        document = delta(build=["glib", "glib-bootstrap"],
+                         components={"system": ["glib", "glib-bootstrap"], "optional": []})
+        for item in document["build"]:
+            item["origin"] = "devel/glib20"
+        with self.assertRaisesRegex(ValueError, "sharing one flavourless origin"):
+            make(document, [upstream("pkg"), upstream("alpha")])
+
+    def test_the_same_origin_in_different_components_is_fine(self):
+        # One package legitimately belongs to both closures; that is not a
+        # collapse, it is System building it and Optional reusing it.
+        document = make(delta(build=["shared"],
+                              components={"system": ["shared"], "optional": ["shared"]}),
+                        [upstream("pkg"), upstream("alpha")])
+        self.assertEqual(document["component_roots"]["system"], ["devel/shared"])
+        self.assertEqual(document["component_roots"]["optional"], ["devel/shared"])
+
     def test_a_component_naming_a_package_outside_the_delta_is_refused(self):
         with self.assertRaisesRegex(ValueError, "outside the delta"):
             make(delta(build=["ours"], components={"system": ["ours", "ghost"], "optional": []}),

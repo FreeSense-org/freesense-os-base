@@ -109,7 +109,22 @@ def component_roots(delta: dict) -> dict[str, list[str]]:
         missing = [name for name in names if name not in origins]
         if missing:
             raise ValueError(f"{component} names packages outside the delta: {sorted(missing)[:5]}")
-        resolved[component] = sorted({origins[name] for name in names})
+        shared = {}
+        for name in names:
+            shared.setdefault(origins[name], []).append(name)
+        # package_requirements records a flavourless PKGORIGIN, so several
+        # packages can share one. A bulk list addressed by that origin builds
+        # the default flavour only, and the siblings end up in neither layer:
+        # not built here, and excluded from the mirror because the delta claims
+        # them. Nothing would fail -- the list is non-empty, the origin is well
+        # formed, the build succeeds, and the package is simply gone.
+        collapsed = {origin: sorted(packages)
+                     for origin, packages in shared.items() if len(packages) > 1}
+        if collapsed:
+            raise ValueError(
+                f"{component} has packages sharing one flavourless origin, which a bulk "
+                f"list cannot distinguish: {collapsed}")
+        resolved[component] = sorted(shared)
     covered = set(resolved["system"]) | set(resolved["optional"])
     if not covered <= set(origins.values()):
         raise ValueError("the component split names origins outside the delta")
