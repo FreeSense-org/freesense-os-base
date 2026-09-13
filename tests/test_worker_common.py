@@ -283,6 +283,22 @@ class WorkerVersionValidationTests(unittest.TestCase):
         self.assertIn("/tmp/delta-roots", delta_body)
         self.assertNotIn("meta_dependencies", delta_body)
 
+    def test_finalize_seeds_both_layers_at_once(self) -> None:
+        # seed_poudriere_repository replaces the repository wholesale, so
+        # seeding the mirror and then the shard output keeps only the second.
+        # finalize has to merge them and seed once.
+        system = (ROOT / "scripts/runner/stages/system.sh").read_text(encoding="utf-8")
+        final = system[system.index("  finalize)"):]
+        final = final[:final.index(chr(10) + "    ;;")]
+        self.assertEqual(final.count("seed_poudriere_repository"), 1)
+        merge_at = final.index("/root/mirror-repo/All")
+        seed_at = final.index("seed_poudriere_repository")
+        self.assertLess(merge_at, seed_at, "the mirror must be merged before the seed")
+        # and prepare_system_ports must not seed separately on this path
+        prepare = system[system.index("prepare_system_ports() {"):]
+        prepare = prepare[:prepare.index(chr(10) + "}" + chr(10))]
+        self.assertIn('if [ "${roots_mode}" != full ]; then', prepare)
+
     def test_both_root_paths_reach_the_shard_slice(self) -> None:
         # The delta branch must not return early: the tail after it partitions
         # the roots, handles an empty shard, and copies the shard's slice into
