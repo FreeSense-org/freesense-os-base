@@ -1399,6 +1399,30 @@ load_binary_seed() {
 }
 
 record_upstream_provenance() {
+  # Which packages in the published repository came from upstream rather than
+  # from us, and what proves it. With a mirror that proof is the mirror's own
+  # record of the signed catalogue it was cut from; the pin-time binary seed is
+  # not consulted, and must not be -- load_binary_seed asserts the seed carries
+  # lang/rust, which an amd64 seed need not, and it fails silently because its
+  # jq output goes to /dev/null.
+  if [ -n "${MIRROR_PLAN_OBJECT}" ]; then
+    upstream_provenance=/root/mirror-repo/mirror-provenance.json
+    [ -s "${upstream_provenance}" ] || {
+      echo "the fetched mirror carries no provenance" >&2
+      return 1
+    }
+    : >/tmp/upstream-reused.jsonl
+    for package in "$1"/All/*.pkg; do
+      [ -f "${package}" ] || continue
+      sha=$(sha256 -q "${package}")
+      jq -c --arg sha "${sha}" '.packages[] | select(.sha256 == $sha)' \
+        "${upstream_provenance}" >>/tmp/upstream-reused.jsonl
+    done
+    jq -s --arg seed "${MIRROR_PLAN_OBJECT}" --arg abi "${ABI}" \
+      '{schema_version:"freesense.upstream-provenance/v1",binary_seed:$seed,abi:$abi,packages:.}' \
+      /tmp/upstream-reused.jsonl >"$1/upstream-provenance.json"
+    return 0
+  fi
   [ -n "${BINARY_SEED_OBJECT}" ] || return 0
   load_binary_seed
   : >/tmp/upstream-reused.jsonl
