@@ -88,7 +88,15 @@ EOF
     # Expanding the metaports here would put the whole System closure back,
     # including every package the mirror provides, and we would compile the
     # packages we just downloaded.
-    LC_ALL=C sort -u /tmp/delta-roots >"${all_roots}.sorted"
+    #
+    # The metaports themselves are dropped from the shard partition for the
+    # same reason the legacy path drops them: each depends on its whole
+    # component, so whichever shard drew one would rebuild everything the
+    # other seven are already building. Their dependencies are enumerated
+    # individually in the plan's roots, and finalize builds the metaports
+    # from the complete list.
+    sed -e '/^security\/FreeSense$/d' -e '/^security\/FreeSense-system$/d' \
+      /tmp/delta-roots | LC_ALL=C sort -u >"${all_roots}.sorted"
   else
     sed 's/%%PRODUCT_NAME%%/FreeSense/g' tools/conf/pfPorts/poudriere_bulk \
       | sed -e '/^[[:space:]]*#/d' -e '/^[[:space:]]*$/d' >"${all_roots}"
