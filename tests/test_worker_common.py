@@ -283,6 +283,20 @@ class WorkerVersionValidationTests(unittest.TestCase):
         self.assertIn("/tmp/delta-roots", delta_body)
         self.assertNotIn("meta_dependencies", delta_body)
 
+    def test_no_metaport_reaches_a_shard_partition(self) -> None:
+        # A metaport depends on its whole component, so a shard holding one
+        # rebuilds everything the other seven are already building -- which is
+        # how three arm64 shards hit the watchdog. Both root paths drop them.
+        system = (ROOT / "scripts/runner/stages/system.sh").read_text(encoding="utf-8")
+        roots = system[system.index("write_system_farm_roots() {"):]
+        roots = roots[:roots.index(chr(10) + "}" + chr(10))]
+        delta = roots[roots.index('if [ -n "${MIRROR_PLAN_OBJECT}" ]'):roots.index("  else")]
+        legacy = roots[roots.index("  else"):]
+        for name, body in (("delta", delta), ("legacy", legacy)):
+            with self.subTest(path=name):
+                self.assertIn("/^security" + chr(92) + "/FreeSense$/d", body)
+                self.assertIn("/^security" + chr(92) + "/FreeSense-system$/d", body)
+
     def test_finalize_seeds_both_layers_at_once(self) -> None:
         # seed_poudriere_repository replaces the repository wholesale, so
         # seeding the mirror and then the shard output keeps only the second.
