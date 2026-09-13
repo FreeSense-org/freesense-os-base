@@ -167,9 +167,16 @@ prepare_system_ports() {
     # The mirror replaces the pin-time binary seed rather than joining it.
     # It is a superset computed from the same signed catalogue, so merging
     # both would only offer Poudriere two candidates for one name.
-    phase system-mirror-seed
-    seed_poudriere_repository /root/mirror-repo
-    phase system-mirror-seed-ready
+    #
+    # finalize is the exception: it seeds once, from the mirror merged with
+    # the collected shard output. seed_poudriere_repository replaces the
+    # repository wholesale, so seeding here would simply be deleted by that
+    # call and the build would run with no lower layer at all.
+    if [ "${roots_mode}" != full ]; then
+      phase system-mirror-seed
+      seed_poudriere_repository /root/mirror-repo
+      phase system-mirror-seed-ready
+    fi
   elif [ -n "${BINARY_SEED_OBJECT}" ]; then
     prepare_merged_binary_seed
     seed_poudriere_repository /root/merged-binary-seed
@@ -286,6 +293,18 @@ case "${SYSTEM_PART}" in
     done
     phase system-checkpoints-collected
     prepare_system_ports full
+    if [ -n "${MIRROR_PLAN_OBJECT}" ]; then
+      # One seed, holding both layers. The shard output was merged first,
+      # so where a shard deliberately rebuilt something the mirror also
+      # carries, the shard's copy is the one that counts.
+      phase system-mirror-merge
+      for package in /root/mirror-repo/All/*.pkg; do
+        [ -f "${package}" ] || continue
+        merge_package "${package}" "${shard_seed}/All" "${shard_inventory}" \
+          "${seed_duplicate_policy}"
+      done
+      phase system-mirror-merged
+    fi
     phase system-shard-seed
     seed_poudriere_repository "${shard_seed}"
     phase system-shard-seed-ready
