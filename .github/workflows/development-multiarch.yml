@@ -308,6 +308,7 @@ jobs:
           python3 scripts/verify_multiarch_canary.py --plan "${RUNNER_TEMP}/plan/multiarch-plan.json" \
             --amd64 "${RUNNER_TEMP}/amd64/devel.json" --arm64 "${RUNNER_TEMP}/arm64/devel.json" \
             --jobs "${RUNNER_TEMP}/jobs.json" --run-id "${GITHUB_RUN_ID}" \
+            --run-attempt "${GITHUB_RUN_ATTEMPT}" \
             --pair-reservation "${RUNNER_TEMP}/plan/pair-generation.json" \
             --output "${RUNNER_TEMP}/multiarch-canary.json"
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e

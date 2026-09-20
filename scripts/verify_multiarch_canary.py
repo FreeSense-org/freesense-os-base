@@ -179,10 +179,11 @@ if __name__ == "__main__":
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--jobs", type=Path, required=True)
     parser.add_argument("--run-id", type=int, required=True)
+    parser.add_argument("--run-attempt", type=int)
     parser.add_argument("--pair-reservation", type=Path, required=True)
     args = parser.parse_args()
     from multiarch_job_timings import verify as verify_timings
-    timings = verify_timings(json.loads(args.jobs.read_text()), args.run_id)
+    timings = verify_timings(json.loads(args.jobs.read_text()), args.run_id, args.run_attempt)
     plan = json.loads(args.plan.read_text())
     reservation = json.loads(args.pair_reservation.read_text())
     if (reservation.get("schema_version") != "freesense.generation/v1"
