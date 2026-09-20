@@ -37,6 +37,42 @@ class PartitionRootsTests(unittest.TestCase):
             with self.subTest(roots=roots), self.assertRaises(ValueError):
                 partition_roots.partition(roots, heavy, count)
 
+    def test_an_unmeasured_root_weighs_what_batches_charges_it(self):
+        """A measured root must not reserve a shard while the rest heap up.
+
+        partition() used to weigh an unmeasured root 1 and a measured one its
+        seconds, so the two scales could not be compared. Once real costs were
+        recorded, each measured root landed on an empty shard and all 80-odd
+        unmeasured roots piled onto whichever shard still had the lowest load,
+        which is the imbalance the measurement was added to remove.
+        """
+        measured = {"net/heavy": 10800, "net/mid": 4650}
+        roots = list(measured) + [f"zzz/p{i:02d}" for i in range(24)]
+        shards = partition_roots.partition(roots, [], 8, costs=measured, default_cost=1800)
+        self.assertEqual(sorted(sum(shards, [])), sorted(roots))
+        sizes = sorted(len(shard) for shard in shards)
+        self.assertGreaterEqual(sizes[0], 1, "a shard was left empty while others took the remainder")
+        self.assertLessEqual(sizes[-1] - sizes[0], 4, f"unmeasured roots were not spread: {sizes}")
+        # The heaviest shard may not exceed the heaviest single root by more
+        # than one extra root: a 10800-second root is atomic, but nothing else
+        # may accumulate behind it.
+        loads = [sum(measured.get(root, 1800) for root in shard) for shard in shards]
+        self.assertLessEqual(max(loads), max(measured.values()) + 1800,
+                             f"shard load is lopsided: {loads}")
+
+    def test_load_passes_the_configured_default_cost_through(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory, "policy.json")
+            path.write_text(json.dumps({
+                "schema_version": "freesense.multiarch-shards/v1", "count": 4,
+                "default_cost_seconds": 1800,
+                "measured_cost_seconds": {"system": {"net/heavy": 10800}, "packages": {}},
+                "measured_heavy_roots": {"system": [], "packages": []}}))
+            roots = ["net/heavy"] + [f"zzz/p{i}" for i in range(6)]
+            shards = partition_roots.load(path, "system", roots)
+            self.assertEqual(sorted(sum(shards, [])), sorted(roots))
+            self.assertTrue(all(shards), f"a shard was starved: {shards}")
+
     def test_dependency_closures_stay_together_and_batches_are_cumulative(self):
         roots = ["devel/a", "devel/b", "devel/c"]
         shards = partition_roots.partition(roots, [], 8,

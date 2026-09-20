@@ -10,13 +10,17 @@ ORIGIN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9+_.-]*/[A-Za-z0-9][A-Za-z0-9+_.-]*(?
 
 def partition(roots: list[str], heavy: list[str], count: int,
               closures: dict[str, list[str]] | None = None,
-              costs: dict[str, int] | None = None) -> list[list[str]]:
+              costs: dict[str, int] | None = None,
+              default_cost: int = 1800) -> list[list[str]]:
     ordered = sorted(set(roots))
     heavy = sorted(set(heavy) & set(ordered))
     if count < 1 or len(heavy) >= count or any(not ORIGIN.fullmatch(root) for root in ordered + heavy):
         raise ValueError("invalid shard root plan")
+    if type(default_cost) is not int or default_cost < 1:
+        raise ValueError("invalid default root cost")
     closures, costs = closures or {}, costs or {}
-    if any(root not in ordered or type(costs.get(root, 1)) is not int or costs.get(root, 1) < 0 for root in heavy):
+    if any(root not in ordered or type(costs.get(root, default_cost)) is not int
+           or costs.get(root, default_cost) < 0 for root in heavy):
         raise ValueError("invalid measured root policy")
     # Union roots that share dependencies. Keeping closures together prevents
     # duplicate source work across runners and makes checkpoint reuse useful.
@@ -31,13 +35,13 @@ def partition(roots: list[str], heavy: list[str], count: int,
             merged |= group
             groups.remove(group)
         groups.append(merged)
-    groups = groups[:len(heavy)] + sorted(groups[len(heavy):], key=lambda group: (-sum(costs.get(root, 1) for root in group), sorted(group)))
+    groups = groups[:len(heavy)] + sorted(groups[len(heavy):], key=lambda group: (-sum(costs.get(root, default_cost) for root in group), sorted(group)))
     shards = [[] for _ in range(count)]
     loads = [0] * count
     for group_index, group in enumerate(groups):
         index = group_index if group_index < len(heavy) else min(range(len(heavy), count), key=lambda i: (loads[i], i))
         shards[index].extend(sorted(group))
-        loads[index] += sum(costs.get(root, 1) for root in group)
+        loads[index] += sum(costs.get(root, default_cost) for root in group)
     return shards
 
 
@@ -77,7 +81,8 @@ def load(config: Path, component: str, roots: list[str]) -> list[list[str]]:
     costs = value.get("measured_cost_seconds", {}).get(component, {})
     if not isinstance(closures, dict) or not isinstance(costs, dict):
         raise ValueError("invalid dependency/cost shard policy")
-    return partition(roots, value["measured_heavy_roots"][component], value.get("count"), closures, costs)
+    return partition(roots, value["measured_heavy_roots"][component], value.get("count"),
+                     closures, costs, value.get("default_cost_seconds", 1800))
 
 
 def load_batches(config: Path, component: str, roots: list[str]) -> list[list[list[str]]]:
