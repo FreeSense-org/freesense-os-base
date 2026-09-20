@@ -134,8 +134,16 @@ def verify(plan: dict, documents: dict[str, bytes], policy: dict, *, read=fetch_
             if hashlib.sha256(provenance_raw).hexdigest() != marker["inputs"].get("upstream_provenance_sha256"):
                 raise ValueError("component has no hash-bound upstream provenance")
             provenance = json.loads(provenance_raw)
+            # The frozen mirror superseded the pin-time binary seed as the lower
+            # layer. record_upstream_provenance stamps the document with whatever
+            # it actually reused from, preferring the mirror exactly as the worker
+            # does, so the expected source follows the same precedence rather than
+            # assuming the seed.
+            expected_source = component_plan.get("mirror_plan_object") or component_plan["binary_seed_object"]
+            if not expected_source:
+                raise ValueError("plan names no lower layer for the reused packages")
             if (provenance.get("abi") != component_plan["abi"]
-                    or provenance.get("binary_seed") != component_plan["binary_seed_object"]):
+                    or provenance.get("binary_seed") != expected_source):
                 raise ValueError("provenance belongs to a different seed or architecture")
             names = set()
             for package in provenance["packages"]:
