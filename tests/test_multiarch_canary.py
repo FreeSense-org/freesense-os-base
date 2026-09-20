@@ -163,6 +163,48 @@ class CanaryTests(unittest.TestCase):
         # this immutable image still binds the exact selected component pair.
         self.verify()
 
+    def _name_a_mirror(self, mirror):
+        for arch in canary.ARCHES:
+            for component in ("system", "packages"):
+                self.plan["targets"][arch][component]["mirror_plan_object"] = mirror
+
+    def _restamp_provenance(self, source):
+        for arch in canary.ARCHES:
+            for component in ("system", "packages"):
+                component_plan = self.plan["targets"][arch][component]
+                suffix = "system" if component == "system" else "packages/1.1"
+                url = (self.policy["public_base_url"] + f"/artifacts/{suffix}/"
+                       + component_plan[component] + f"/{component_plan['package_arch']}"
+                       + "/upstream-provenance.json")
+                document = json.loads(self.objects[url])
+                document["binary_seed"] = source
+                self.objects[url] = encoded(document)
+                marker_url = url.rsplit("/", 2)[0] + "/complete.json"
+                marker = json.loads(self.objects[marker_url])
+                marker["inputs"]["upstream_provenance_sha256"] = checksum(self.objects[url])
+                self.objects[marker_url] = encoded(marker)
+
+    def test_reuse_is_checked_against_the_mirror_when_the_plan_names_one(self):
+        """The frozen mirror replaced the pin-time seed as the lower layer.
+
+        record_upstream_provenance stamps the document with whatever it reused
+        from and prefers the mirror, so a plan naming a mirror must be verified
+        against the mirror object. Checking the seed object instead fails every
+        mirror build, which is every build since the delta landed.
+        """
+        mirror = "inputs/sha256/" + "9" * 64
+        self.assertNotEqual(mirror, self.plan["targets"]["amd64"]["system"]["binary_seed_object"])
+        self._name_a_mirror(mirror)
+        self._restamp_provenance(mirror)
+        result = self.verify()
+        for target in result["architectures"].values():
+            self.assertEqual(target["reused_packages"], {"system": 1, "packages": 1})
+
+    def test_provenance_cut_from_the_seed_fails_when_the_plan_names_a_mirror(self):
+        self._name_a_mirror("inputs/sha256/" + "9" * 64)
+        with self.assertRaisesRegex(ValueError, "different seed or architecture"):
+            self.verify()
+
     def test_corrupt_image_package_or_provenance_fails_without_writes(self):
         for suffix in (".img", "All/rust.pkg", "upstream-provenance.json"):
             with self.subTest(suffix=suffix):
