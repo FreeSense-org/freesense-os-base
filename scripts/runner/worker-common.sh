@@ -1159,6 +1159,12 @@ record_package_provenance() {
     provenance_policy=/root/freesense-packages/architecture-policy.json
     provenance_overlays="--overlay /root/freesense-packages --overlay /root/freesense-system-ports"
   fi
+  # The core packages are cut from the staged chroot and the built kernel by
+  # core_pkg_create, not from a port, so no ports tree or overlay holds their
+  # origin. Their provenance is the revisions they were cut from; binding those
+  # here keeps a dependent's effective digest moving when the kernel moves.
+  core_inputs_sha256=$(printf '%s\n' "${SOURCE_SHA}" "${FREEBSD_SHA}" "${SYSTEM_SHA}" \
+    "${OS_BASE_SHA}" "${KERNEL}" "${PACKAGE_ARCH}" | sha256 -q)
   python_bin=$(command -v python3 || command -v python3.11)
   # shellcheck disable=SC2086
   "${python_bin}" /root/os-definition/scripts/package_provenance.py \
@@ -1166,6 +1172,7 @@ record_package_provenance() {
     --ports /usr/local/poudriere/ports/FreeSense_main ${provenance_overlays} \
     --make-config /usr/local/etc/poudriere.d/FreeSense_main-make.conf \
     --architecture-policy "${provenance_policy}" --abi "${ABI}" --osversion "${OSVERSION}" \
+    --product FreeSense --core-inputs-sha256 "${core_inputs_sha256}" \
     --output "${provenance_repository}/package-provenance.json"
 }
 
