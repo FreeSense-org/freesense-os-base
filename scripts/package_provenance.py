@@ -6,8 +6,11 @@ import argparse
 import hashlib
 import json
 from pathlib import Path
+import re
 
-from freesense_reuse import provenance, reusable
+from freesense_reuse import SHA256, provenance, reusable
+
+EMPTY_DIGEST = hashlib.sha256().hexdigest()
 
 
 def tree_digest(path: Path) -> str:
@@ -31,8 +34,22 @@ def file_digest(path: Path) -> str:
     return hashlib.sha256(path.read_bytes() if path.is_file() else b"").hexdigest()
 
 
+def core_package(name: str, origin: str, product: str) -> bool:
+    """A core package is built from a template, not from a port.
+
+    core_pkg_create synthesises FreeSense-base, -rc, -boot, -kernel*, the
+    default-config flavours and the ARM u-boot payload out of the staged chroot
+    and the built kernel, and stamps each with an origin -- security/FreeSense-base
+    and friends -- that no ports tree or overlay contains. Their flavour suffix is
+    substituted at build time, so they are recognised by product prefix rather than
+    enumerated; every other absent origin is still an error.
+    """
+    return bool(product) and name.startswith(f"{product}-") and         re.fullmatch(rf"[A-Za-z0-9+_.-]+/{re.escape(product)}-[A-Za-z0-9+_.-]+", origin) is not None
+
+
 def build(records: list[dict], *, ports: Path, overlays: list[Path], make_config: Path,
-          architecture_policy: Path, abi: str, osversion: int) -> dict:
+          architecture_policy: Path, abi: str, osversion: int,
+          product: str = "", core_inputs_sha256: str = "") -> dict:
     mk_hash = tree_digest(ports / "Mk")
     config_hash, policy_hash = file_digest(make_config), file_digest(architecture_policy)
     base = {}
@@ -42,6 +59,21 @@ def build(records: list[dict], *, ports: Path, overlays: list[Path], make_config
             raise ValueError("invalid provenance inventory")
         candidates = [root / origin for root in overlays] + [ports / origin]
         source = next((path for path in candidates if path.is_dir()), None)
+        if source is None and core_package(name, origin, product):
+            if not SHA256.fullmatch(core_inputs_sha256):
+                raise ValueError(f"core package needs a build-input digest: {name}")
+            # A core package's provenance is the source, kernel and overlay it was
+            # cut from. Standing in for the port digest keeps the record the same
+            # shape, so a dependent's effective digest still moves when the kernel
+            # moves -- which recording it as "external" would silently prevent.
+            item = {**record, "abi": abi, "osversion": osversion,
+                    "port_directory_sha256": core_inputs_sha256,
+                    "patches_sha256": EMPTY_DIGEST, "mk_sha256": mk_hash,
+                    "make_configuration_sha256": config_hash,
+                    "architecture_policy_sha256": policy_hash,
+                    "patched": False, "kernel_sensitive": True}
+            base[name] = item
+            continue
         if source is None:
             raise ValueError(f"package origin is absent: {origin}")
         item = {**record, "abi": abi, "osversion": osversion,
@@ -104,13 +136,16 @@ def main() -> None:
     parser.add_argument("--make-config", type=Path, required=True)
     parser.add_argument("--architecture-policy", type=Path, required=True)
     parser.add_argument("--abi", required=True); parser.add_argument("--osversion", type=int, required=True)
+    parser.add_argument("--product", default="", help="product name whose template-built core packages have no port")
+    parser.add_argument("--core-inputs-sha256", default="", help="digest of the source, kernel and overlay a core package is cut from")
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--previous-provenance", type=Path)
     parser.add_argument("--selection-output", type=Path)
     args = parser.parse_args()
     result = build(json.loads(args.inventory.read_text()), ports=args.ports, overlays=args.overlay,
                    make_config=args.make_config, architecture_policy=args.architecture_policy,
-                   abi=args.abi, osversion=args.osversion)
+                   abi=args.abi, osversion=args.osversion, product=args.product,
+                   core_inputs_sha256=args.core_inputs_sha256)
     args.output.write_text(json.dumps(result, sort_keys=True, separators=(",", ":")) + "\n")
     if args.previous_provenance:
         if not args.selection_output: raise SystemExit("--selection-output is required with previous provenance")
