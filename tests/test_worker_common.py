@@ -74,6 +74,40 @@ class WorkerVersionValidationTests(unittest.TestCase):
             self.assertIn("has no source deltas", source)
             self.assertIn("publish_system_checkpoint shard", source)
 
+    def test_every_stage_that_reads_the_os_definition_also_clones_it(self) -> None:
+        """A stage must not read /root/os-definition it never checked out.
+
+        configure_source clones it for the System stage only, while
+        configure_signing takes a shard's trust anchor from that checkout for
+        System and Optional alike, and both farm stages read partition_roots.py
+        and multiarch-shards.json out of it. Every Optional shard therefore died
+        at repository-signing-key, on a path no build had reached before.
+        """
+        import re
+        common = (ROOT / "scripts/runner/worker-common.sh").read_text(encoding="utf-8")
+        clone = "clone_exact https://github.com/FreeSense-org/freesense-os-base.git"
+        body = common.split("configure_source() {", 1)[1].split("\nesac", 1)[0]
+        labels = [(m.start(), m.group(1)) for m in re.finditer(r"^ {4}(\w+)\)", body, re.M)]
+        self.assertIn("system", [name for _, name in labels])
+        branches = {}
+        for index, (offset, name) in enumerate(labels):
+            stop = labels[index + 1][0] if index + 1 < len(labels) else len(body)
+            branches[name] = body[offset:stop]
+        self.assertIn(clone, branches["system"], "the case block was not parsed")
+        stages = ROOT / "scripts/runner/stages"
+        checked = 0
+        for stage in sorted(stages.glob("*.sh")):
+            source = stage.read_text(encoding="utf-8")
+            if not re.search(r"^configure_source$", source, re.M):
+                continue  # An assembly stage builds no repository of its own.
+            if "/root/os-definition" not in source and "configure_signing" not in common:
+                continue
+            checked += 1
+            with self.subTest(stage=stage.stem):
+                self.assertTrue(clone in branches.get(stage.stem, "") or clone in source,
+                                f"{stage.name} reads an os-definition that nothing clones")
+        self.assertEqual(checked, 2, "expected the System and Optional farm stages")
+
     def test_optional_package_exclusions_support_product_name_templates(self) -> None:
         packages = (ROOT / "scripts/runner/stages/packages.sh").read_text(
             encoding="utf-8"
