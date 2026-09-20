@@ -37,8 +37,10 @@ markers and cumulative checkpoints preserve completed AMD64 work and completed
 ARM64 batches.
 
 The native ARM probe needs KVM, sufficient memory and disk, QEMU, AAVMF and a
-successful pinned-image boot. A failed probe selects the dedicated executor;
-a later native build failure fails the run. Executor and worker identities are
+successful pinned-image boot. A failed probe selects `github-amd64` with the
+cross-qemu-user executor, not the dedicated host: `select_arm_host` returns
+`dedicated` only for a dispatch that explicitly forces it. A later native build
+failure fails the run. Executor and worker identities are
 included in component fingerprints and target-qualified checkpoints.
 
 The v4 pin validator requires both native worker images/tool bundles, both jail
