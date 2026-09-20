@@ -1,3 +1,17 @@
+# configure_source clones the os-definition only for the System stage, but this
+# stage needs it just as much: on a shard configure_signing takes the trust
+# anchor from config/channel-signing-public.pem, and the stage reads
+# partition_roots.py, multiarch-shards.json and package_provenance.py out of the
+# same checkout. Without it every Optional shard dies at repository-signing-key.
+#
+# Cloning it here rather than in configure_source keeps the System fingerprint
+# untouched -- worker-common.sh is in the platform and System recipe digests and
+# this file is in neither, so a fix there would discard completed System work
+# that it cannot affect. Fold this into configure_source's packages branch the
+# next time worker-common.sh changes for its own reasons.
+phase clone-os-definition
+clone_exact https://github.com/FreeSense-org/freesense-os-base.git \
+  /root/os-definition "${OS_BASE_SHA}"
 configure_source
 fetch_repository system "${SYSTEM_ID}" /root/system-repo
 cd /root/freesense-src
