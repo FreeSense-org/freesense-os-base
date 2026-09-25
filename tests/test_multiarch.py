@@ -224,6 +224,11 @@ class MultiarchPinTests(unittest.TestCase):
         self.assertEqual(len(native["system_matrix"]["include"]), 18)
         self.assertEqual(len(native["packages_matrix"]["include"]), 16)
         self.assertEqual(native["system_max_parallel"], 18)
+        dedicated = multiarch_plan.plan(pin, probe, fps, all_dedicated=True)
+        self.assertEqual({part["build_host"] for part in dedicated["system_matrix"]["include"]}, {"dedicated"})
+        self.assertEqual(dedicated["executors"]["amd64"]["executor"], "native-amd64")
+        self.assertEqual(dedicated["executors"]["arm64"]["executor"], "amd64-cross-qemu-user")
+        self.assertNotEqual(dedicated["pair_fingerprint"], native["pair_fingerprint"])
 
     def test_shards_cover_roots_once_and_isolate_measured_heavy_roots(self):
         roots = ["net/b", "net/a", "lang/heavy", "devel/c", "devel/d", "net/a"]

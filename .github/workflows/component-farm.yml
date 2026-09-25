@@ -59,7 +59,9 @@ jobs:
     needs: prepare
     strategy:
       fail-fast: false
-      max-parallel: 9
+      # One self-hosted build-runner takes one job at a time; queue there one
+      # part per farm so no part waits past GitHub's 24-hour queue limit.
+      max-parallel: ${{ fromJSON(inputs.plan).build_host == 'dedicated' && 1 || 9 }}
       matrix: ${{ fromJSON(needs.prepare.outputs.matrix) }}
     uses: ./.github/workflows/runner-build.yml
     with:
