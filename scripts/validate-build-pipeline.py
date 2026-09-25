@@ -80,7 +80,7 @@ for name in ("system.yml", "packages.yml"):
     for trigger in ("schedule:", "workflow_dispatch:", "workflow_run:"):
         require(trigger not in component,
                 f"{name} retains a standalone {trigger} entry point")
-for value in ("max-parallel: 9", "farm_layout: delta-v1",
+for value in ("max-parallel: ${{ fromJSON(inputs.plan).build_host == 'dedicated' && 1 || 9 }}", "farm_layout: delta-v1",
               "shard_policy_version: dependency-cost-v2",
               "system_shard_count: '8'", "system_part: finalize",
               "needs: [prepare, parts]", "publish_enabled: ${{ 'false' }}"):

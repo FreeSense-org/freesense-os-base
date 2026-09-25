@@ -13,7 +13,16 @@ import tempfile
 from multiarch_pin import ARCHES, SHA256, digest, select_arm_host, validate, worker
 
 
-def plan(pin: dict, probe: dict, fingerprints: dict, *, force_dedicated: bool = False) -> dict:
+def select_hosts(probe: dict, pin: dict, *, force_dedicated: bool = False,
+                 all_dedicated: bool = False) -> dict:
+    """all_dedicated sends both targets to the self-hosted build-runner."""
+    if all_dedicated:
+        return {"amd64": "dedicated", "arm64": select_arm_host(probe, pin, force_dedicated=True)}
+    return {"amd64": "github-amd64", "arm64": select_arm_host(probe, pin, force_dedicated=force_dedicated)}
+
+
+def plan(pin: dict, probe: dict, fingerprints: dict, *, force_dedicated: bool = False,
+         all_dedicated: bool = False) -> dict:
     validate(pin)
     if set(fingerprints) != set(ARCHES):
         raise ValueError("both architecture fingerprints are required")
@@ -21,7 +30,7 @@ def plan(pin: dict, probe: dict, fingerprints: dict, *, force_dedicated: bool = 
         if set(components) != {"system", "packages"} or any(
                 not isinstance(value, str) or not SHA256.fullmatch(value) for value in components.values()):
             raise ValueError("each target requires System and independent Optional fingerprints")
-    hosts = {"amd64": "github-amd64", "arm64": select_arm_host(probe, pin, force_dedicated=force_dedicated)}
+    hosts = select_hosts(probe, pin, force_dedicated=force_dedicated, all_dedicated=all_dedicated)
     executors = {arch: worker(pin, arch, hosts[arch]) for arch in ARCHES}
     pin_id = digest(pin)
     pair_id = digest({"schema_version": "freesense.multiarch-pair/v1", "freebsd_pin": pin_id,
@@ -77,7 +86,8 @@ def planning_closure(system: dict) -> dict:
     }
 
 
-def resolve(pin: dict, probe: dict, os_base_sha: str, *, force_dedicated: bool = False) -> dict:
+def resolve(pin: dict, probe: dict, os_base_sha: str, *, force_dedicated: bool = False,
+            all_dedicated: bool = False) -> dict:
     from plan import current_component_record, remote_sha
     from build_platform import load_policy, manifest_name, target
     validate(pin, now=datetime.now(timezone.utc))
@@ -87,7 +97,7 @@ def resolve(pin: dict, probe: dict, os_base_sha: str, *, force_dedicated: bool =
         "system_ports": remote_sha("FreeSense-org/freesense-system-ports"),
         "packages": remote_sha("FreeSense-org/freesense-packages"),
     }
-    arm_host = select_arm_host(probe, pin, force_dedicated=force_dedicated)
+    hosts = select_hosts(probe, pin, force_dedicated=force_dedicated, all_dedicated=all_dedicated)
     policy = load_policy()
     prior = {}
     pin_id = digest(pin)
@@ -101,7 +111,7 @@ def resolve(pin: dict, probe: dict, os_base_sha: str, *, force_dedicated: bool =
         snapshot = root / "resolved.json"
         snapshot.write_text(json.dumps(resolved), encoding="utf-8")
         for arch in ARCHES:
-            host = "github-amd64" if arch == "amd64" else arm_host
+            host = hosts[arch]
             common = [sys.executable, str(Path(__file__).with_name("plan.py")),
                       "--target", arch, "--build-host", host, "--resolved-inputs", str(snapshot),
                       "--os-base-sha", os_base_sha, "--immutable-only"]
@@ -117,7 +127,7 @@ def resolve(pin: dict, probe: dict, os_base_sha: str, *, force_dedicated: bool =
                 if previous.get("freebsd_pin_id") == pin_id else "")
             targets[arch] = {"system": system, "packages": packages}
             fingerprints[arch] = {"system": system["system"], "packages": packages["packages"]}
-    result = plan(pin, probe, fingerprints, force_dedicated=force_dedicated)
+    result = plan(pin, probe, fingerprints, force_dedicated=force_dedicated, all_dedicated=all_dedicated)
     result.update(targets=targets, resolved_inputs=resolved, os_base_sha=os_base_sha)
     return result
 
@@ -129,9 +139,11 @@ if __name__ == "__main__":
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--github-output", type=Path)
     parser.add_argument("--force-dedicated", action="store_true")
+    parser.add_argument("--all-dedicated", action="store_true")
     args = parser.parse_args()
     pin = json.loads((Path(__file__).resolve().parents[1] / "config/freebsd-16.json").read_text())
-    result = resolve(pin, json.loads(args.probe.read_text()), args.os_base_sha, force_dedicated=args.force_dedicated)
+    result = resolve(pin, json.loads(args.probe.read_text()), args.os_base_sha,
+                     force_dedicated=args.force_dedicated, all_dedicated=args.all_dedicated)
     args.output.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
     if args.github_output:
         with args.github_output.open("a", encoding="utf-8") as output:

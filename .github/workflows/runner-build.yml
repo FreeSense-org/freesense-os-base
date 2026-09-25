@@ -68,9 +68,11 @@ jobs:
   build:
     runs-on: ${{ inputs.build_host == 'github-arm64' && 'ubuntu-24.04-arm' || ((inputs.build_host == 'github-hosted' || inputs.build_host == 'github-amd64') && 'ubuntu-24.04' || 'build-runner') }}
     concurrency:
-      group: ${{ inputs.build_host != 'dedicated' && format('freesense-hosted-{0}-{1}-{2}-{3}-{4}', inputs.target, inputs.stage, inputs.fingerprint, inputs.system_part, inputs.system_shard_index) || 'freesense-kvm-host' }}
+      # A shared group would cancel all but one pending part. The dedicated
+      # build-runner serialises its jobs itself, so each part gets its own group.
+      group: ${{ inputs.build_host != 'dedicated' && format('freesense-hosted-{0}-{1}-{2}-{3}-{4}', inputs.target, inputs.stage, inputs.fingerprint, inputs.system_part, inputs.system_shard_index) || format('freesense-kvm-host-{0}-{1}-{2}-{3}-{4}', inputs.target, inputs.stage, inputs.fingerprint, inputs.system_part, inputs.system_shard_index) }}
       cancel-in-progress: false
-    timeout-minutes: 360
+    timeout-minutes: ${{ inputs.build_host != 'dedicated' && 360 || 900 }}
     environment: build
     permissions:
       actions: write
@@ -142,11 +144,11 @@ jobs:
       APPLIANCE_FILESYSTEM: ${{ inputs.appliance_filesystem }}
       APPLIANCE_FORMAT: ${{ inputs.appliance_format }}
       APPLIANCE_COMPRESSION: ${{ inputs.appliance_compression }}
-      BUILD_VCPUS: ${{ inputs.build_host != 'dedicated' && 'auto' || '12' }}
-      BUILD_MEMORY_MIB: ${{ inputs.build_host != 'dedicated' && 'auto' || '32768' }}
+      BUILD_VCPUS: auto
+      BUILD_MEMORY_MIB: auto
       BUILD_DISK_GIB: ${{ inputs.build_host != 'dedicated' && '110' || '160' }}
       BUILD_MINIMUM_FREE_GIB: ${{ inputs.build_host != 'dedicated' && '70' || '80' }}
-      BUILD_TIMEOUT_SECONDS: ${{ inputs.build_host != 'dedicated' && '19800' || '18000' }}
+      BUILD_TIMEOUT_SECONDS: ${{ inputs.build_host != 'dedicated' && '19800' || '52200' }}
     steps:
       - name: Validate selected executor
         env:

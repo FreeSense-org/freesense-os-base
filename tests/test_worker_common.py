@@ -196,7 +196,7 @@ class WorkerVersionValidationTests(unittest.TestCase):
         reusable = (ROOT / ".github/workflows/runner-build.yml").read_text(
             encoding="utf-8"
         )
-        self.assertIn('max-parallel: 9', workflow)
+        self.assertIn("max-parallel: ${{ fromJSON(inputs.plan).build_host == 'dedicated' && 1 || 9 }}", workflow)
         self.assertIn('farm_layout: delta-v1', workflow)
         self.assertIn('shard_policy_version: dependency-cost-v2', workflow)
         self.assertIn("system_shard_count: '8'", workflow)
