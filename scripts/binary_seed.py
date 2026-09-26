@@ -99,7 +99,9 @@ def select(requirements: dict, records: list[dict], architecture: str) -> dict:
         if name in catalogue:
             ambiguous.add(name)
         catalogue[name] = record
-    if ambiguous:
+    # Only a requested name must be unambiguous; upstream occasionally ships an
+    # unrelated duplicate (2026-09: publisher-pro from print/publisher{,-devel}).
+    if ambiguous & requested.keys():
         raise ValueError("duplicate official package names in catalogue")
     accepted, rejected = {}, {}
     for name, req in sorted(requested.items()):

@@ -125,6 +125,14 @@ class BinarySeedTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             binary_seed.select(requirements(req), [catalogue(req)], "arm64")
 
+    def test_ignores_duplicate_catalogue_names_nobody_requested(self):
+        req = requirement()
+        other = requirement("publisher-pro", "print/publisher")
+        other_devel = requirement("publisher-pro", "print/publisher-devel")
+        result = binary_seed.select(requirements(req),
+                                    [catalogue(req), catalogue(other), catalogue(other_devel)], "amd64")
+        self.assertEqual(list(result["accepted"]), ["rust"])
+
     def test_transitive_customized_dependencies_are_not_reused(self):
         lib = requirement("lib", "devel/lib")
         middle = requirement("middle", "devel/middle", {"lib": {"version": lib["version"], "origin": lib["origin"]}})
