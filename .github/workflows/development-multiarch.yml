@@ -17,7 +17,8 @@ on:
         type: boolean
         default: false
   schedule:
-    - cron: '0 6 * * *'
+    # 01:00 UTC = 03:00 CEST / 02:00 CET. Unchanged parts reuse their stored output.
+    - cron: '0 1 * * *'
 
 permissions: {actions: write, contents: read, id-token: write}
 concurrency: {group: development-multiarch, cancel-in-progress: false}
@@ -141,6 +142,15 @@ jobs:
         run: |
           set -euo pipefail
           "${RUNNER_TEMP}/fsbuild" multiarch cycle-get --output "${RUNNER_TEMP}/cycle-state.json"
+          # An incomplete cycle planned at another workflow revision can never
+          # resume (component_farm.py refuses it), so supersede it like an abandon.
+          stale=$(jq -r --arg sha "${GITHUB_SHA}" '.exists and (.cycle.superseded != true)
+            and ((.cycle.architectures.amd64.published != true) or (.cycle.architectures.arm64.published != true))
+            and ((.cycle.plan.os_base_sha // "") != $sha)' "${RUNNER_TEMP}/cycle-state.json")
+          if [[ "${stale}" == true ]]; then
+            echo "Incomplete cycle was planned at $(jq -r '.cycle.plan.os_base_sha // "unknown"' "${RUNNER_TEMP}/cycle-state.json"), not ${GITHUB_SHA}; superseding it."
+            ABANDON_INCOMPLETE_CYCLE=true
+          fi
           if [[ "${ABANDON_INCOMPLETE_CYCLE}" == true ]] && jq -e '.exists and (.cycle.superseded != true)' "${RUNNER_TEMP}/cycle-state.json" >/dev/null; then
             jq '.cycle + {superseded:true}' "${RUNNER_TEMP}/cycle-state.json" >"${RUNNER_TEMP}/abandoned-cycle.json"
             "${RUNNER_TEMP}/fsbuild" multiarch cycle-commit --document "${RUNNER_TEMP}/abandoned-cycle.json"
