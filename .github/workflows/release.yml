@@ -305,7 +305,7 @@ jobs:
           fi
       - id: plan
         env:
-          SELECTED_BUILD_HOST: ${{ inputs.build_host }}
+          SELECTED_BUILD_HOST: ${{ inputs.build_host || 'dedicated' }}
         run: |
           target="${{ github.event_name != 'workflow_run' && inputs.target || needs.release_gate.outputs.target }}"
           args=()
@@ -402,7 +402,7 @@ jobs:
       image_capabilities: ${{ needs.iso-plan.outputs.image_capabilities }}
       installer_format: ${{ needs.iso-plan.outputs.installer_format }}
       publish_enabled: ${{ needs.iso-plan.outputs.publish_enabled }}
-      build_host: ${{ inputs.build_host || (needs.iso-plan.outputs.target == 'amd64' && 'github-hosted' || 'dedicated') }}
+      build_host: ${{ inputs.build_host || 'dedicated' }}
     secrets: inherit
 
   appliance-rpi4b:
@@ -562,7 +562,7 @@ jobs:
       publish_enabled: ${{ needs.iso-plan.outputs.publish_enabled }}
       cloud_filesystem: ufs
       cloud_virtual_size_gib: ${{ needs.iso-plan.outputs.cloud_ufs_virtual_size_gib }}
-      build_host: ${{ inputs.build_host || 'github-hosted' }}
+      build_host: ${{ inputs.build_host || 'dedicated' }}
     secrets: inherit
 
   cloud-zfs:
@@ -612,7 +612,7 @@ jobs:
       publish_enabled: ${{ needs.iso-plan.outputs.publish_enabled }}
       cloud_filesystem: zfs
       cloud_virtual_size_gib: ${{ needs.iso-plan.outputs.cloud_zfs_virtual_size_gib }}
-      build_host: ${{ inputs.build_host || 'github-hosted' }}
+      build_host: ${{ inputs.build_host || 'dedicated' }}
     secrets: inherit
 
   publish-download:
