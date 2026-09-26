@@ -276,7 +276,8 @@ jobs:
           scripts/runner/run-vm.sh --image-sha256 "${IMAGE_SHA256}"
           --host-architecture "${{ inputs.build_host == 'github-arm64' && 'arm64' || 'amd64' }}"
           --script "${RUNNER_TEMP}/worker.sh" --timeout "${BUILD_TIMEOUT_SECONDS}"
-          --vcpus "${BUILD_VCPUS}" --memory-mib "${BUILD_MEMORY_MIB}"
+          --vcpus "${FREESENSE_HOST_BUILD_VCPUS:-${BUILD_VCPUS}}"
+          --memory-mib "${FREESENSE_HOST_BUILD_MEMORY_MIB:-${BUILD_MEMORY_MIB}}"
           --disk-gib "${BUILD_DISK_GIB}" --minimum-free-gib "${BUILD_MINIMUM_FREE_GIB}"
           --failure-dir "${RUNNER_TEMP}/build-vm-failure"
       - name: Upload build VM failure diagnostics
