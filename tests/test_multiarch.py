@@ -125,6 +125,14 @@ class BinarySeedTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             binary_seed.select(requirements(req), [catalogue(req)], "arm64")
 
+    def test_ignores_duplicate_catalogue_names_nobody_requested(self):
+        req = requirement()
+        other = requirement("publisher-pro", "print/publisher")
+        other_devel = requirement("publisher-pro", "print/publisher-devel")
+        result = binary_seed.select(requirements(req),
+                                    [catalogue(req), catalogue(other), catalogue(other_devel)], "amd64")
+        self.assertEqual(list(result["accepted"]), ["rust"])
+
     def test_transitive_customized_dependencies_are_not_reused(self):
         lib = requirement("lib", "devel/lib")
         middle = requirement("middle", "devel/middle", {"lib": {"version": lib["version"], "origin": lib["origin"]}})
@@ -224,6 +232,11 @@ class MultiarchPinTests(unittest.TestCase):
         self.assertEqual(len(native["system_matrix"]["include"]), 18)
         self.assertEqual(len(native["packages_matrix"]["include"]), 16)
         self.assertEqual(native["system_max_parallel"], 18)
+        dedicated = multiarch_plan.plan(pin, probe, fps, all_dedicated=True)
+        self.assertEqual({part["build_host"] for part in dedicated["system_matrix"]["include"]}, {"dedicated"})
+        self.assertEqual(dedicated["executors"]["amd64"]["executor"], "native-amd64")
+        self.assertEqual(dedicated["executors"]["arm64"]["executor"], "amd64-cross-qemu-user")
+        self.assertNotEqual(dedicated["pair_fingerprint"], native["pair_fingerprint"])
 
     def test_shards_cover_roots_once_and_isolate_measured_heavy_roots(self):
         roots = ["net/b", "net/a", "lang/heavy", "devel/c", "devel/d", "net/a"]
@@ -292,6 +305,12 @@ class RequirementsCollectorTests(unittest.TestCase):
         script = (Path(__file__).resolve().parents[1] / "scripts/runner/install-worker-tools.sh").read_text()
         self.assertIn("running_osversion + 1", script)
         self.assertIn("required_osversion + 1", script)
+
+    def test_installer_accepts_a_catalog_lagging_userland_by_four_revisions(self):
+        script = (Path(__file__).resolve().parents[1] / "scripts/runner/install-worker-tools.sh").read_text()
+        self.assertIn('-ge $((running_osversion - 4))', script)
+        pin = (Path(__file__).resolve().parents[1] / "scripts/resolve_multiarch_pin.py").read_text()
+        self.assertIn("max_catalog_osversion_lag = 4", pin)
 
     def test_collector_handles_origin_aliases_for_identical_package(self):
         collector = object.__new__(package_requirements.Collector)

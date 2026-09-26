@@ -46,6 +46,11 @@ CLOUD_KEY = re.compile(
 APPLIANCE_KEY = re.compile(
     r"^v1/artifacts/appliance/(?P<fingerprint>[0-9a-f]{64})/(?P<relative>.+)$"
 )
+MIRROR_KEY = re.compile(
+    r"^v1/artifacts/mirror/(?P<fingerprint>[0-9a-f]{64})/(?P<relative>.+)$"
+)
+PLAN_INPUT = re.compile(r"^inputs/sha256/[0-9a-f]{64}$")
+PORTS_COMMIT = re.compile(r"^[0-9a-f]{40}$")
 DEVEL_DOWNLOAD = re.compile(
     r"^v1/releases/devel/(?P<release>[0-9]+\.[0-9]+\.[0-9]+-g(?P<generation>[1-9][0-9]*))/"
 )
@@ -342,6 +347,14 @@ def classify_artifact_key(key: str) -> tuple[str, str, str | None, str] | None:
             None,
             match["fingerprint"],
         )
+    match = MIRROR_KEY.fullmatch(key)
+    if match:
+        return (
+            "mirror",
+            f"v1/artifacts/mirror/{match['fingerprint']}",
+            None,
+            match["fingerprint"],
+        )
     return None
 
 
@@ -382,6 +395,18 @@ def marker_identity(
             or inputs.get("channel") not in {"stable", "devel"}
         ):
             fail(f"ISO completion marker has an invalid closure: {prefix}")
+    elif kind == "mirror":
+        inputs_plan = inputs.get("mirror_plan")
+        if (
+            marker.get("schema_version") != "freesense.artifact/v1"
+            or marker.get("stage") != "mirror"
+            or marker.get("architecture") not in {"amd64", "arm64"}
+            or not PORTS_COMMIT.fullmatch(str(inputs.get("ports_commit", "")))
+            or not SHA256.fullmatch(str(inputs.get("catalog_sha256", "")))
+            or not isinstance(inputs_plan, str)
+            or not PLAN_INPUT.fullmatch(inputs_plan)
+        ):
+            fail(f"mirror completion marker has an invalid closure: {prefix}")
     elif kind == "cloud":
         files = marker.get("files")
         if (
@@ -593,9 +618,12 @@ def plan_retention(
     multiarch: dict[str, Any] | None = None,
     release_documents: dict[str, Any] | None = None,
     development_cycle: dict[str, Any] | None = None,
+    keep_mirrors: int = 2,
 ) -> dict[str, Any]:
     if keep_devel < 1:
         fail("Development retention must keep at least one completed build")
+    if keep_mirrors < 1:
+        fail("mirror retention must keep at least one mirror per architecture")
     if now.tzinfo is None:
         fail("retention planning time must have a timezone")
     now = now.astimezone(timezone.utc)
@@ -692,6 +720,8 @@ def plan_retention(
                 )
         elif inputs.get("channel") == "stable":
             protected_prefixes.add(entry["prefix"])
+        elif entry["kind"] == "mirror":
+            devel["mirror"].append(entry)
         elif entry["kind"] == "iso":
             devel["iso"].append(entry)
         elif entry["kind"] == "cloud":
@@ -740,6 +770,13 @@ def plan_retention(
     entries = devel["system"]
     entries.sort(key=lambda item: (item["generation"], item["prefix"]), reverse=True)
     protected_prefixes.update(item["prefix"] for item in entries[:keep_devel])
+
+    by_architecture: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for entry in devel["mirror"]:
+        by_architecture[entry["marker"]["architecture"]].append(entry)
+    for architecture, mirrors in by_architecture.items():
+        mirrors.sort(key=lambda item: (item["generation"], item["prefix"]), reverse=True)
+        protected_prefixes.update(item["prefix"] for item in mirrors[:keep_mirrors])
 
     # Installer, cloud, and board appliance results form one release bundle.
     # Retain complete generations as a unit instead of counting cloud variants
@@ -981,6 +1018,7 @@ def plan_retention(
         "policy": {
             "stable": "keep forever",
             "development_completed_per_component": keep_devel,
+            "mirrors_per_architecture": keep_mirrors,
             "completed_candidate_age_hours": int(
                 completed_grace.total_seconds() // 3600
             ),
@@ -1233,6 +1271,7 @@ def main() -> None:
     plan_parser.add_argument("--public-key", type=Path, required=True)
     plan_parser.add_argument("--config", type=Path, required=True)
     plan_parser.add_argument("--keep-devel", type=int, default=4)
+    plan_parser.add_argument("--keep-mirrors", type=int, default=2)
     plan_parser.add_argument("--orphan-grace-hours", type=int, default=168)
     plan_parser.add_argument("--completed-grace-hours", type=int, default=0)
     plan_parser.add_argument("--keep-smoke", type=int, default=1)
@@ -1336,6 +1375,7 @@ def main() -> None:
         completion,
         release_documents=release_documents,
         development_cycle=documents.get("v1/state/development-cycle.json"),
+        keep_mirrors=args.keep_mirrors,
     )
     args.output.write_text(
         json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8"

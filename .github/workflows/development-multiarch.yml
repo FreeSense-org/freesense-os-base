@@ -3,6 +3,11 @@ name: Development multiarch
 on:
   workflow_dispatch:
     inputs:
+      build_host:
+        description: Where the FreeBSD build VMs run for a new cycle
+        type: choice
+        options: [dedicated, github]
+        default: dedicated
       force_dedicated:
         description: Exercise the dedicated ARM64 fallback for this full canary
         type: boolean
@@ -19,8 +24,10 @@ concurrency: {group: development-multiarch, cancel-in-progress: false}
 
 jobs:
   readiness:
-    # Opt-in until a publish-disabled canary has passed. The legacy schedule
-    # remains responsible for Development until the rollout is explicitly enabled.
+    # Opt-in until a publish-disabled canary has passed. There is no longer a
+    # legacy single-architecture schedule behind this: with the nineteen-shard
+    # farm retired, the scheduled cycle runs only once this variable is set, and
+    # a dispatch is the way to exercise it before then.
     if: github.event_name == 'workflow_dispatch' || vars.MULTIARCH_DEVELOPMENT_ENABLED == 'true'
     runs-on: ubuntu-24.04
     steps:
@@ -125,6 +132,9 @@ jobs:
         env:
           ARM_PROBE: ${{ needs.arm_capability.outputs.report || '{}' }}
           FORCE_DEDICATED: ${{ inputs.force_dedicated || false }}
+          # The self-hosted build-runner is the default; schedules follow the
+          # DEVELOPMENT_BUILD_HOST variable when it is set to github.
+          BUILD_HOST: ${{ inputs.build_host || vars.DEVELOPMENT_BUILD_HOST || 'dedicated' }}
           ABANDON_INCOMPLETE_CYCLE: ${{ inputs.abandon_incomplete_cycle || false }}
           R2_BUCKET: ${{ vars.R2_BUILD_BUCKET }}
           FSBUILD_STORE_PREFIX: v1
@@ -146,6 +156,7 @@ jobs:
           printf '%s' "${ARM_PROBE}" >"${RUNNER_TEMP}/arm-probe.json"
           args=()
           if [[ "${FORCE_DEDICATED}" == true ]]; then args+=(--force-dedicated); fi
+          if [[ "${BUILD_HOST}" == dedicated ]]; then args+=(--all-dedicated); fi
           python3 scripts/multiarch_plan.py --probe "${RUNNER_TEMP}/arm-probe.json" \
             --os-base-sha "${GITHUB_SHA}" --output "${RUNNER_TEMP}/multiarch-plan.json" \
             "${args[@]}"
@@ -251,7 +262,7 @@ jobs:
       system_fingerprint: ${{ needs.system_amd64.outputs.system_fingerprint }}
       packages_fingerprint: ${{ needs.packages_amd64.outputs.packages_fingerprint }}
       pair_generation: ${{ needs.prepare.outputs.pair_generation }}
-      build_host: github-amd64
+      build_host: ${{ fromJSON(needs.prepare.outputs.amd64_system).build_host }}
       suppress_publication: true
     secrets: inherit
 
@@ -306,6 +317,7 @@ jobs:
           python3 scripts/verify_multiarch_canary.py --plan "${RUNNER_TEMP}/plan/multiarch-plan.json" \
             --amd64 "${RUNNER_TEMP}/amd64/devel.json" --arm64 "${RUNNER_TEMP}/arm64/devel.json" \
             --jobs "${RUNNER_TEMP}/jobs.json" --run-id "${GITHUB_RUN_ID}" \
+            --run-attempt "${GITHUB_RUN_ATTEMPT}" \
             --pair-reservation "${RUNNER_TEMP}/plan/pair-generation.json" \
             --output "${RUNNER_TEMP}/multiarch-canary.json"
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e

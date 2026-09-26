@@ -25,7 +25,11 @@ def check(plan: dict, stage: str, generation: str, pin: dict, policy: dict) -> d
         "worker_tools_sha256": execution["worker_tools"]["sha256"],
         "binary_seed_object": execution["binary_seed"]["object"],
         "binary_seed_provenance_sha256": execution["binary_seed"]["provenance_sha256"],
-        "freebsd_sha": pin["freebsd_source"]["commit"], "ports_sha": pin["freebsd_ports"]["commit"],
+        "freebsd_sha": pin["freebsd_source"]["commit"],
+        # The mirror carries its own ports commit; without one the pin's applies.
+        "ports_sha": (execution.get("mirror") or {}).get("ports_commit")
+        or pin["freebsd_ports"]["commit"],
+        "mirror_plan_object": (execution.get("mirror") or {}).get("object", ""),
     }
     if any(plan.get(key) != value for key, value in expected.items()):
         raise ValueError("farm inputs differ from the selected immutable pin/executor")

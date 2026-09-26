@@ -134,8 +134,16 @@ def verify(plan: dict, documents: dict[str, bytes], policy: dict, *, read=fetch_
             if hashlib.sha256(provenance_raw).hexdigest() != marker["inputs"].get("upstream_provenance_sha256"):
                 raise ValueError("component has no hash-bound upstream provenance")
             provenance = json.loads(provenance_raw)
+            # The frozen mirror superseded the pin-time binary seed as the lower
+            # layer. record_upstream_provenance stamps the document with whatever
+            # it actually reused from, preferring the mirror exactly as the worker
+            # does, so the expected source follows the same precedence rather than
+            # assuming the seed.
+            expected_source = component_plan.get("mirror_plan_object") or component_plan["binary_seed_object"]
+            if not expected_source:
+                raise ValueError("plan names no lower layer for the reused packages")
             if (provenance.get("abi") != component_plan["abi"]
-                    or provenance.get("binary_seed") != component_plan["binary_seed_object"]):
+                    or provenance.get("binary_seed") != expected_source):
                 raise ValueError("provenance belongs to a different seed or architecture")
             names = set()
             for package in provenance["packages"]:
@@ -171,10 +179,11 @@ if __name__ == "__main__":
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--jobs", type=Path, required=True)
     parser.add_argument("--run-id", type=int, required=True)
+    parser.add_argument("--run-attempt", type=int)
     parser.add_argument("--pair-reservation", type=Path, required=True)
     args = parser.parse_args()
     from multiarch_job_timings import verify as verify_timings
-    timings = verify_timings(json.loads(args.jobs.read_text()), args.run_id)
+    timings = verify_timings(json.loads(args.jobs.read_text()), args.run_id, args.run_attempt)
     plan = json.loads(args.plan.read_text())
     reservation = json.loads(args.pair_reservation.read_text())
     if (reservation.get("schema_version") != "freesense.generation/v1"

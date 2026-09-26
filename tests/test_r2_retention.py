@@ -55,6 +55,23 @@ def system_marker(number: int, generation: int, train: str = "1.1") -> dict:
     }
 
 
+def mirror_marker(number: int, generation: int, architecture: str = "amd64",
+                  plan: int = 800) -> dict:
+    return {
+        "schema_version": "freesense.artifact/v1",
+        "stage": "mirror",
+        "architecture": architecture,
+        "fingerprint": fingerprint(number),
+        "generation": generation,
+        "inputs": {
+            "ports_commit": "e" * 40,
+            "catalog_sha256": fingerprint(901),
+            "mirror_plan": f"inputs/sha256/{fingerprint(plan)}",
+            "worker_image": fingerprint(900),
+        },
+    }
+
+
 def packages_marker(
     number: int, generation: int, system: str, train: str = "1.1"
 ) -> dict:
@@ -165,6 +182,87 @@ class RetentionPlanTests(unittest.TestCase):
         candidates = {item["prefix"] for item in report["candidates"]}
         self.assertNotIn(f"v1/artifacts/system/{active_system['fingerprint']}/", candidates)
         self.assertNotIn(f"v1/artifacts/packages/1.1/{active_packages['fingerprint']}/", candidates)
+
+    def test_the_newest_mirror_of_each_architecture_is_retained(self):
+        # Both architectures are live at once, so mirrors are kept per
+        # architecture rather than competing for one pool: keeping "one" must
+        # mean one amd64 and one arm64, never one in total.
+        build = inventory("build", "builds")
+        downloads = inventory("downloads", "downloads")
+        for number, (architecture, generation) in enumerate(
+            [("amd64", 2), ("amd64", 1), ("arm64", 2), ("arm64", 1)], start=10
+        ):
+            add_artifact(build, f"v1/artifacts/mirror/{fingerprint(number)}",
+                         mirror_marker(number, generation, architecture))
+        report = retention.plan_retention(
+            build, downloads, {"channels": {"devel": {"package_train": "1.1"}}},
+            set(), NOW, keep_devel=1, grace=timedelta(0), completed_grace=timedelta(0),
+            keep_mirrors=1)
+        candidates = {item["prefix"] for item in report["candidates"]}
+        self.assertNotIn(f"v1/artifacts/mirror/{fingerprint(10)}/", candidates)  # amd64 gen 2
+        self.assertNotIn(f"v1/artifacts/mirror/{fingerprint(12)}/", candidates)  # arm64 gen 2
+        self.assertIn(f"v1/artifacts/mirror/{fingerprint(11)}/", candidates)     # amd64 gen 1
+        self.assertIn(f"v1/artifacts/mirror/{fingerprint(13)}/", candidates)     # arm64 gen 1
+
+    def test_a_mirror_is_classified_as_its_own_artifact_kind(self):
+        self.assertEqual(
+            retention.classify_artifact_key(
+                f"v1/artifacts/mirror/{fingerprint(7)}/amd64/All/curl-8.22.0.pkg"),
+            ("mirror", f"v1/artifacts/mirror/{fingerprint(7)}", None, fingerprint(7)))
+
+    def test_retaining_a_mirror_retains_the_plan_it_was_cut_from(self):
+        # The sealed plan lives in inputs/sha256 and was previously collected
+        # after the orphan grace, leaving complete.json's inputs.mirror_plan
+        # dangling. Classification fixes that: collect_sha256 walks a protected
+        # marker's inputs, so the blob is reachable for as long as the mirror is.
+        build = inventory("build", "builds")
+        downloads = inventory("downloads", "downloads")
+        plan_sha = fingerprint(800)
+        build["objects"].append(object_record(f"v1/inputs/sha256/{plan_sha}", size=4096))
+        add_artifact(build, f"v1/artifacts/mirror/{fingerprint(7)}", mirror_marker(7, 1))
+        report = retention.plan_retention(
+            build, downloads, {"channels": {"devel": {"package_train": "1.1"}}},
+            set(), NOW, keep_devel=1, grace=timedelta(0), completed_grace=timedelta(0))
+        self.assertNotIn(f"v1/inputs/sha256/{plan_sha}",
+                         {item["prefix"] for item in report["candidates"]})
+
+    def test_a_superseded_mirror_stops_protecting_its_plan(self):
+        build = inventory("build", "builds")
+        downloads = inventory("downloads", "downloads")
+        plan_sha = fingerprint(801)
+        build["objects"].append(object_record(f"v1/inputs/sha256/{plan_sha}", size=4096))
+        add_artifact(build, f"v1/artifacts/mirror/{fingerprint(10)}",
+                     mirror_marker(10, 2, "amd64", plan=802))
+        add_artifact(build, f"v1/artifacts/mirror/{fingerprint(11)}",
+                     mirror_marker(11, 1, "amd64", plan=801))
+        report = retention.plan_retention(
+            build, downloads, {"channels": {"devel": {"package_train": "1.1"}}},
+            set(), NOW, keep_devel=1, grace=timedelta(0), completed_grace=timedelta(0),
+            keep_mirrors=1)
+        candidates = {item["prefix"] for item in report["candidates"]}
+        self.assertIn(f"v1/artifacts/mirror/{fingerprint(11)}/", candidates)
+        self.assertIn(f"v1/inputs/sha256/{plan_sha}", candidates)
+
+    def test_a_mirror_marker_that_does_not_describe_a_mirror_fails_closed(self):
+        for broken in (
+            {"stage": "system"},
+            {"architecture": "sparc64"},
+            {"inputs": {"ports_commit": "nope", "catalog_sha256": fingerprint(901),
+                        "mirror_plan": f"inputs/sha256/{fingerprint(800)}"}},
+            {"inputs": {"ports_commit": "e" * 40, "catalog_sha256": fingerprint(901),
+                        "mirror_plan": "mirror-plan.json"}},
+        ):
+            with self.subTest(broken=broken):
+                build = inventory("build", "builds")
+                downloads = inventory("downloads", "downloads")
+                marker = {**mirror_marker(7, 1), **broken}
+                add_artifact(build, f"v1/artifacts/mirror/{fingerprint(7)}", marker)
+                with self.assertRaises(SystemExit):
+                    retention.plan_retention(
+                        build, downloads,
+                        {"channels": {"devel": {"package_train": "1.1"}}},
+                        set(), NOW, keep_devel=1, grace=timedelta(0),
+                        completed_grace=timedelta(0))
 
     def test_authoritative_multiarch_completion_protects_its_component_pair(self):
         build = inventory("build", "builds")

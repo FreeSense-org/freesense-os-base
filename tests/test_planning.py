@@ -166,16 +166,19 @@ def system_closure(*, channel_name: str = "devel", target_arch: str = "amd64"):
         target_pin = lock["targets"][target_arch]
         execution_inputs = worker(lock, target_arch, "github-amd64")
         freebsd_sha = lock["freebsd_source"]["commit"]
-        ports_sha = lock["freebsd_ports"]["commit"]
+        # The build follows the mirror's ports commit when the pin names one.
+        ports_sha = ((target_pin.get("mirror") or {}).get("ports_commit")
+                     or lock["freebsd_ports"]["commit"])
         image_sha256 = execution_inputs["worker_image"]["sha256"]
         worker_tools_sha256 = execution_inputs["worker_tools"]["sha256"]
         jail_object = target_pin["jail_seed"]["object"]
         osversion = lock["freebsd_source"].get("osversion", 1600021)
         freebsd_pin_id = plan.fingerprint({
-            "schema": 1,
+            "schema": 2,
             "kind": "freebsd-pin",
             "freebsd_source": freebsd_sha,
             "freebsd_ports": ports_sha,
+            "mirror": (target_pin.get("mirror") or {}).get("fingerprint", ""),
             "jail_seed": target_pin["jail_seed"]["sha256"],
             "package_catalog": target_pin.get("package_catalog", {}).get("sha256", ""),
             "package_catalog_osversion": target_pin.get("package_catalog", {}).get("osversion", 0),

@@ -37,8 +37,10 @@ markers and cumulative checkpoints preserve completed AMD64 work and completed
 ARM64 batches.
 
 The native ARM probe needs KVM, sufficient memory and disk, QEMU, AAVMF and a
-successful pinned-image boot. A failed probe selects the dedicated executor;
-a later native build failure fails the run. Executor and worker identities are
+successful pinned-image boot. A failed probe selects `github-amd64` with the
+cross-qemu-user executor, not the dedicated host: `select_arm_host` returns
+`dedicated` only for a dispatch that explicitly forces it. A later native build
+failure fails the run. Executor and worker identities are
 included in component fingerprints and target-qualified checkpoints.
 
 The v4 pin validator requires both native worker images/tool bundles, both jail
@@ -83,8 +85,8 @@ namespaces.
   The cutover must disable those Development entry points to prevent duplicate
   work. Stable must remain unchanged.
 - Manual dispatch starts a full canary with an optional forced dedicated ARM
-  executor. It requires explicit build authorization; none has been dispatched
-  during this implementation.
+  executor. It requires explicit build authorization. One canary has been
+  dispatched: run 34768301382, described below.
 - The broker adds an input-reader role for the probe and permits protected
   multiarch component calls. Its matching broker change must be deployed before
   a canary can acquire credentials. Nested builders receive no channel-write role.
@@ -92,20 +94,56 @@ namespaces.
   checks. A merge to main runs CI; it does not by itself activate the new schedule.
   Existing scheduled planning will consume changed build recipes as applicable.
 
+## The first canary: run 34768301382
+
+Dispatched 2026-09-13 at commit `0e7dadc`, publication disabled. It ran 5h33m and
+failed on both architectures, in two unrelated places. Everything before those
+two points worked, including the pin, the frozen mirror, the shard checkpoints,
+the delta build and the repository signature.
+
+**AMD64 — fixed, not yet retested.** All nine System jobs passed; `core` took
+1h31m and the eight shards 13-21m. `finalize` completed Poudriere, the closure
+check and `repository-sign`, then failed in `record_upstream_provenance`, which
+called `load_binary_seed`. That function asserts the seed carries `lang/rust`,
+which an amd64 seed need not. `cad66cc` takes upstream provenance from the
+mirror instead and is the fix; it merged after the run and has not been
+exercised.
+
+**ARM64 — emulated, and one shard exhausted the watchdog.** The capability probe
+reported `kvm: false` with memory, disk, QEMU and firmware all satisfied:
+GitHub's `ubuntu-24.04-arm` hosted runners do not expose `/dev/kvm`, so there is
+no native ARM execution path on hosted infrastructure and `arm64_capability.py`
+correctly demoted the target to `amd64-cross-qemu-user`. Eight of nine jobs still
+passed. Shard 2 was killed at 5h30m59s against the 19800-second watchdog with
+`net/kea` still compiling, having spent 1h57m on `devel/doxygen` and 1h14m on
+`graphics/graphviz` first. Those arrive through kea's closure: kea LIB_DEPENDS on
+`devel/log4cplus`, whose default-on `DOCS` build-depends on doxygen, whose
+default-on `GRAPHVIZ` run-depends on `dot`. `freesense#61` unsets those options.
+
+Shard 2 also held `security/strongswan` and `dns/unbound`, the next two most
+expensive roots. That was not bad luck: `partition_roots.partition` balanced
+shards by root count, because an unmeasured root weighed 1 while the cost table
+held a single entry. Real per-root costs are now recorded in
+`config/multiarch-shards.json` and `net/kea` is a measured heavy root, so the
+expensive roots are spread one per shard and each shard checkpoints roughly every
+three hours.
+
+Completed batch checkpoints survive a watchdog kill, so a rerun resumes rather
+than repeating the shard.
+
 ## Work required before activation
 
-1. Native candidate generation: The v4 pin workflow is fully wired into `pin.yml`.
-   Running it will produce the first complete dual-architecture v4 pin with real
-   verified inputs mirrored to R2.
+1. Merge `freesense#61` so doxygen and graphviz leave the System closure, then
+   re-cut the frozen mirror against the resulting delta and refresh the pin.
 2. Confirm the deployed credential broker roles match the independently invoked
    coordinator, download-writer, and channel-writer jobs.
 3. Verify native requirements collection, architecture exclusions, shard balance,
    empty shards, OPTIONS mismatch repair, repository signatures and Optional reuse
    on actual FreeBSD. Exercise the job timing gate against the 5.5-hour watchdog.
-4. After explicit authorization, run a publication-disabled dual-architecture
-   canary, boot all required generic images, measure upstream reuse and inspect
-   failures using their exact job logs. Only then prepare the Development cutover.
+4. After explicit authorization, run a second publication-disabled canary. It must
+   clear both `finalize` jobs, which is what proves `cad66cc`, boot all required
+   generic images, and record upstream reuse for both architectures. Only then
+   prepare the Development cutover.
 
-Workspace root `plan.md` preserves the original plan and a fuller continuation
-handoff. Neither local unit tests nor the presence of workflows establishes
-native build readiness or successful publication.
+Neither local unit tests nor the presence of workflows establishes native build
+readiness or successful publication.

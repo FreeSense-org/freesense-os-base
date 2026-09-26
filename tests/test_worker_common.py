@@ -74,6 +74,40 @@ class WorkerVersionValidationTests(unittest.TestCase):
             self.assertIn("has no source deltas", source)
             self.assertIn("publish_system_checkpoint shard", source)
 
+    def test_every_stage_that_reads_the_os_definition_also_clones_it(self) -> None:
+        """A stage must not read /root/os-definition it never checked out.
+
+        configure_source clones it for the System stage only, while
+        configure_signing takes a shard's trust anchor from that checkout for
+        System and Optional alike, and both farm stages read partition_roots.py
+        and multiarch-shards.json out of it. Every Optional shard therefore died
+        at repository-signing-key, on a path no build had reached before.
+        """
+        import re
+        common = (ROOT / "scripts/runner/worker-common.sh").read_text(encoding="utf-8")
+        clone = "clone_exact https://github.com/FreeSense-org/freesense-os-base.git"
+        body = common.split("configure_source() {", 1)[1].split("\nesac", 1)[0]
+        labels = [(m.start(), m.group(1)) for m in re.finditer(r"^ {4}(\w+)\)", body, re.M)]
+        self.assertIn("system", [name for _, name in labels])
+        branches = {}
+        for index, (offset, name) in enumerate(labels):
+            stop = labels[index + 1][0] if index + 1 < len(labels) else len(body)
+            branches[name] = body[offset:stop]
+        self.assertIn(clone, branches["system"], "the case block was not parsed")
+        stages = ROOT / "scripts/runner/stages"
+        checked = 0
+        for stage in sorted(stages.glob("*.sh")):
+            source = stage.read_text(encoding="utf-8")
+            if not re.search(r"^configure_source$", source, re.M):
+                continue  # An assembly stage builds no repository of its own.
+            if "/root/os-definition" not in source and "configure_signing" not in common:
+                continue
+            checked += 1
+            with self.subTest(stage=stage.stem):
+                self.assertTrue(clone in branches.get(stage.stem, "") or clone in source,
+                                f"{stage.name} reads an os-definition that nothing clones")
+        self.assertEqual(checked, 2, "expected the System and Optional farm stages")
+
     def test_optional_package_exclusions_support_product_name_templates(self) -> None:
         packages = (ROOT / "scripts/runner/stages/packages.sh").read_text(
             encoding="utf-8"
@@ -155,32 +189,32 @@ class WorkerVersionValidationTests(unittest.TestCase):
         self.assertIn("gzip -dc /tmp/freesense-built-kernel.gz", system)
         self.assertIn("ELF 64-bit.*ARM aarch64", system)
 
-    def test_amd64_system_farm_uses_all_twenty_hosted_slots(self) -> None:
-        workflow = (ROOT / ".github/workflows/system.yml").read_text(
+    def test_the_delta_farm_is_the_only_way_to_build_system(self) -> None:
+        workflow = (ROOT / ".github/workflows/component-farm.yml").read_text(
             encoding="utf-8"
         )
         reusable = (ROOT / ".github/workflows/runner-build.yml").read_text(
             encoding="utf-8"
         )
-        self.assertIn('max-parallel: 20', workflow)
-        self.assertIn('{"part": "core", "shard": "0", "count": "19"}', workflow)
-        self.assertIn('for index in range(18)', workflow)
-        self.assertIn('system_part: bootstrap', workflow)
-        self.assertIn('needs: [plan, build_bootstrap]', workflow)
-        self.assertIn('system_part: dependent', workflow)
-        self.assertIn('system_shard_index: "18"', workflow)
-        self.assertIn(
-            'needs: [plan, build_parts, build_bootstrap, build_dependent]',
-            workflow,
-        )
+        self.assertIn("max-parallel: ${{ fromJSON(inputs.plan).build_host == 'dedicated' && 1 || 9 }}", workflow)
+        self.assertIn('farm_layout: delta-v1', workflow)
+        self.assertIn('shard_policy_version: dependency-cost-v2', workflow)
+        self.assertIn("system_shard_count: '8'", workflow)
         self.assertIn('system_part: finalize', workflow)
-        self.assertIn('system_shard_count: "19"', workflow)
-        self.assertIn("needs.build_finalize.result == 'success'", workflow)
+        self.assertIn('needs: [prepare, parts]', workflow)
+        component = (ROOT / ".github/workflows/system.yml").read_text(encoding="utf-8")
+        self.assertIn("uses: ./.github/workflows/component-farm.yml", component)
+        for trigger in ("schedule:", "workflow_dispatch:", "workflow_run:"):
+            with self.subTest(trigger=trigger):
+                self.assertNotIn(trigger, component)
         self.assertIn(
             "freesense-hosted-{0}-{1}-{2}-{3}-{4}",
             reusable,
         )
-        self.assertIn("inputs.system_part == 'bootstrap' && '20700'", reusable)
+        self.assertIn("inputs.system_part == 'core'", reusable)
+        for part in ("bootstrap", "dependent"):
+            with self.subTest(part=part):
+                self.assertNotIn(f"system_part == '{part}'", reusable)
 
     def test_system_farm_checkpoints_are_verified_and_repaired(self) -> None:
         common = (ROOT / "scripts/runner/worker-common.sh").read_text(
@@ -199,7 +233,6 @@ class WorkerVersionValidationTests(unittest.TestCase):
             'checkpoint payload differs from its marker',
             'checkpoint package integrity mismatch',
             'checkpoint package metadata mismatch',
-            'checkpoint_farm}/bootstrap',
         ):
             with self.subTest(value=value):
                 self.assertIn(value, common)
@@ -208,13 +241,32 @@ class WorkerVersionValidationTests(unittest.TestCase):
             'while [ "${shard}" -lt "${SYSTEM_SHARD_COUNT}" ]',
             'merge_package "${package}" "${shard_seed}/All" "${shard_inventory}" "${seed_duplicate_policy}"',
             'seed_poudriere_repository "${shard_seed}"',
-            'fetch_system_checkpoint bootstrap bootstrap',
-            'seed_poudriere_repository "/root/system-bootstrap-checkpoint/${PACKAGE_ARCH}"',
             'prepare_system_ports full',
             'phase system-closure-check',
         ):
             with self.subTest(value=value):
                 self.assertIn(value, system)
+
+    def test_seeding_opts_the_repository_out_of_pkgclean(self) -> None:
+        # pkgclean removes whatever the bulk list does not reach, which is
+        # precisely the seed. Without this the next batch rebuilds it from
+        # source and the build succeeds -- slowly, and without a word.
+        common = (ROOT / "scripts/runner/worker-common.sh").read_text(encoding="utf-8")
+        start = common.index("seed_poudriere_repository() {")
+        end = common.index(chr(10) + "}" + chr(10), start)
+        seed = common[start:end]
+        self.assertIn("FREESENSE_KEEP_SEEDED_PACKAGES=1", seed)
+        self.assertIn("export FREESENSE_KEEP_SEEDED_PACKAGES", seed)
+        # Only a mirror opts out. The pin-time binary seed is accepted only
+        # inside the bulk list's closure, and pkgclean is what prunes Poudriere
+        # back to that closure before the repository is composed and signed --
+        # so on that path it must still run.
+        guard = seed[:seed.index("FREESENSE_KEEP_SEEDED_PACKAGES=1")]
+        self.assertIn('if [ -n "${MIRROR_PLAN_OBJECT}" ]; then', guard)
+        # Set only once the repository is in place, so a failure part-way
+        # through cannot leave the flag on with a half-written seed.
+        self.assertLess(seed.index('mv "${staging}" "${repository}"'),
+                        seed.index("FREESENSE_KEEP_SEEDED_PACKAGES=1"))
 
     def test_system_shard_dependency_expansion_fails_closed(self) -> None:
         system = (ROOT / "scripts/runner/stages/system.sh").read_text(
@@ -226,12 +278,138 @@ class WorkerVersionValidationTests(unittest.TestCase):
         ]
         self.assertIn('>>"${meta_dependencies}" || {', shard_roots)
         self.assertIn('dependencies contain unresolved variables', shard_roots)
-        self.assertIn('root_count=$(awk', shard_roots)
-        self.assertIn("lang/rust", shard_roots)
-        self.assertIn("net/cloud-init", shard_roots)
-        self.assertIn("sysutils/FreeSense-cloud-init", shard_roots)
-        self.assertIn('general_shard_count=$((SYSTEM_SHARD_COUNT - 1))', shard_roots)
+        # The partition step is shared with the delta path, so the function
+        # delegates rather than inlining it.
+        self.assertIn('partition_system_shard', shard_roots)
+        system = (ROOT / "scripts/runner/stages/system.sh").read_text(encoding="utf-8")
+        partition = system[system.index("partition_system_shard() {"):]
+        partition = partition[:partition.index(chr(10) + "}" + chr(10))]
+        self.assertIn('partition_roots.py', partition)
+        self.assertIn('--batches-output /tmp/system-shard-batches.json', partition)
         self.assertNotIn('@{}$-', shard_roots)
+
+    def test_the_delta_path_is_opt_in_and_leaves_the_old_one_alone(self) -> None:
+        # Nothing passes MIRROR_PLAN_OBJECT yet. Every delta behaviour has to
+        # sit behind it, so a build without one is byte-for-byte what it was.
+        system = (ROOT / "scripts/runner/stages/system.sh").read_text(encoding="utf-8")
+        prepare = system[system.index("prepare_system_ports() {"):]
+        prepare = prepare[:prepare.index(chr(10) + "}" + chr(10))]
+        for guarded in ("fetch_delta_mirror", "write_delta_bulk system",
+                        "seed_poudriere_repository /root/mirror-repo"):
+            with self.subTest(guarded=guarded):
+                self.assertIn(guarded, prepare)
+        # the legacy root list and the legacy seed both survive
+        self.assertIn("cp tools/conf/pfPorts/poudriere_system tools/conf/pfPorts/poudriere_bulk",
+                      prepare)
+        self.assertIn("prepare_merged_binary_seed", prepare)
+        self.assertIn('elif [ -n "${BINARY_SEED_OBJECT}" ]; then', prepare)
+
+    def test_the_delta_path_does_not_expand_the_metaports(self) -> None:
+        # The metaport expansion discovers the whole System closure. With a
+        # sealed plan that would add back every package the mirror provides.
+        system = (ROOT / "scripts/runner/stages/system.sh").read_text(encoding="utf-8")
+        roots = system[system.index("write_system_farm_roots() {"):]
+        roots = roots[:roots.index(chr(10) + "}" + chr(10))]
+        delta_at = roots.index('if [ -n "${MIRROR_PLAN_OBJECT}" ]; then')
+        # the expansion is the else-branch, so the plan never reaches it
+        self.assertLess(delta_at, roots.index("-V RUN_DEPENDS -V LIB_DEPENDS"))
+        delta_body = roots[delta_at:roots.index("  else", delta_at)]
+        self.assertIn("/tmp/delta-roots", delta_body)
+        self.assertNotIn("meta_dependencies", delta_body)
+
+    def test_no_metaport_reaches_a_shard_partition(self) -> None:
+        # A metaport depends on its whole component, so a shard holding one
+        # rebuilds everything the other seven are already building -- which is
+        # how three arm64 shards hit the watchdog. Both root paths drop them.
+        system = (ROOT / "scripts/runner/stages/system.sh").read_text(encoding="utf-8")
+        roots = system[system.index("write_system_farm_roots() {"):]
+        roots = roots[:roots.index(chr(10) + "}" + chr(10))]
+        delta = roots[roots.index('if [ -n "${MIRROR_PLAN_OBJECT}" ]'):roots.index("  else")]
+        legacy = roots[roots.index("  else"):]
+        for name, body in (("delta", delta), ("legacy", legacy)):
+            with self.subTest(path=name):
+                self.assertIn("/^security" + chr(92) + "/FreeSense$/d", body)
+                self.assertIn("/^security" + chr(92) + "/FreeSense-system$/d", body)
+
+    def test_finalize_seeds_both_layers_at_once(self) -> None:
+        # seed_poudriere_repository replaces the repository wholesale, so
+        # seeding the mirror and then the shard output keeps only the second.
+        # finalize has to merge them and seed once.
+        system = (ROOT / "scripts/runner/stages/system.sh").read_text(encoding="utf-8")
+        final = system[system.index("  finalize)"):]
+        final = final[:final.index(chr(10) + "    ;;")]
+        self.assertEqual(final.count("seed_poudriere_repository"), 1)
+        merge_at = final.index("/root/mirror-repo/All")
+        seed_at = final.index("seed_poudriere_repository")
+        self.assertLess(merge_at, seed_at, "the mirror must be merged before the seed")
+        # and prepare_system_ports must not seed separately on this path
+        prepare = system[system.index("prepare_system_ports() {"):]
+        prepare = prepare[:prepare.index(chr(10) + "}" + chr(10))]
+        self.assertIn('if [ "${roots_mode}" != full ]; then', prepare)
+
+    def test_both_root_paths_reach_the_shard_slice(self) -> None:
+        # The delta branch must not return early: the tail after it partitions
+        # the roots, handles an empty shard, and copies the shard's slice into
+        # poudriere_bulk. Skipping it builds the whole component in every shard.
+        system = (ROOT / "scripts/runner/stages/system.sh").read_text(encoding="utf-8")
+        roots = system[system.index("write_system_farm_roots() {"):]
+        roots = roots[:roots.index(chr(10) + "}" + chr(10))]
+        branch = roots.index('if [ -n "${MIRROR_PLAN_OBJECT}" ]; then')
+        delta_body = roots[branch:roots.index("  else", branch)]
+        self.assertIn("/tmp/delta-roots", delta_body)
+        self.assertNotIn("return", delta_body)
+        # the shared tail is after the conditional closes, and both reach it
+        close = roots.index(chr(10) + "  fi" + chr(10), branch)
+        tail = roots[close:]
+        self.assertIn("partition_system_shard", tail)
+        self.assertIn('cp "${shard_roots}" tools/conf/pfPorts/poudriere_bulk', tail)
+        self.assertIn("EMPTY_SOURCE_SHARD=true", tail)
+
+    def test_both_farm_stages_take_the_same_lower_layer(self) -> None:
+        # System and Optional must layer on the same bytes. If one seeds the
+        # mirror and the other the pin-time binary seed, Optional resolves
+        # dependencies against a different lower layer than System built on.
+        stages = ROOT / "scripts/runner/stages"
+        for stage, component in (("system.sh", "system"), ("packages.sh", "optional")):
+            text = (stages / stage).read_text(encoding="utf-8")
+            with self.subTest(stage=stage):
+                self.assertIn("fetch_delta_mirror", text)
+                self.assertIn(f"write_delta_bulk {component}", text)
+                self.assertIn("/root/mirror-repo", text)
+                # and the escape check runs wherever the stage builds
+                self.assertIn("verify_delta_build", text)
+        packages = (stages / "packages.sh").read_text(encoding="utf-8")
+        # both build sites are covered, not only the finalize one
+        self.assertEqual(packages.count("verify_delta_build"), 2)
+        self.assertEqual(packages.count("poudriere_latest_repository"), 2)
+
+    def test_the_mirror_is_bound_to_the_plan_it_was_cut_from(self) -> None:
+        # Two independent inputs would let a stale copy-paste seed one
+        # snapshot's bytes while building another's roots, with nothing failing
+        # because each artifact is internally consistent.
+        common = (ROOT / "scripts/runner/worker-common.sh").read_text(encoding="utf-8")
+        fetch = common[common.index("fetch_delta_mirror() {"):]
+        fetch = fetch[:fetch.index(chr(10) + "}" + chr(10))]
+        # the mirror id comes from the plan, never from a separate input
+        self.assertIn("MIRROR_ID=$(jq -r .fingerprint /root/mirror-plan.json)", fetch)
+        self.assertNotIn("${MIRROR_ID_INPUT", fetch)
+        # and the mirror must name this plan back
+        self.assertIn('.inputs.mirror_plan == $object', fetch)
+        self.assertIn("/root/mirror-repo/complete.json", fetch)
+        # the ports tree must be at the commit the mirror was computed from
+        self.assertIn(".ports_commit == $ports", fetch)
+        # and the escape check's data must exist before the path can be used
+        self.assertIn(".delta_packages", fetch)
+
+    def test_a_delta_bulk_list_refuses_an_unknown_component(self) -> None:
+        common = (ROOT / "scripts/runner/worker-common.sh").read_text(encoding="utf-8")
+        bulk = common[common.index("write_delta_bulk() {"):]
+        bulk = bulk[:bulk.index(chr(10) + "}" + chr(10))]
+        self.assertIn("system|optional", bulk)
+        self.assertIn("unknown delta component", bulk)
+        self.assertIn("component_roots[$component][]", bulk)
+        # an empty root list is a failure, not an empty build
+        self.assertIn("no roots to build", bulk)
 
     def test_system_farm_workers_do_not_receive_the_private_signing_key(self) -> None:
         workflow = (ROOT / ".github/workflows/runner-build.yml").read_text(
@@ -239,7 +417,7 @@ class WorkerVersionValidationTests(unittest.TestCase):
         )
         self.assertIn("name: Render credential-free System farm worker", workflow)
         self.assertIn("FREESENSE_REPO_SIGNING_KEY: ''", workflow)
-        for part in ("core", "bootstrap", "shard", "dependent"):
+        for part in ("core", "shard"):
             with self.subTest(part=part):
                 self.assertIn(f"inputs.system_part != '{part}'", workflow)
         common = (ROOT / "scripts/runner/worker-common.sh").read_text(

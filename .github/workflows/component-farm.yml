@@ -59,7 +59,9 @@ jobs:
     needs: prepare
     strategy:
       fail-fast: false
-      max-parallel: 9
+      # One self-hosted build-runner takes one job at a time; queue there one
+      # part per farm so no part waits past GitHub's 24-hour queue limit.
+      max-parallel: ${{ fromJSON(inputs.plan).build_host == 'dedicated' && 1 || 9 }}
       matrix: ${{ fromJSON(needs.prepare.outputs.matrix) }}
     uses: ./.github/workflows/runner-build.yml
     with:
@@ -98,6 +100,7 @@ jobs:
       installer_format: ${{ fromJSON(inputs.plan).installer_format }}
       build_host: ${{ fromJSON(inputs.plan).build_host }}
       binary_seed_object: ${{ fromJSON(inputs.plan).binary_seed_object }}
+      mirror_plan_object: ${{ fromJSON(inputs.plan).mirror_plan_object }}
       binary_seed_provenance_sha256: ${{ fromJSON(inputs.plan).binary_seed_provenance_sha256 }}
       previous_freesense_repository: ${{ fromJSON(inputs.plan).previous_freesense_repository }}
       publish_enabled: ${{ 'false' }}
@@ -147,6 +150,7 @@ jobs:
       installer_format: ${{ fromJSON(inputs.plan).installer_format }}
       build_host: ${{ fromJSON(inputs.plan).build_host }}
       binary_seed_object: ${{ fromJSON(inputs.plan).binary_seed_object }}
+      mirror_plan_object: ${{ fromJSON(inputs.plan).mirror_plan_object }}
       binary_seed_provenance_sha256: ${{ fromJSON(inputs.plan).binary_seed_provenance_sha256 }}
       previous_freesense_repository: ${{ fromJSON(inputs.plan).previous_freesense_repository }}
       publish_enabled: ${{ 'false' }}

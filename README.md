@@ -88,7 +88,11 @@ See [GitHub-hosted System build farm](docs/github-system-farm.md) for shard,
 checkpoint, retry, merge, and trust-boundary details.
 
 The dedicated host is provisioned once with KVM/QEMU, OVMF, cloud-image-utils,
-xz, zstd, jq, GitHub CLI, Go, and the Actions runner. Build workflows never
+xz, zstd, jq, GitHub CLI, Go, and the Actions runner. A host that shares its
+machine with other workloads caps the runner service in a systemd slice and sets
+`FREESENSE_HOST_BUILD_VCPUS` and `FREESENSE_HOST_BUILD_MEMORY_MIB` in the
+runner's `.env`; the build VM then uses those instead of sizing itself from the
+whole machine. Build workflows never
 mutate the persistent host with `apt`; missing prerequisites fail before a VM is
 started. Every VM overlay and transient credential/script file is removed by an
 always-run cleanup path.

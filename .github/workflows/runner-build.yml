@@ -58,6 +58,7 @@ on:
       appliance_compression: {type: string, required: false, default: ''}
       build_host: {type: string, required: false, default: dedicated}
       binary_seed_object: {type: string, required: false, default: ''}
+      mirror_plan_object: {type: string, required: false, default: ''}
       binary_seed_provenance_sha256: {type: string, required: false, default: ''}
       previous_freesense_repository: {type: string, required: false, default: ''}
       farm_layout: {type: string, required: false, default: legacy}
@@ -67,9 +68,11 @@ jobs:
   build:
     runs-on: ${{ inputs.build_host == 'github-arm64' && 'ubuntu-24.04-arm' || ((inputs.build_host == 'github-hosted' || inputs.build_host == 'github-amd64') && 'ubuntu-24.04' || 'build-runner') }}
     concurrency:
-      group: ${{ inputs.build_host != 'dedicated' && format('freesense-hosted-{0}-{1}-{2}-{3}-{4}', inputs.target, inputs.stage, inputs.fingerprint, inputs.system_part, inputs.system_shard_index) || 'freesense-kvm-host' }}
+      # A shared group would cancel all but one pending part. The dedicated
+      # build-runner serialises its jobs itself, so each part gets its own group.
+      group: ${{ inputs.build_host != 'dedicated' && format('freesense-hosted-{0}-{1}-{2}-{3}-{4}', inputs.target, inputs.stage, inputs.fingerprint, inputs.system_part, inputs.system_shard_index) || format('freesense-kvm-host-{0}-{1}-{2}-{3}-{4}', inputs.target, inputs.stage, inputs.fingerprint, inputs.system_part, inputs.system_shard_index) }}
       cancel-in-progress: false
-    timeout-minutes: 360
+    timeout-minutes: ${{ inputs.build_host != 'dedicated' && 360 || 900 }}
     environment: build
     permissions:
       actions: write
@@ -130,6 +133,7 @@ jobs:
       SYSTEM_SHARD_INDEX: ${{ inputs.system_shard_index }}
       SYSTEM_SHARD_COUNT: ${{ inputs.system_shard_count }}
       BINARY_SEED_OBJECT: ${{ inputs.binary_seed_object }}
+      MIRROR_PLAN_OBJECT: ${{ inputs.mirror_plan_object }}
       BINARY_SEED_PROVENANCE_SHA256: ${{ inputs.binary_seed_provenance_sha256 }}
       PREVIOUS_FREESENSE_REPOSITORY: ${{ inputs.previous_freesense_repository }}
       FARM_LAYOUT: ${{ inputs.farm_layout }}
@@ -140,11 +144,11 @@ jobs:
       APPLIANCE_FILESYSTEM: ${{ inputs.appliance_filesystem }}
       APPLIANCE_FORMAT: ${{ inputs.appliance_format }}
       APPLIANCE_COMPRESSION: ${{ inputs.appliance_compression }}
-      BUILD_VCPUS: ${{ inputs.build_host != 'dedicated' && 'auto' || '12' }}
-      BUILD_MEMORY_MIB: ${{ inputs.build_host != 'dedicated' && 'auto' || '32768' }}
+      BUILD_VCPUS: auto
+      BUILD_MEMORY_MIB: auto
       BUILD_DISK_GIB: ${{ inputs.build_host != 'dedicated' && '110' || '160' }}
       BUILD_MINIMUM_FREE_GIB: ${{ inputs.build_host != 'dedicated' && '70' || '80' }}
-      BUILD_TIMEOUT_SECONDS: ${{ inputs.build_host != 'dedicated' && (inputs.system_part == 'bootstrap' && '20700' || '19800') || '18000' }}
+      BUILD_TIMEOUT_SECONDS: ${{ inputs.build_host != 'dedicated' && '19800' || '52200' }}
     steps:
       - name: Validate selected executor
         env:
@@ -179,9 +183,8 @@ jobs:
       - run: go build -trimpath -o "${RUNNER_TEMP}/fsbuild" ./cmd/fsbuild
       - name: Verify repository signing trust root
         if: >-
-          (inputs.stage != 'system' && !(inputs.stage == 'packages' && inputs.farm_layout == 'delta-v1')) ||
-          (inputs.system_part != 'core' && inputs.system_part != 'bootstrap' &&
-           inputs.system_part != 'shard' && inputs.system_part != 'dependent')
+          (inputs.stage != 'system' && inputs.stage != 'packages') ||
+          (inputs.system_part != 'core' && inputs.system_part != 'shard')
         env: {SIGNING_KEY: "${{ secrets.FREESENSE_PKG_SIGNING_KEY }}"}
         run: |
           umask 077
@@ -217,25 +220,16 @@ jobs:
         name: Reuse completed System farm checkpoint
         if: >-
           steps.reuse.outputs.complete != 'true' &&
-          (inputs.stage == 'system' || (inputs.stage == 'packages' && inputs.farm_layout == 'delta-v1')) &&
-          (inputs.system_part == 'core' || inputs.system_part == 'bootstrap' ||
-           inputs.system_part == 'dependent' || (inputs.system_part == 'shard' && inputs.farm_layout != 'delta-v1'))
+          (inputs.stage == 'system' || inputs.stage == 'packages') &&
+          inputs.system_part == 'core'
         run: |
-          case "${SYSTEM_PART}" in
-            core) checkpoint="core" ;;
-            bootstrap) checkpoint="bootstrap" ;;
-            shard|dependent) checkpoint="shards/${SYSTEM_SHARD_INDEX}" ;;
-          esac
-          key="${FSBUILD_STORE_PREFIX}/artifacts/system/${FINGERPRINT}/checkpoints/farm-${SYSTEM_SHARD_COUNT}/${checkpoint}/complete.json"
-          if [[ "${FARM_LAYOUT}" == delta-v1 ]]; then
-            component="${STAGE}"
-            if [[ "${STAGE}" == packages ]]; then component="packages/${PACKAGE_TRAIN}"; fi
-            previous="${PREVIOUS_FREESENSE_REPOSITORY:-none}"
-            key="${FSBUILD_STORE_PREFIX}/artifacts/${component}/${FINGERPRINT}/checkpoints/${ARCHITECTURE}/${FREEBSD_PIN_ID}/${previous}/${SHARD_POLICY_VERSION}/farm-${SYSTEM_SHARD_COUNT}/${checkpoint}/batch-0/complete.json"
-          fi
+          component="${STAGE}"
+          if [[ "${STAGE}" == packages ]]; then component="packages/${PACKAGE_TRAIN}"; fi
+          previous="${PREVIOUS_FREESENSE_REPOSITORY:-none}"
+          key="${FSBUILD_STORE_PREFIX}/artifacts/${component}/${FINGERPRINT}/checkpoints/${ARCHITECTURE}/${FREEBSD_PIN_ID}/${previous}/${SHARD_POLICY_VERSION}/farm-${SYSTEM_SHARD_COUNT}/core/batch-0/complete.json"
           if aws s3api head-object --endpoint-url "${R2_ENDPOINT}" \
               --bucket "${R2_BUCKET}" --key "${key}" >/dev/null 2>&1; then
-            echo "Reusing completed System checkpoint ${checkpoint}"
+            echo "Reusing completed System core checkpoint"
             echo "complete=true" >>"${GITHUB_OUTPUT}"
           else
             echo "complete=false" >>"${GITHUB_OUTPUT}"
@@ -254,9 +248,8 @@ jobs:
       - name: Render credential-free System farm worker
         if: >-
           steps.reuse.outputs.complete != 'true' && steps.checkpoint.outputs.complete != 'true' &&
-          (inputs.stage == 'system' || (inputs.stage == 'packages' && inputs.farm_layout == 'delta-v1')) &&
-          (inputs.system_part == 'core' || inputs.system_part == 'bootstrap' ||
-           inputs.system_part == 'shard' || inputs.system_part == 'dependent')
+          (inputs.stage == 'system' || inputs.stage == 'packages') &&
+          (inputs.system_part == 'core' || inputs.system_part == 'shard')
         env:
           FREESENSE_REPO_SIGNING_KEY: ''
         run: |
@@ -267,9 +260,8 @@ jobs:
         if: >-
           steps.reuse.outputs.complete != 'true' && steps.reuse.outputs.assembled != 'true' &&
           steps.checkpoint.outputs.complete != 'true' &&
-          !((inputs.stage == 'system' || (inputs.stage == 'packages' && inputs.farm_layout == 'delta-v1')) &&
-            (inputs.system_part == 'core' || inputs.system_part == 'bootstrap' ||
-             inputs.system_part == 'shard' || inputs.system_part == 'dependent'))
+          !((inputs.stage == 'system' || inputs.stage == 'packages') &&
+            (inputs.system_part == 'core' || inputs.system_part == 'shard'))
         env:
           FREESENSE_REPO_SIGNING_KEY: ${{ secrets.FREESENSE_PKG_SIGNING_KEY }}
         run: |
@@ -284,7 +276,8 @@ jobs:
           scripts/runner/run-vm.sh --image-sha256 "${IMAGE_SHA256}"
           --host-architecture "${{ inputs.build_host == 'github-arm64' && 'arm64' || 'amd64' }}"
           --script "${RUNNER_TEMP}/worker.sh" --timeout "${BUILD_TIMEOUT_SECONDS}"
-          --vcpus "${BUILD_VCPUS}" --memory-mib "${BUILD_MEMORY_MIB}"
+          --vcpus "${FREESENSE_HOST_BUILD_VCPUS:-${BUILD_VCPUS}}"
+          --memory-mib "${FREESENSE_HOST_BUILD_MEMORY_MIB:-${BUILD_MEMORY_MIB}}"
           --disk-gib "${BUILD_DISK_GIB}" --minimum-free-gib "${BUILD_MINIMUM_FREE_GIB}"
           --failure-dir "${RUNNER_TEMP}/build-vm-failure"
       - name: Upload build VM failure diagnostics

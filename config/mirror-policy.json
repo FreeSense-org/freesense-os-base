@@ -1,0 +1,18 @@
+{
+  "schema_version": "freesense.mirror-policy/v1",
+  "policy_version": "mirror-v1",
+  "delta_suffix": "-fs",
+  "_comment": [
+    "Tripwires, not targets. A pin that trips one of these has observed a ports",
+    "commit that does not match what upstream actually published, or a ports",
+    "overlay change landed without a pin refresh. Either way a human should look",
+    "before the build spends hours acting on it.",
+    "Measured at ports commit 5052095e: amd64 delta 92, mirror 516, churn 3;",
+    "arm64 delta 95, mirror 458, churn 32. arm64 lags upstream further, which is",
+    "structural and why each architecture observes its own ports commit."
+  ],
+  "ceilings": {
+    "amd64": {"max_delta": 150, "min_mirror": 400, "max_churn": 60},
+    "arm64": {"max_delta": 150, "min_mirror": 350, "max_churn": 80}
+  }
+}

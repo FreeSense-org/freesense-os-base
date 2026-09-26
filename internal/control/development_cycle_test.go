@@ -67,6 +67,47 @@ func TestDevelopmentCycleSupersedeAllowsNewGeneration(t *testing.T) {
 	}
 }
 
+func TestDevelopmentCycleSupersedeAllowsSameGenerationReplan(t *testing.T) {
+	// state reserve-generation is keyed by pair fingerprint. A control-plane
+	// fix that does not move that fingerprint reserves the same generation
+	// again, so an abandoned cycle must be replaceable at its own generation.
+	backend := newMemoryStore()
+	cycle := cycleFixture()
+	if _, _, err := CommitDevelopmentCycle(context.Background(), backend, cycle); err != nil {
+		t.Fatal(err)
+	}
+	cycle.Superseded = true
+	if _, updated, err := CommitDevelopmentCycle(context.Background(), backend, cycle); err != nil || !updated {
+		t.Fatalf("supersede: %v %v", updated, err)
+	}
+	replan := cycleFixture()
+	replan.Sources["freesense"] = strings.Repeat("c", 40)
+	var nextPlan map[string]any
+	_ = json.Unmarshal(replan.Plan, &nextPlan)
+	nextPlan["resolved_inputs"] = replan.Sources
+	replan.Plan, _ = json.Marshal(nextPlan)
+	if replan.Generation != cycle.Generation {
+		t.Fatalf("fixture must replan at the reserved generation")
+	}
+	if _, updated, err := CommitDevelopmentCycle(context.Background(), backend, replan); err != nil || !updated {
+		t.Fatalf("replan at the reserved generation: %v %v", updated, err)
+	}
+	stored, err := backend.Get(context.Background(), DevelopmentCycleKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var written DevelopmentCycle
+	if err := json.Unmarshal(stored.Data, &written); err != nil {
+		t.Fatal(err)
+	}
+	if written.Superseded {
+		t.Fatal("the replanned cycle must not inherit supersession")
+	}
+	if !mapsEqual(written.Sources, replan.Sources) {
+		t.Fatal("the replanned cycle kept the abandoned sources")
+	}
+}
+
 func TestDevelopmentCycleRejectsSameGenerationInputRewrite(t *testing.T) {
 	backend := newMemoryStore()
 	cycle := cycleFixture()

@@ -477,6 +477,11 @@
         "sha256": "2d6a1cda86ae6093e73ccb4a42672c9b7adbe5c59074e86badc266a79c20e543",
         "size": 174859460
       },
+      "mirror": {
+        "fingerprint": "667633eecf199f592f9364d1d900913f6abcb32eda5e516c64bcce89e405e80e",
+        "object": "inputs/sha256/e97857b9d78f278831de5661a05ed7676e20e9ebd2feb872d19e2c596e6c0515",
+        "ports_commit": "3bbd676e12f5e919cc28b5e2530e18417d2b8b15"
+      },
       "package_catalog": {
         "created": false,
         "key": "inputs/sha256/bf7f3c9ee19301e8ba80079c0fa367541c2ae3b5c08853fe56bd2a3fa9671226",
@@ -871,6 +876,11 @@
         "schema_version": "freesense.blob/v1",
         "sha256": "170d55c7ed8b41aab11810d71e9930e6b554fd215ef807dc2308e9ecb0c33765",
         "size": 162890116
+      },
+      "mirror": {
+        "fingerprint": "e685b6ce8c2b32888439bb3fc7e8edb9cf44c6a397aec3c5c5c983f657f1b927",
+        "object": "inputs/sha256/18996a5bc9efb3138fc0b02a0b60d009a3b46cb4b3caaa23797a1fdfaa9c393a",
+        "ports_commit": "74810fb184c1f78ee15da7628d2a2d88ed61caed"
       },
       "package_catalog": {
         "created": true,

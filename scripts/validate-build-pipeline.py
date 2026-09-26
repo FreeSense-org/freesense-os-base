@@ -25,9 +25,9 @@ def require(condition: bool, message: str) -> None:
 expected_workflows = {
     "development-multiarch.yml", "development-multiarch-publish.yml", "component-farm.yml",
     "qualified-repository-document.yml", "publish-qualified-development.yml",
-    "github-hosted-experiment.yml",
-    "github-hosted-system.yml",
-    "arm64-experimental.yml", "broker.yml", "ci.yml", "packages.yml", "pin.yml", "pin-target.yml", "release.yml",
+    "broker.yml", "ci.yml", "mirror.yml", "observe.yml",
+    "packages.yml", "pin.yml",
+    "pin-target.yml", "release.yml",
     "retention.yml", "runner-build.yml", "stable.yml", "system.yml",
 }
 workflow_paths = sorted(WORKFLOWS.glob("*.yml"))
@@ -45,7 +45,8 @@ for workflow in workflow_paths:
                 f"{workflow.name} bypasses the supported build-runner entry points")
 
 reusable = read(".github/workflows/runner-build.yml")
-system_workflow = read(".github/workflows/system.yml")
+farm_workflow = read(".github/workflows/component-farm.yml")
+multiarch_workflow = read(".github/workflows/development-multiarch.yml")
 system_stage = read("scripts/runner/stages/system.sh")
 common = read("scripts/runner/worker-common.sh")
 pin_workflow = read(".github/workflows/pin.yml")
@@ -59,40 +60,44 @@ for value in ("build_host", "ubuntu-24.04", "Prepare disposable GitHub build hos
               "if: inputs.build_host != 'dedicated'", "BUILD_VCPUS", "BUILD_MEMORY_MIB",
               "freesense-hosted-", "freesense-kvm-host"):
     require(value in reusable, f"reusable runner routing is missing {value!r}")
-for name in ("system.yml", "packages.yml", "release.yml", "stable.yml"):
+for name in ("component-farm.yml", "release.yml", "stable.yml"):
     require("uses: ./.github/workflows/runner-build.yml" in read(f".github/workflows/{name}"),
             f"{name} bypasses the reusable KVM executor")
-for name in ("system.yml", "packages.yml", "release.yml"):
+for name in ("component-farm.yml", "release.yml"):
     require("build_host:" in read(f".github/workflows/{name}"),
             f"Development workflow {name} does not select a build host")
 require("build_host:" not in read(".github/workflows/stable.yml"),
         "Stable must retain the reusable runner's dedicated-host default")
-require("schedule:" in read(".github/workflows/system.yml"),
-        "the daily System check is not scheduled")
-for value in ('max-parallel: 20',
-              '{"part": "core", "shard": "0", "count": "19"}',
-              "for index in range(18)", "system_part: bootstrap",
-              "needs: [plan, build_bootstrap]", "system_part: dependent",
-              'system_shard_index: "18"',
-              "needs: [plan, build_parts, build_bootstrap, build_dependent]",
-              "system_part: finalize", 'system_shard_count: "19"',
-              "needs.build_finalize.result == 'success'"):
-    require(value in system_workflow,
-            f"AMD64 System farm orchestration is missing {value!r}")
+require("schedule:" in multiarch_workflow,
+        "the daily multiarch cycle is not scheduled")
+# The System and Optional workflows are farm components now. A standalone
+# planner would reserve a generation outside the frozen pair, so neither may
+# regain a trigger of its own.
+for name in ("system.yml", "packages.yml"):
+    component = read(f".github/workflows/{name}")
+    require("uses: ./.github/workflows/component-farm.yml" in component,
+            f"{name} does not build through the multiarch component farm")
+    for trigger in ("schedule:", "workflow_dispatch:", "workflow_run:"):
+        require(trigger not in component,
+                f"{name} retains a standalone {trigger} entry point")
+for value in ("max-parallel: ${{ fromJSON(inputs.plan).build_host == 'dedicated' && 1 || 9 }}", "farm_layout: delta-v1",
+              "shard_policy_version: dependency-cost-v2",
+              "system_shard_count: '8'", "system_part: finalize",
+              "needs: [prepare, parts]", "publish_enabled: ${{ 'false' }}"):
+    require(value in farm_workflow,
+            f"multiarch component farm orchestration is missing {value!r}")
 for value in ("freesense-hosted-{0}-{1}-{2}-{3}-{4}",
               "Reuse completed System farm checkpoint",
               "Render credential-free System farm worker",
               "FREESENSE_REPO_SIGNING_KEY: ''",
-              "inputs.system_part == 'bootstrap' && '20700'"):
+              "inputs.system_part == 'core'"):
     require(value in reusable,
             f"reusable System farm isolation is missing {value!r}")
 for value in ('fetch_system_checkpoint core core',
-              'fetch_system_checkpoint bootstrap bootstrap',
               'while [ "${shard}" -lt "${SYSTEM_SHARD_COUNT}" ]',
               'seed_poudriere_repository "${shard_seed}"',
-              'seed_poudriere_repository "/root/system-bootstrap-checkpoint/${PACKAGE_ARCH}"',
-              "lang/rust", "net/cloud-init", "sysutils/FreeSense-cloud-init",
-              'general_shard_count=$((SYSTEM_SHARD_COUNT - 1))',
+              "net/cloud-init", "sysutils/%%PRODUCT_NAME%%-cloud-init",
+              'partition_roots.py', '--batches-output /tmp/system-shard-batches.json',
               'prepare_system_ports full', "phase system-closure-check",
               '>>"${meta_dependencies}" || {',
               "dependencies contain unresolved variables"):
@@ -101,25 +106,19 @@ for value in ('fetch_system_checkpoint core core',
 require(common.index('upload_immutable "${package}"') <
         common.index('upload_immutable "${checkpoint_marker}"'),
         "System checkpoint marker is not published after its package payload")
-arm64_workflow = read(".github/workflows/arm64-experimental.yml")
 for value in ("uses: ./.github/workflows/system.yml",
               "uses: ./.github/workflows/packages.yml",
               "uses: ./.github/workflows/release.yml",
               "target: arm64", "channel: devel", "operation: bundle"):
-    require(value in arm64_workflow,
-            f"one-click ARM64 experimental release is missing {value!r}")
-packages_workflow = read(".github/workflows/packages.yml")
-require("workflow_run:" in packages_workflow and "workflows: [System]" in packages_workflow,
-        "optional packages are not chained to System")
-require("schedule:" not in packages_workflow,
-        "optional packages retain a racing fixed schedule")
-require("--built-against-system" in packages_workflow,
-        "optional package publication omits its immutable build System")
-require('cron: "0 6 * * *"' in read(".github/workflows/system.yml"),
-        "the daily System check is not fixed at 06:00 UTC")
+    require(value in multiarch_workflow,
+            f"the multiarch cycle is missing {value!r}")
+require('.inputs.built_against_system = $system' in common,
+        "the Optional packages artifact does not record its immutable build System")
+require("cron: '0 6 * * *'" in multiarch_workflow,
+        "the daily multiarch cycle is not fixed at 06:00 UTC")
 retention_workflow = read(".github/workflows/retention.yml")
 for value in ('cron: "30 4 * * *"', "scripts/r2_retention.py",
-              "--keep-devel 4", "--orphan-grace-hours 168",
+              "--keep-devel 4", "--keep-mirrors 2", "--orphan-grace-hours 168",
               "--completed-grace-hours 0", "--keep-smoke 1",
               "--role retention-build-reader",
               "--role retention-download-reader",
@@ -270,8 +269,11 @@ require("pkg add -f" not in installer,
         "worker-tool installation bypasses package ABI checks")
 
 stage_dir = ROOT / "scripts" / "runner" / "stages"
-require({path.stem for path in stage_dir.glob("*.sh")} == {"system", "packages", "iso", "cloud", "appliance"},
-        "stage surface differs from system/packages/iso/cloud/appliance")
+# "mirror" publishes a frozen subset of FreeBSD's signed catalogue under the
+# FreeSense key. It builds nothing, so it is the one stage that neither creates
+# a jail nor runs Poudriere.
+require({path.stem for path in stage_dir.glob("*.sh")} == {"system", "packages", "iso", "cloud", "appliance", "mirror"},
+        "stage surface differs from system/packages/iso/cloud/appliance/mirror")
 system_stage = read("scripts/runner/stages/system.sh")
 packages_stage = read("scripts/runner/stages/packages.sh")
 iso_stage = read("scripts/runner/stages/iso.sh")

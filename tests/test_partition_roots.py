@@ -37,6 +37,42 @@ class PartitionRootsTests(unittest.TestCase):
             with self.subTest(roots=roots), self.assertRaises(ValueError):
                 partition_roots.partition(roots, heavy, count)
 
+    def test_an_unmeasured_root_weighs_what_batches_charges_it(self):
+        """A measured root must not reserve a shard while the rest heap up.
+
+        partition() used to weigh an unmeasured root 1 and a measured one its
+        seconds, so the two scales could not be compared. Once real costs were
+        recorded, each measured root landed on an empty shard and all 80-odd
+        unmeasured roots piled onto whichever shard still had the lowest load,
+        which is the imbalance the measurement was added to remove.
+        """
+        measured = {"net/heavy": 10800, "net/mid": 4650}
+        roots = list(measured) + [f"zzz/p{i:02d}" for i in range(24)]
+        shards = partition_roots.partition(roots, [], 8, costs=measured, default_cost=1800)
+        self.assertEqual(sorted(sum(shards, [])), sorted(roots))
+        sizes = sorted(len(shard) for shard in shards)
+        self.assertGreaterEqual(sizes[0], 1, "a shard was left empty while others took the remainder")
+        self.assertLessEqual(sizes[-1] - sizes[0], 4, f"unmeasured roots were not spread: {sizes}")
+        # The heaviest shard may not exceed the heaviest single root by more
+        # than one extra root: a 10800-second root is atomic, but nothing else
+        # may accumulate behind it.
+        loads = [sum(measured.get(root, 1800) for root in shard) for shard in shards]
+        self.assertLessEqual(max(loads), max(measured.values()) + 1800,
+                             f"shard load is lopsided: {loads}")
+
+    def test_load_passes_the_configured_default_cost_through(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory, "policy.json")
+            path.write_text(json.dumps({
+                "schema_version": "freesense.multiarch-shards/v1", "count": 4,
+                "default_cost_seconds": 1800,
+                "measured_cost_seconds": {"system": {"net/heavy": 10800}, "packages": {}},
+                "measured_heavy_roots": {"system": [], "packages": []}}))
+            roots = ["net/heavy"] + [f"zzz/p{i}" for i in range(6)]
+            shards = partition_roots.load(path, "system", roots)
+            self.assertEqual(sorted(sum(shards, [])), sorted(roots))
+            self.assertTrue(all(shards), f"a shard was starved: {shards}")
+
     def test_dependency_closures_stay_together_and_batches_are_cumulative(self):
         roots = ["devel/a", "devel/b", "devel/c"]
         shards = partition_roots.partition(roots, [], 8,
@@ -46,3 +82,50 @@ class PartitionRootsTests(unittest.TestCase):
         self.assertEqual(partition_roots.batches(roots, {root: 5000 for root in roots}),
                          [["devel/a", "devel/b"], roots])
         self.assertEqual(partition_roots.batches(["devel/a"], {"devel/a": 10801}), [["devel/a"]])
+
+
+class ProductNameSubstitutionTests(unittest.TestCase):
+    """The Optional root list is a template; partitioning it raw never worked."""
+
+    def test_a_templated_origin_is_not_a_partitionable_root(self):
+        # poudriere_packages spells 34 of its origins %%PRODUCT_NAME%%-pkg-*.
+        # ORIGIN does not admit '%', so the whole plan is rejected -- not the
+        # one bad entry -- before any package is built.
+        with self.assertRaisesRegex(ValueError, "invalid shard root plan"):
+            partition_roots.partition(
+                ["dns/%%PRODUCT_NAME%%-pkg-bind", "dns/dnsmasq"], [], 8)
+        self.assertEqual(
+            [["dns/FreeSense-pkg-bind", "dns/dnsmasq"]][0],
+            sorted(sum(partition_roots.partition(
+                ["dns/FreeSense-pkg-bind", "dns/dnsmasq"], [], 8), [])))
+
+    def test_no_farm_stage_turns_the_template_into_roots_unsubstituted(self):
+        """The root list a stage partitions must never hold %%PRODUCT_NAME%%.
+
+        Asserted against the pipelines themselves rather than their position in
+        the file: the partition call is shared between the plan path and the
+        legacy path, so it does not sit after the substitution in source order
+        and an ordering test would only measure where the function happens to
+        be defined.
+        """
+        root = Path(__file__).resolve().parents[1] / "scripts/runner/stages"
+        template = "tools/conf/pfPorts/poudriere_bulk"
+        substitution = "s/%%PRODUCT_NAME%%/FreeSense/g"
+        checked = 0
+        for stage in ("system.sh", "packages.sh"):
+            text = (root / stage).read_text(encoding="utf-8")
+            self.assertIn("scripts/partition_roots.py", text)
+            # Join backslash continuations so a pipeline is one logical line.
+            logical = text.replace(chr(92) + chr(10), " ").splitlines()
+            for line in logical:
+                # A pipeline that reads the template and writes a roots file.
+                if template not in line:
+                    continue
+                if not any(sink in line for sink in
+                           ('>"${all_roots}"', ">/tmp/optional-all-roots")):
+                    continue
+                checked += 1
+                with self.subTest(stage=stage, line=line.strip()[:70]):
+                    self.assertIn(substitution, line,
+                                  f"{stage} builds roots from the template without substituting")
+        self.assertEqual(checked, 2, "expected one roots pipeline per farm stage")

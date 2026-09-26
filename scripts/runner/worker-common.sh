@@ -22,7 +22,7 @@ for name in AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN R2_ENDPOIN
   CHANNEL_PAYLOAD_B64 CHANNEL_SIGNATURE_B64 BUNDLE_ID CLOUD_FILESYSTEM CLOUD_VIRTUAL_SIZE_GIB \
   TARGET ARCHITECTURE PACKAGE_ARCH ABI OSVERSION ALTABI FREEBSD_TARGET FREEBSD_TARGET_ARCH POUDRIERE_ARCH KERNEL \
   EXECUTOR IMAGE_PROFILE FIRMWARE IMAGE_CAPABILITIES INSTALLER_FORMAT PUBLISH_ENABLED \
-  SYSTEM_PART SYSTEM_SHARD_INDEX SYSTEM_SHARD_COUNT BINARY_SEED_OBJECT BINARY_SEED_PROVENANCE_SHA256 PREVIOUS_FREESENSE_REPOSITORY FARM_LAYOUT SHARD_POLICY_VERSION \
+  SYSTEM_PART SYSTEM_SHARD_INDEX SYSTEM_SHARD_COUNT BINARY_SEED_OBJECT BINARY_SEED_PROVENANCE_SHA256 PREVIOUS_FREESENSE_REPOSITORY FARM_LAYOUT SHARD_POLICY_VERSION MIRROR_PLAN_OBJECT \
   BOOT_INPUTS TARGET_MODELS PARTITION_SCHEME APPLIANCE_FILESYSTEM APPLIANCE_FORMAT APPLIANCE_COMPRESSION; do
   eval "$name=\$(decode \"\${${name}_B64}\")"
 done
@@ -31,16 +31,21 @@ unset FREESENSE_REPO_SIGNING_KEY_B64
 export HOME=/root PATH="/usr/local/sbin:/usr/local/bin:${PATH}"
 export ASSUME_ALWAYS_YES=yes LC_ALL=C LANG=C TZ=UTC
 umask 022
-case "${STAGE}" in system|packages|iso|cloud|appliance) : ;; *) echo "invalid build stage" >&2; exit 1 ;; esac
+case "${STAGE}" in system|packages|iso|cloud|appliance|mirror) : ;; *) echo "invalid build stage" >&2; exit 1 ;; esac
 case "${SYSTEM_SHARD_INDEX}:${SYSTEM_SHARD_COUNT}" in
   *[!0-9:]*|:*|*:) echo "invalid System shard coordinates" >&2; exit 1 ;;
 esac
-[ "${SYSTEM_SHARD_COUNT}" -ge 1 ] && [ "${SYSTEM_SHARD_COUNT}" -le 19 ] && \
+[ "${SYSTEM_SHARD_COUNT}" -ge 1 ] && [ "${SYSTEM_SHARD_COUNT}" -le 8 ] && \
   [ "${SYSTEM_SHARD_INDEX}" -lt "${SYSTEM_SHARD_COUNT}" ] || {
   echo "invalid System shard coordinates" >&2
   exit 1
 }
 case "${FARM_LAYOUT}" in legacy|delta-v1) : ;; *) echo "invalid farm layout" >&2; exit 1 ;; esac
+# The legacy nineteen-shard farm is retired: only the farmless stages may
+# declare it, and System and Optional are built exclusively by the delta farm.
+if [ "${STAGE}" = system ] || [ "${STAGE}" = packages ]; then
+  [ "${FARM_LAYOUT}" = delta-v1 ] || { echo "System and Optional require the delta farm" >&2; exit 1; }
+fi
 if [ "${FARM_LAYOUT}" = delta-v1 ]; then
   [ "${SYSTEM_SHARD_COUNT}" -eq 8 ] || { echo "delta farm requires eight shards" >&2; exit 1; }
   [ "${SHARD_POLICY_VERSION}" = dependency-cost-v2 ] || { echo "invalid shard policy version" >&2; exit 1; }
@@ -63,7 +68,7 @@ if [ "${FARM_LAYOUT}" = delta-v1 ]; then
     echo "core/finalizer requires shard index zero" >&2; exit 1
   fi
 elif [ "${STAGE}" = system ]; then
-  case "${SYSTEM_PART}" in full|core|bootstrap|shard|dependent|finalize) : ;; *)
+  case "${SYSTEM_PART}" in full|core|shard|finalize) : ;; *)
     echo "invalid System farm part" >&2; exit 1 ;;
   esac
   case "${SYSTEM_PART}" in
@@ -72,21 +77,14 @@ elif [ "${STAGE}" = system ]; then
         echo "a full System build requires default shard coordinates" >&2; exit 1;
       }
       ;;
-    core|bootstrap|finalize)
+    core|finalize)
       [ "${SYSTEM_SHARD_INDEX}" -eq 0 ] || {
         echo "System ${SYSTEM_PART} requires shard index zero" >&2; exit 1;
       }
       ;;
     shard)
-      [ "${SYSTEM_SHARD_COUNT}" -gt 1 ] && \
-        [ "${SYSTEM_SHARD_INDEX}" -lt "$((SYSTEM_SHARD_COUNT - 1))" ] || {
+      [ "${SYSTEM_SHARD_INDEX}" -lt "${SYSTEM_SHARD_COUNT}" ] || {
         echo "invalid general System package shard" >&2; exit 1;
-      }
-      ;;
-    dependent)
-      [ "${SYSTEM_SHARD_COUNT}" -gt 1 ] && \
-        [ "${SYSTEM_SHARD_INDEX}" -eq "$((SYSTEM_SHARD_COUNT - 1))" ] || {
-        echo "invalid dependent System package shard" >&2; exit 1;
       }
       ;;
   esac
@@ -113,11 +111,18 @@ fi
   echo "invalid build generation" >&2
   exit 1
 }
-for value in "${FINGERPRINT}" "${PLATFORM_ID}" "${SYSTEM_ID}" "${IMAGE_SHA256}" \
-  "${WORKER_TOOLS_SHA256}"; do
+for value in "${FINGERPRINT}" "${IMAGE_SHA256}" "${WORKER_TOOLS_SHA256}"; do
   case "${value}" in ''|*[!0-9a-f]*) echo "invalid SHA-256 build input" >&2; exit 1 ;; esac
   [ "${#value}" -eq 64 ] || { echo "invalid SHA-256 build input" >&2; exit 1; }
 done
+# The mirror republishes packages FreeBSD built. It has no platform image and is
+# not bound to a System repository, so it carries neither identity.
+if [ "${STAGE}" != mirror ]; then
+  for value in "${PLATFORM_ID}" "${SYSTEM_ID}"; do
+    case "${value}" in ''|*[!0-9a-f]*) echo "invalid SHA-256 build input" >&2; exit 1 ;; esac
+    [ "${#value}" -eq 64 ] || { echo "invalid SHA-256 build input" >&2; exit 1; }
+  done
+fi
 if [ "${STAGE}" = iso ] || [ "${STAGE}" = cloud ] || [ "${STAGE}" = appliance ]; then
   case "${PACKAGES_ID}" in ''|*[!0-9a-f]*) echo "invalid release Packages identity" >&2; exit 1 ;; esac
   [ "${#PACKAGES_ID}" -eq 64 ] || { echo "invalid release Packages identity" >&2; exit 1; }
@@ -251,30 +256,7 @@ configure_source() {
   export FREESENSE_SOURCE_COMMIT_TIME SOURCE_DATE_EPOCH DATESTRING BUILTDATESTRING
   export FREESENSE_REQUIRE_SOURCE_DATE_EPOCH
 
-  if [ -n "${FREESENSE_REPO_SIGNING_KEY}" ]; then
-    printf '%s' "${FREESENSE_REPO_SIGNING_KEY}" >/root/sign/repo.key
-    chmod 400 /root/sign/repo.key
-    openssl pkey -in /root/sign/repo.key -pubout -out /root/sign/repo.pub >/dev/null 2>&1
-  elif { [ "${STAGE}" = system ] || [ "${STAGE}:${FARM_LAYOUT}" = packages:delta-v1 ]; } && { [ "${SYSTEM_PART}" = core ] || \
-      [ "${SYSTEM_PART}" = bootstrap ] || [ "${SYSTEM_PART}" = shard ] || \
-      [ "${SYSTEM_PART}" = dependent ]; }; then
-    cp /root/os-definition/config/channel-signing-public.pem /root/sign/repo.pub
-  else
-    echo "repository signing key is missing" >&2
-    return 1
-  fi
-  chmod 444 /root/sign/repo.pub
-  cp /root/sign/repo.pub /root/sign/channel-public.pem
-  chmod 444 /root/sign/channel-public.pem
-  trusted_fingerprint=$(sed -n \
-    's/^[[:space:]]*fingerprint:[[:space:]]*"\([0-9a-fA-F]\{64\}\)"[[:space:]]*$/\1/p' \
-    /root/freesense-src/src/usr/local/share/FreeSense/keys/pkg/trusted/freesense | \
-    tr '[:upper:]' '[:lower:]')
-  derived_fingerprint=$(sha256 -q /root/sign/repo.pub)
-  if [ "${trusted_fingerprint}" != "${derived_fingerprint}" ]; then
-    echo "trusted package fingerprint does not match the repository signing key" >&2
-    return 1
-  fi
+  configure_signing || return 1
   cat >>build.conf <<EOF
 export PRODUCT_NAME_SUFFIX=""
 export PRODUCT_VERSION="${PRODUCT_VERSION}"
@@ -475,11 +457,9 @@ merge_package() {
 publish_system_checkpoint() {
   checkpoint_kind=$1 checkpoint_id=$2 checkpoint_directory=$3
   checkpoint_batch=${CHECKPOINT_BATCH:-0}
-  checkpoint_farm="${RESULT}/checkpoints/farm-${SYSTEM_SHARD_COUNT}"
-  if [ "${FARM_LAYOUT}" = delta-v1 ]; then checkpoint_farm="${RESULT}/checkpoints/${ARCHITECTURE}/${FREEBSD_PIN_ID}/${PREVIOUS_FREESENSE_REPOSITORY:-none}/${SHARD_POLICY_VERSION}/farm-${SYSTEM_SHARD_COUNT}"; fi
+  checkpoint_farm="${RESULT}/checkpoints/${ARCHITECTURE}/${FREEBSD_PIN_ID}/${PREVIOUS_FREESENSE_REPOSITORY:-none}/${SHARD_POLICY_VERSION}/farm-${SYSTEM_SHARD_COUNT}"
   case "${checkpoint_kind}" in
     core) checkpoint_result="${checkpoint_farm}/core/batch-${checkpoint_batch}" ;;
-    bootstrap) checkpoint_result="${checkpoint_farm}/bootstrap/batch-${checkpoint_batch}" ;;
     shard) checkpoint_result="${checkpoint_farm}/shards/${checkpoint_id}/batch-${checkpoint_batch}" ;;
     *) echo "invalid System checkpoint kind" >&2; return 1 ;;
   esac
@@ -489,7 +469,7 @@ publish_system_checkpoint() {
   checkpoint_count=0
 
   case "${checkpoint_kind}:${checkpoint_id}" in
-    core:core|bootstrap:bootstrap|shard:[0-9]|shard:1[0-8]) : ;;
+    core:core|shard:[0-7]) : ;;
     *) echo "invalid System checkpoint identity" >&2; return 1 ;;
   esac
   [ -d "${checkpoint_directory}/All" ] || {
@@ -560,7 +540,6 @@ publish_system_checkpoint() {
       previous_batch=$((checkpoint_batch - 1))
       case "${checkpoint_kind}" in
         core) previous_result="${checkpoint_farm}/core/batch-${previous_batch}" ;;
-        bootstrap) previous_result="${checkpoint_farm}/bootstrap/batch-${previous_batch}" ;;
         shard) previous_result="${checkpoint_farm}/shards/${checkpoint_id}/batch-${previous_batch}" ;;
       esac
       rclone cat "${previous_result}/complete.json" >"${checkpoint_marker}.previous" || {
@@ -590,20 +569,17 @@ publish_system_checkpoint() {
 
 latest_checkpoint_batch() {
   latest_kind=$1 latest_id=$2
-  latest_farm="${RESULT}/checkpoints/farm-${SYSTEM_SHARD_COUNT}"
-  if [ "${FARM_LAYOUT}" = delta-v1 ]; then latest_farm="${RESULT}/checkpoints/${ARCHITECTURE}/${FREEBSD_PIN_ID}/${PREVIOUS_FREESENSE_REPOSITORY:-none}/${SHARD_POLICY_VERSION}/farm-${SYSTEM_SHARD_COUNT}"; fi
-  case "${latest_kind}" in core) latest_source="${latest_farm}/core" ;; bootstrap) latest_source="${latest_farm}/bootstrap" ;; shard) latest_source="${latest_farm}/shards/${latest_id}" ;; *) return 1 ;; esac
+  latest_farm="${RESULT}/checkpoints/${ARCHITECTURE}/${FREEBSD_PIN_ID}/${PREVIOUS_FREESENSE_REPOSITORY:-none}/${SHARD_POLICY_VERSION}/farm-${SYSTEM_SHARD_COUNT}"
+  case "${latest_kind}" in core) latest_source="${latest_farm}/core" ;; shard) latest_source="${latest_farm}/shards/${latest_id}" ;; *) return 1 ;; esac
   rclone lsf --dirs-only "${latest_source}" 2>/dev/null | sed -nE 's#^batch-([0-9]+)/$#\1#p' | sort -n | tail -1
 }
 
 fetch_system_checkpoint() {
   checkpoint_kind=$1 checkpoint_id=$2 checkpoint_destination=$3
   checkpoint_batch=${CHECKPOINT_BATCH:-0}
-  checkpoint_farm="${RESULT}/checkpoints/farm-${SYSTEM_SHARD_COUNT}"
-  if [ "${FARM_LAYOUT}" = delta-v1 ]; then checkpoint_farm="${RESULT}/checkpoints/${ARCHITECTURE}/${FREEBSD_PIN_ID}/${PREVIOUS_FREESENSE_REPOSITORY:-none}/${SHARD_POLICY_VERSION}/farm-${SYSTEM_SHARD_COUNT}"; fi
+  checkpoint_farm="${RESULT}/checkpoints/${ARCHITECTURE}/${FREEBSD_PIN_ID}/${PREVIOUS_FREESENSE_REPOSITORY:-none}/${SHARD_POLICY_VERSION}/farm-${SYSTEM_SHARD_COUNT}"
   case "${checkpoint_kind}" in
     core) checkpoint_source="${checkpoint_farm}/core/batch-${checkpoint_batch}" ;;
-    bootstrap) checkpoint_source="${checkpoint_farm}/bootstrap/batch-${checkpoint_batch}" ;;
     shard) checkpoint_source="${checkpoint_farm}/shards/${checkpoint_id}/batch-${checkpoint_batch}" ;;
     *) echo "invalid System checkpoint kind" >&2; return 1 ;;
   esac
@@ -756,6 +732,23 @@ seed_poudriere_repository() {
   mv "${staging}" "${repository}"
   [ -f "${repository}/Latest/pkg.pkg" ] || return 1
   rm -f "${seed_inventory}"
+
+  # A mirror is deliberately larger than the bulk list: it supplies the whole
+  # lower layer, and the roots we build reach only part of it. pkgclean would
+  # delete the rest and the next batch would rebuild it from source --
+  # succeeding, slowly, without a word -- so that seed opts out.
+  #
+  # The pin-time binary seed is the opposite case and must NOT opt out. It is
+  # accepted only where it lies inside the bulk list's closure, and pkgclean is
+  # what prunes the Poudriere repository back to that closure before
+  # compose_system_repository merges it into the signed artifact. Skip it there
+  # and the seed's whole contents -- including the upstream closure of the
+  # Optional roots, which share one seed bundle -- get published inside the
+  # System repository.
+  if [ -n "${MIRROR_PLAN_OBJECT}" ]; then
+    FREESENSE_KEEP_SEEDED_PACKAGES=1
+    export FREESENSE_KEEP_SEEDED_PACKAGES
+  fi
 }
 
 poudriere_latest_repository() {
@@ -973,6 +966,117 @@ create_source_archive() {
   phase source-archive-ready
 }
 
+# The layered repository's core invariant, made mechanical.
+#
+# FreeSense publishes only the sealed delta, and every name in it is distinct
+# from the mirror's. If a package escapes the delta -- because Poudriere decided
+# a seeded mirror package was stale and rebuilt it, or because a ports overlay
+# change landed without a pin refresh -- it would ship unsuffixed and pkg would
+# be free to substitute it for the upstream build, or the other way round. That
+# failure is silent at install time, so it has to be loud here.
+#
+# All three arguments are newline-separated package-name lists; the caller
+# produces them with pkg query, which keeps this function's logic testable.
+# Install the repository signing key and bind it to the product's trust anchor.
+#
+# Split out of configure_source so a stage that signs a repository without
+# building one -- the frozen upstream mirror -- gets the same three-way check:
+# the key the runner verified against config/channel-signing-public.pem, the
+# public half derived here, and the fingerprint compiled into the product's
+# trusted keys directory must all agree.
+configure_signing() {
+  phase repository-signing-key
+  if [ -n "${FREESENSE_REPO_SIGNING_KEY}" ]; then
+    printf '%s' "${FREESENSE_REPO_SIGNING_KEY}" >/root/sign/repo.key
+    chmod 400 /root/sign/repo.key
+    openssl pkey -in /root/sign/repo.key -pubout -out /root/sign/repo.pub >/dev/null 2>&1
+  elif { [ "${STAGE}" = system ] || [ "${STAGE}" = packages ]; } && \
+      { [ "${SYSTEM_PART}" = core ] || [ "${SYSTEM_PART}" = shard ]; }; then
+    cp /root/os-definition/config/channel-signing-public.pem /root/sign/repo.pub
+  else
+    echo "repository signing key is missing" >&2
+    return 1
+  fi
+  chmod 444 /root/sign/repo.pub
+  cp /root/sign/repo.pub /root/sign/channel-public.pem
+  chmod 444 /root/sign/channel-public.pem
+  trusted_fingerprint=$(sed -n \
+    's/^[[:space:]]*fingerprint:[[:space:]]*"\([0-9a-fA-F]\{64\}\)"[[:space:]]*$/\1/p' \
+    /root/freesense-src/src/usr/local/share/FreeSense/keys/pkg/trusted/freesense | \
+    tr '[:upper:]' '[:lower:]')
+  derived_fingerprint=$(sha256 -q /root/sign/repo.pub)
+  if [ "${trusted_fingerprint}" != "${derived_fingerprint}" ]; then
+    echo "trusted package fingerprint does not match the repository signing key" >&2
+    return 1
+  fi
+  phase repository-signing-key-ready
+}
+
+# Publish the frozen upstream mirror.
+#
+# Deliberately not publish_repository: that records package provenance by
+# re-deriving port directory hashes from the overlays, which says nothing about
+# a package FreeBSD built. The mirror's provenance is its chain back to the
+# signed catalogue instead, and complete.json records that rather than a build.
+publish_mirror() {
+  directory=$1
+  phase mirror-publish
+  test -s "${directory}/mirror-provenance.json"
+  test -n "$(find "${directory}/All" -type f -name '*.pkg' -print -quit)"
+  find "${directory}" -type f ! -name complete.json | while IFS= read -r file; do
+    relative=${file#"${directory}/"}
+    upload_immutable "${file}" "${RESULT}/${PACKAGE_ARCH}/${relative}"
+  done
+  jq -n --arg stage "${STAGE}" --arg fingerprint "${FINGERPRINT}" \
+    --arg architecture "${ARCHITECTURE}" --arg package_arch "${PACKAGE_ARCH}" \
+    --arg abi "${ABI}" --arg freebsd_pin_id "${FREEBSD_PIN_ID}" \
+    --arg mirror_plan "${MIRROR_PLAN_OBJECT}" \
+    --arg mirror_provenance "$(sha256 -q "${directory}/mirror-provenance.json")" \
+    --arg catalog_sha256 "$(jq -er .catalog_sha256 "${directory}/mirror-provenance.json")" \
+    --arg ports_commit "$(jq -er .ports_commit "${directory}/mirror-provenance.json")" \
+    --arg os_definition "${OS_BASE_SHA}" --arg worker_image "${IMAGE_SHA256}" \
+    --arg worker_tools "${WORKER_TOOLS_SHA256}" \
+    --arg signing_public_key "${derived_fingerprint}" \
+    --argjson generation "${GENERATION}" \
+    '{schema_version:"freesense.artifact/v1",stage:$stage,fingerprint:$fingerprint,
+      generation:$generation,architecture:$architecture,package_arch:$package_arch,
+      inputs:{abi:$abi,freebsd_pin_id:$freebsd_pin_id,mirror_plan:$mirror_plan,
+              mirror_provenance_sha256:$mirror_provenance,catalog_sha256:$catalog_sha256,
+              ports_commit:$ports_commit,os_definition:$os_definition,
+              worker_image:$worker_image,worker_tools:$worker_tools,
+              signing_public_key:$signing_public_key}}' \
+    >"${directory}/complete.json"
+  upload_immutable "${directory}/complete.json" "${RESULT}/complete.json"
+  phase mirror-complete
+}
+
+verify_delta_layer() {
+  published=$1 sealed=$2 mirrored=$3
+  phase delta-layer-verify
+  work=$(mktemp -d) || return 1
+  for list in published sealed mirrored; do
+    eval "source_list=\${${list}}"
+    LC_ALL=C sort -u "${source_list}" >"${work}/${list}" || { rm -rf "${work}"; return 1; }
+  done
+  [ -s "${work}/published" ] || {
+    echo "FreeSense layer published no packages" >&2
+    rm -rf "${work}"
+    return 1
+  }
+  escaped=$(LC_ALL=C comm -23 "${work}/published" "${work}/sealed")
+  shadowed=$(LC_ALL=C comm -12 "${work}/published" "${work}/mirrored")
+  rm -rf "${work}"
+  [ -z "${escaped}" ] || {
+    echo "published packages are outside the sealed delta: $(echo ${escaped})" >&2
+    return 1
+  }
+  [ -z "${shadowed}" ] || {
+    echo "published packages shadow the mirror by name: $(echo ${shadowed})" >&2
+    return 1
+  }
+  phase delta-layer-verified
+}
+
 sign_repository() {
   directory=$1
   phase repository-sign
@@ -1055,6 +1159,12 @@ record_package_provenance() {
     provenance_policy=/root/freesense-packages/architecture-policy.json
     provenance_overlays="--overlay /root/freesense-packages --overlay /root/freesense-system-ports"
   fi
+  # The core packages are cut from the staged chroot and the built kernel by
+  # core_pkg_create, not from a port, so no ports tree or overlay holds their
+  # origin. Their provenance is the revisions they were cut from; binding those
+  # here keeps a dependent's effective digest moving when the kernel moves.
+  core_inputs_sha256=$(printf '%s\n' "${SOURCE_SHA}" "${FREEBSD_SHA}" "${SYSTEM_SHA}" \
+    "${OS_BASE_SHA}" "${KERNEL}" "${PACKAGE_ARCH}" | sha256 -q)
   python_bin=$(command -v python3 || command -v python3.11)
   # shellcheck disable=SC2086
   "${python_bin}" /root/os-definition/scripts/package_provenance.py \
@@ -1062,6 +1172,7 @@ record_package_provenance() {
     --ports /usr/local/poudriere/ports/FreeSense_main ${provenance_overlays} \
     --make-config /usr/local/etc/poudriere.d/FreeSense_main-make.conf \
     --architecture-policy "${provenance_policy}" --abi "${ABI}" --osversion "${OSVERSION}" \
+    --product FreeSense --core-inputs-sha256 "${core_inputs_sha256}" \
     --output "${provenance_repository}/package-provenance.json"
 }
 
@@ -1101,6 +1212,142 @@ PY
     done
     [ "${accepted_count}" -eq 1 ] || { echo "ambiguous previous package: ${accepted_name}" >&2; return 1; }
   done
+}
+
+# Fetch the frozen mirror this build layers on, bound to the plan it was cut
+# from.
+#
+# One input rather than two. The plan's fingerprint IS the mirror's artifact id,
+# and the mirror's own marker records the plan it was built from, so the two
+# identities check each other instead of being trusted separately. Given
+# MIRROR_ID and MIRROR_PLAN_OBJECT as independent inputs, a stale copy-paste
+# between two workflow blocks would seed one snapshot's bytes while building
+# another's root list -- and nothing would fail, because each artifact is
+# internally consistent. The result would be a signed repository built against
+# the wrong lower layer.
+#
+# The ports commit is checked too. Poudriere decides a seeded package is current
+# by comparing it against the ports tree; if the tree is not at the commit the
+# mirror was computed from, that comparison fails and Poudriere rebuilds from
+# source -- quietly turning a delta build back into a full one.
+#
+# delta_packages is required although nothing here reads it yet. It is the name
+# list the post-build escape check needs, and demanding it now means this path
+# cannot be switched on before that check can exist -- which is how
+# verify_delta_layer came to be written, tested and called from nowhere.
+fetch_delta_mirror() {
+  case "${MIRROR_PLAN_OBJECT}" in
+    inputs/sha256/*) : ;;
+    *) echo "a delta build requires a pinned mirror plan object" >&2; return 1 ;;
+  esac
+  phase delta-mirror-plan
+  fetch_input "${MIRROR_PLAN_OBJECT}" /root/mirror-plan.json
+  jq -e --arg abi "${ABI}" --arg architecture "${ARCHITECTURE}" --arg ports "${PORTS_SHA}" '
+    .schema_version == "freesense.mirror-plan/v1" and .abi == $abi and
+    .architecture == $architecture and
+    (.packages | type == "array" and length > 0) and
+    (.fingerprint | test("^[0-9a-f]{64}$")) and
+    (.component_roots | type) == "object" and
+    (.component_roots.system | type) == "array" and
+    (.component_roots.optional | type) == "array" and
+    (.delta_packages | type == "array" and length > 0) and
+    .ports_commit == $ports
+  ' /root/mirror-plan.json >/dev/null || {
+    echo "the mirror plan does not describe this target" >&2
+    echo "  plan ports commit: $(jq -r '.ports_commit // "?"' /root/mirror-plan.json)" >&2
+    echo "  this build's tree:  ${PORTS_SHA}" >&2
+    return 1
+  }
+  MIRROR_ID=$(jq -r .fingerprint /root/mirror-plan.json)
+  export MIRROR_ID
+  phase delta-mirror-fetch
+  fetch_repository mirror "${MIRROR_ID}" /root/mirror-repo
+  # fetch_repository proved the artifact is the one the plan names. Prove the
+  # converse: this mirror must have been built from this plan.
+  jq -e --arg object "${MIRROR_PLAN_OBJECT}" '.inputs.mirror_plan == $object' \
+    /root/mirror-repo/complete.json >/dev/null || {
+    echo "the fetched mirror was not built from this plan" >&2
+    return 1
+  }
+  phase delta-mirror-ready
+}
+
+# Everything a delta build produced must be something the plan meant us to
+# build, or something the mirror supplied. A third category means Poudriere
+# pulled a port into the queue that nothing sanctioned -- a stale seed, a
+# dependency that did not match, a root that resolved differently -- and built
+# it from source. That is how a delta build turns back into a full one, and it
+# does it without failing: the repository signs, verifies and publishes, only
+# slower and larger than it should be.
+#
+# The roots cannot bound this, because Poudriere resolves dependencies itself.
+# Only the delta's package names can.
+verify_delta_build() {
+  delta_repository=$1 delta_plan=$2
+  phase delta-build-verify
+  delta_work=$(mktemp -d) || return 1
+  # comm compares byte for byte, so a plan serialised with CRLF would put
+  # every name in a file of its own and make every package look escaped.
+  jq -r '.packages[].name' "${delta_plan}" | tr -d '\r' \
+    | LC_ALL=C sort -u >"${delta_work}/mirrored"
+  jq -r '.delta_packages[]' "${delta_plan}" | tr -d '\r' \
+    | LC_ALL=C sort -u >"${delta_work}/sealed"
+  LC_ALL=C sort -u "${delta_work}/mirrored" "${delta_work}/sealed" \
+    >"${delta_work}/allowed"
+  [ -s "${delta_work}/allowed" ] || {
+    echo "the sealed plan allows no packages at all" >&2
+    rm -rf "${delta_work}"
+    return 1
+  }
+  : >"${delta_work}/built"
+  for delta_package in "${delta_repository}"/All/*.pkg; do
+    [ -f "${delta_package}" ] || continue
+    delta_metadata=$(package_metadata "${delta_package}") || {
+      rm -rf "${delta_work}"
+      return 1
+    }
+    printf '%s\n' "${delta_metadata%%|*}" >>"${delta_work}/built"
+  done
+  LC_ALL=C sort -u -o "${delta_work}/built" "${delta_work}/built"
+  [ -s "${delta_work}/built" ] || {
+    echo "the delta build produced no packages" >&2
+    rm -rf "${delta_work}"
+    return 1
+  }
+  delta_escaped=$(LC_ALL=C comm -23 "${delta_work}/built" "${delta_work}/allowed")
+  rm -rf "${delta_work}"
+  [ -z "${delta_escaped}" ] || {
+    echo "the build produced packages the sealed plan does not sanction:" >&2
+    printf '  %s\n' ${delta_escaped} >&2
+    return 1
+  }
+  phase delta-build-verified
+}
+
+# The roots one stage must build, from the sealed plan. The other stage's roots
+# and the reverse-dependency cascade are deliberately absent: Poudriere resolves
+# a cascade port when a root reaches it, so listing it here would only make each
+# stage build the other stage's cascade.
+write_delta_bulk() {
+  delta_component=$1
+  case "${delta_component}" in
+    system|optional) : ;;
+    *) echo "unknown delta component: ${delta_component}" >&2; return 1 ;;
+  esac
+  jq -r --arg component "${delta_component}" '.component_roots[$component][]' \
+    /root/mirror-plan.json >/tmp/delta-roots
+  [ -s /tmp/delta-roots ] || {
+    echo "the sealed plan gives ${delta_component} no roots to build" >&2
+    return 1
+  }
+  grep -Eqv '^[A-Za-z0-9][A-Za-z0-9+_.@-]*/[A-Za-z0-9][A-Za-z0-9+_.@-]*$' /tmp/delta-roots && {
+    echo "the sealed plan contains an unusable port origin" >&2
+    return 1
+  }
+  cp /tmp/delta-roots tools/conf/pfPorts/poudriere_bulk
+  printf 'FreeSense %s delta roots (%s):\n' \
+    "${delta_component}" "$(awk 'END { print NR }' /tmp/delta-roots)"
+  cat /tmp/delta-roots
 }
 
 prepare_merged_binary_seed() {
@@ -1159,6 +1406,30 @@ load_binary_seed() {
 }
 
 record_upstream_provenance() {
+  # Which packages in the published repository came from upstream rather than
+  # from us, and what proves it. With a mirror that proof is the mirror's own
+  # record of the signed catalogue it was cut from; the pin-time binary seed is
+  # not consulted, and must not be -- load_binary_seed asserts the seed carries
+  # lang/rust, which an amd64 seed need not, and it fails silently because its
+  # jq output goes to /dev/null.
+  if [ -n "${MIRROR_PLAN_OBJECT}" ]; then
+    upstream_provenance=/root/mirror-repo/mirror-provenance.json
+    [ -s "${upstream_provenance}" ] || {
+      echo "the fetched mirror carries no provenance" >&2
+      return 1
+    }
+    : >/tmp/upstream-reused.jsonl
+    for package in "$1"/All/*.pkg; do
+      [ -f "${package}" ] || continue
+      sha=$(sha256 -q "${package}")
+      jq -c --arg sha "${sha}" '.packages[] | select(.sha256 == $sha)' \
+        "${upstream_provenance}" >>/tmp/upstream-reused.jsonl
+    done
+    jq -s --arg seed "${MIRROR_PLAN_OBJECT}" --arg abi "${ABI}" \
+      '{schema_version:"freesense.upstream-provenance/v1",binary_seed:$seed,abi:$abi,packages:.}' \
+      /tmp/upstream-reused.jsonl >"$1/upstream-provenance.json"
+    return 0
+  fi
   [ -n "${BINARY_SEED_OBJECT}" ] || return 0
   load_binary_seed
   : >/tmp/upstream-reused.jsonl

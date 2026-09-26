@@ -288,6 +288,11 @@ def main() -> int:
     if not selected_target["build_enabled"]:
         raise SystemExit(f"target {args.target} builds are disabled")
     target_pin = pin_target(lock, args.target)
+    # A frozen mirror is cut at the ports commit upstream actually published
+    # from. Poudriere judges a seeded package stale at any other commit and
+    # rebuilds it from source, so the build has to use the mirror's.
+    target_mirror = target_pin.get("mirror") or {}
+    pinned_ports_commit = target_mirror.get("ports_commit") or lock["freebsd_ports"]["commit"]
     execution_inputs = {}
     worker_image = lock.get("worker_image", {})
     worker_tools = lock.get("worker_tools", {})
@@ -353,10 +358,15 @@ def main() -> int:
         (ROOT / "config/channel-signing-public.pem").read_bytes()
     ).hexdigest()
     freebsd_pin_id = fingerprint({
-        "schema": 1,
+        "schema": 2,
         "kind": "freebsd-pin",
         "freebsd_source": lock["freebsd_source"]["commit"],
-        "freebsd_ports": lock["freebsd_ports"]["commit"],
+        # The build's own ports commit, and the mirror it layers on. Without
+        # them an artifact built over one mirror is reused for a plan naming
+        # another, and the reuse gate short-circuits the farm before any worker
+        # could notice.
+        "freebsd_ports": pinned_ports_commit,
+        "mirror": target_mirror.get("fingerprint", ""),
         "jail_seed": jail_seed["sha256"],
         "package_catalog": target_pin.get("package_catalog", {}).get("sha256", ""),
         "package_catalog_osversion": target_pin.get("package_catalog", {}).get("osversion", 0),
@@ -383,10 +393,11 @@ def main() -> int:
         latest_source_sha = resolved.get("source") or remote_sha("FreeSense-org/freesense")
         latest_system_sha = resolved.get("system_ports") or remote_sha("FreeSense-org/freesense-system-ports")
         desired_platform = fingerprint({
-            "schema": 2,
+            "schema": 3,
             "kind": "platform",
             "freebsd_source": lock["freebsd_source"]["commit"],
-            "freebsd_ports": lock["freebsd_ports"]["commit"],
+            "freebsd_ports": pinned_ports_commit,
+            "mirror": target_mirror.get("fingerprint", ""),
             "jail_seed": jail_seed["sha256"],
             "worker_image": worker_image["sha256"],
             "worker_tools": worker_tools_lock_sha256,
@@ -451,7 +462,7 @@ def main() -> int:
             system_worker_tools_sha256 != worker_tools_lock_sha256,
             system_jail_object != jail_seed["object"],
             system_freebsd_sha != lock["freebsd_source"]["commit"],
-            system_ports_sha != lock["freebsd_ports"]["commit"],
+            system_ports_sha != pinned_ports_commit,
         )):
             raise SystemExit("selected System differs from the frozen v4 pin or executor")
         if args.kind == "packages":
@@ -503,7 +514,7 @@ def main() -> int:
         packages_sha = "0" * 40
         os_base_sha = args.os_base_sha
         freebsd_sha = lock["freebsd_source"]["commit"]
-        ports_sha = lock["freebsd_ports"]["commit"]
+        ports_sha = pinned_ports_commit
         image_sha256 = worker_image["sha256"]
         worker_tools_sha256 = worker_tools_lock_sha256
         jail_object = jail_seed["object"]
@@ -670,6 +681,7 @@ def main() -> int:
         "os_base_sha": os_base_sha,
         "freebsd_sha": freebsd_sha,
         "ports_sha": ports_sha,
+        "mirror_plan_object": target_mirror.get("object", ""),
         "image_sha256": image_sha256,
         "worker_tools_sha256": worker_tools_sha256,
         "build_host": execution_inputs.get("host", "github-amd64"),

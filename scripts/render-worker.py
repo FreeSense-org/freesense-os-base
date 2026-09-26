@@ -28,6 +28,7 @@ ROOT = Path(__file__).resolve().parents[1]
 OPTIONAL_FIELDS = {
     "BINARY_SEED_OBJECT": "", "BINARY_SEED_PROVENANCE_SHA256": "",
     "PREVIOUS_FREESENSE_REPOSITORY": "", "FARM_LAYOUT": "legacy", "SHARD_POLICY_VERSION": "legacy",
+    "MIRROR_PLAN_OBJECT": "",
 }
 
 
@@ -41,7 +42,7 @@ def main() -> int:
     if missing:
         raise SystemExit("missing worker inputs: " + ", ".join(missing))
     stage = os.environ["STAGE"]
-    if stage not in {"system", "packages", "iso", "cloud", "appliance"}:
+    if stage not in {"system", "packages", "iso", "cloud", "appliance", "mirror"}:
         raise SystemExit(f"invalid stage: {stage}")
     parts = [
         ROOT / "scripts/runner/install-worker-tools.sh",

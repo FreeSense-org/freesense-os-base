@@ -5,9 +5,25 @@
   "batch_target_seconds": 10800,
   "default_cost_seconds": 1800,
   "dependency_closures": {"system": {}, "packages": {}},
-  "measured_cost_seconds": {"system": {"sysutils/telegraf": 7200}, "packages": {}},
+  "measured_cost_seconds": {
+    "system": {
+      "net/kea": 10800,
+      "devel/doxygen": 7031,
+      "sysutils/telegraf": 7200,
+      "security/strongswan": 4650,
+      "graphics/graphviz": 4476,
+      "dns/unbound": 2123,
+      "devel/php-FreeSense-module@php85": 1760,
+      "devel/log4cplus": 951,
+      "graphics/gd": 742,
+      "sysutils/pftop": 94,
+      "security/phpseclib@php85": 68,
+      "sysutils/FreeSense-repoc": 17
+    },
+    "packages": {}
+  },
   "measured_heavy_roots": {
-    "system": ["sysutils/telegraf"],
+    "system": ["net/kea", "sysutils/telegraf"],
     "packages": []
   }
 }

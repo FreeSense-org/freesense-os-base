@@ -6,10 +6,23 @@ WATCHDOG_SECONDS = 330 * 60
 STANDARD_RUNNER_LIMIT = 20
 
 
-def verify(pages: list[dict], run_id: int) -> dict:
+def verify(pages: list[dict], run_id: int, run_attempt: int | None = None) -> dict:
     if not pages or type(run_id) is not int or run_id <= 0:
         raise ValueError("job evidence requires the exact workflow run")
+    if run_attempt is not None and (type(run_attempt) is not int or run_attempt <= 0):
+        raise ValueError("job evidence requires a valid run attempt")
     jobs = [job for page in pages for job in page["jobs"]]
+    # The jobs endpoint is queried with filter=all, which returns every attempt
+    # of this run. A re-run is the intended recovery path -- completed batch
+    # checkpoints survive, so a shard the watchdog killed resumes rather than
+    # repeating -- and the killed job stays in the evidence with a duration at
+    # or over the watchdog. Judging this attempt by a previous attempt's
+    # casualties would fail exactly the re-runs the checkpoints exist to make
+    # cheap, so evidence is scoped to the attempt that produced the artifacts.
+    if run_attempt is not None:
+        jobs = [job for job in jobs if job.get("run_attempt") == run_attempt]
+        if not jobs:
+            raise ValueError("no job evidence for the verified run attempt")
     ids, intervals, durations = set(), [], []
     for job in jobs:
         if job.get("run_id") != run_id or job.get("id") in ids:
@@ -42,6 +55,6 @@ def verify(pages: list[dict], run_id: int) -> dict:
     peak = max(peak, 1)
     if peak >= STANDARD_RUNNER_LIMIT:
         raise ValueError("multiarch job concurrency must remain below 20 standard runners")
-    return {"run_id": run_id, "watchdog_seconds": WATCHDOG_SECONDS,
+    return {"run_id": run_id, "run_attempt": run_attempt, "watchdog_seconds": WATCHDOG_SECONDS,
             "maximum_job_seconds": max(item["seconds"] for item in durations),
             "peak_standard_runners": peak, "jobs": durations}

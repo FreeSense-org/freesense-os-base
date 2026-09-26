@@ -111,7 +111,16 @@ func CommitDevelopmentCycle(ctx context.Context, backend store.Backend, next Dev
 		if next.Generation < old.Generation {
 			return store.ObjectInfo{}, false, errors.New("Development cycle cannot move backwards")
 		}
-		if next.Generation == old.Generation {
+		// A superseded cycle has been abandoned deliberately, so its frozen
+		// inputs are no longer authoritative and its progress must not be
+		// merged forward onto a different plan. The generation is reserved per
+		// pair fingerprint, so replanning control-plane code that does not move
+		// that fingerprint -- a verifier fix, say -- reserves the same
+		// generation again and must still be able to replace the abandoned
+		// plan. Without this, abandoning a cycle is only possible when the
+		// fingerprint also moved, which is precisely when abandoning is least
+		// needed.
+		if next.Generation == old.Generation && !old.Superseded {
 			if next.Pin != old.Pin || next.PairFingerprint != old.PairFingerprint || !mapsEqual(next.Sources, old.Sources) || !rawJSONEqual(next.Plan, old.Plan) {
 				return store.ObjectInfo{}, false, errors.New("frozen Development cycle inputs cannot change")
 			}

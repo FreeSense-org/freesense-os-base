@@ -1,27 +1,23 @@
 name: System
 
+# System is a component of the multiarch cycle, not a build of its own. The
+# standalone planner and its 19-shard farm were retired with the legacy layout:
+# both architectures are now reserved, built and published as one frozen pair by
+# development-multiarch.yml, which owns the daily schedule.
+
 on:
   workflow_call:
     inputs:
-      multiarch_plan: {type: string, required: false, default: ''}
-      pair_generation: {type: string, required: false, default: ''}
-      suppress_publication: {type: boolean, required: false, default: false}
+      multiarch_plan: {type: string, required: true}
+      pair_generation: {type: string, required: true}
+      suppress_publication: {type: boolean, required: true}
       target:
         type: string
         required: true
     outputs:
       system_fingerprint:
         description: Exact immutable System result
-        value: ${{ jobs.multiarch.outputs.fingerprint || jobs.plan.outputs.system }}
-  workflow_dispatch:
-    inputs:
-      target:
-        type: choice
-        options: [amd64, arm64]
-        default: amd64
-        required: true
-  schedule:
-    - cron: "0 6 * * *"
+        value: ${{ jobs.multiarch.outputs.fingerprint }}
 
 permissions:
   actions: write
@@ -29,12 +25,12 @@ permissions:
   id-token: write
 
 concurrency:
-  group: system-planner-${{ inputs.target || 'amd64' }}
+  group: system-planner-${{ inputs.target }}
   cancel-in-progress: false
 
 jobs:
   reject_invalid_pair:
-    if: inputs.multiarch_plan != '' && !inputs.suppress_publication
+    if: ${{ !inputs.suppress_publication }}
     runs-on: ubuntu-24.04
     steps:
       - run: |
@@ -42,345 +38,10 @@ jobs:
           exit 1
 
   multiarch:
-    if: inputs.multiarch_plan != '' && inputs.suppress_publication
+    if: ${{ inputs.suppress_publication }}
     uses: ./.github/workflows/component-farm.yml
     with:
       stage: system
       plan: ${{ inputs.multiarch_plan }}
       pair_generation: ${{ inputs.pair_generation }}
     secrets: inherit
-
-  plan:
-    if: inputs.multiarch_plan == ''
-    runs-on: ubuntu-24.04
-    environment: build-coordinator
-    outputs:
-      needed: ${{ steps.plan.outputs.needed }}
-      generation: ${{ steps.reserve.outputs.generation }}
-      platform: ${{ steps.plan.outputs.platform }}
-      system: ${{ steps.plan.outputs.system }}
-      source_sha: ${{ steps.plan.outputs.source_sha }}
-      system_sha: ${{ steps.plan.outputs.system_sha }}
-      packages_sha: ${{ steps.plan.outputs.packages_sha }}
-      os_base_sha: ${{ steps.plan.outputs.os_base_sha }}
-      freebsd_sha: ${{ steps.plan.outputs.freebsd_sha }}
-      ports_sha: ${{ steps.plan.outputs.ports_sha }}
-      image_sha256: ${{ steps.plan.outputs.image_sha256 }}
-      worker_tools_sha256: ${{ steps.plan.outputs.worker_tools_sha256 }}
-      jail_object: ${{ steps.plan.outputs.jail_object }}
-      package_train: ${{ steps.plan.outputs.package_train }}
-      abi: ${{ steps.plan.outputs.abi }}
-      altabi: ${{ steps.plan.outputs.altabi }}
-      osversion: ${{ steps.plan.outputs.osversion }}
-      public_base_url: ${{ steps.plan.outputs.public_base_url }}
-      freebsd_pin_id: ${{ steps.plan.outputs.freebsd_pin_id }}
-      product_version: ${{ steps.plan.outputs.product_version }}
-      release_version: ${{ steps.plan.outputs.release_version }}
-      target: ${{ steps.plan.outputs.target }}
-      architecture: ${{ steps.plan.outputs.architecture }}
-      package_arch: ${{ steps.plan.outputs.package_arch }}
-      freebsd_target: ${{ steps.plan.outputs.freebsd_target }}
-      freebsd_target_arch: ${{ steps.plan.outputs.freebsd_target_arch }}
-      poudriere_arch: ${{ steps.plan.outputs.poudriere_arch }}
-      kernel: ${{ steps.plan.outputs.kernel }}
-      executor: ${{ steps.plan.outputs.executor }}
-      image_profile: ${{ steps.plan.outputs.image_profile }}
-      firmware: ${{ steps.plan.outputs.firmware }}
-      image_capabilities: ${{ steps.plan.outputs.image_capabilities }}
-      installer_format: ${{ steps.plan.outputs.installer_format }}
-      publish_enabled: ${{ steps.plan.outputs.publish_enabled }}
-      build_matrix: ${{ steps.farm.outputs.matrix }}
-    steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with: {go-version-file: go.mod, cache: false}
-      - id: plan
-        run: python3 scripts/plan.py system --target "${{ inputs.target || 'amd64' }}" --os-base-sha "${GITHUB_SHA}" --github-output "${GITHUB_OUTPUT}"
-      - id: farm
-        env: {TARGET: "${{ steps.plan.outputs.target }}"}
-        run: |
-          python3 - <<'PY' >>"${GITHUB_OUTPUT}"
-          import json, os
-          if os.environ["TARGET"] == "amd64":
-              include = [{"part": "core", "shard": "0", "count": "19"}]
-              include += [
-                  {"part": "shard", "shard": str(index), "count": "19"}
-                  for index in range(18)
-              ]
-          else:
-              include = [{"part": "full", "shard": "0", "count": "1"}]
-          print("matrix=" + json.dumps({"include": include}, separators=(",", ":")))
-          PY
-      - if: steps.plan.outputs.needed == 'true'
-        run: go build -trimpath -o "${RUNNER_TEMP}/fsbuild" ./cmd/fsbuild
-      - if: steps.plan.outputs.needed == 'true'
-        env:
-          R2_CREDENTIAL_BROKER_URL: ${{ vars.R2_CREDENTIAL_BROKER_URL }}
-          R2_CREDENTIAL_BROKER_AUDIENCE: ${{ vars.R2_CREDENTIAL_BROKER_AUDIENCE }}
-          R2_BUCKET: ${{ vars.R2_BUILD_BUCKET }}
-          R2_ENDPOINT: ${{ vars.R2_ENDPOINT }}
-          FSBUILD_STORE_PREFIX: v1
-        run: >-
-          "${RUNNER_TEMP}/fsbuild" credentials acquire --broker-url "${R2_CREDENTIAL_BROKER_URL}"
-          --audience "${R2_CREDENTIAL_BROKER_AUDIENCE}" --role coordinator
-          --expected-bucket "${R2_BUCKET}" --expected-prefix v1 --expected-endpoint "${R2_ENDPOINT}"
-          --github-env "${GITHUB_ENV}"
-      - id: reserve
-        if: steps.plan.outputs.needed == 'true'
-        env:
-          R2_BUCKET: ${{ vars.R2_BUILD_BUCKET }}
-          FSBUILD_STORE_PREFIX: v1
-        run: |
-          "${RUNNER_TEMP}/fsbuild" state reserve-generation \
-            --fingerprint "${{ steps.plan.outputs.system }}" --proposed "${GITHUB_RUN_NUMBER}" \
-            --output "${RUNNER_TEMP}/generation.json"
-          echo "generation=$(jq -r .generation "${RUNNER_TEMP}/generation.json")" >>"${GITHUB_OUTPUT}"
-
-  build_parts:
-    needs: plan
-    if: needs.plan.outputs.needed == 'true'
-    strategy:
-      fail-fast: false
-      max-parallel: 20
-      matrix: ${{ fromJSON(needs.plan.outputs.build_matrix) }}
-    uses: ./.github/workflows/runner-build.yml
-    with:
-      stage: system
-      fingerprint: ${{ needs.plan.outputs.system }}
-      platform_id: ${{ needs.plan.outputs.platform }}
-      system_id: ${{ needs.plan.outputs.system }}
-      source_sha: ${{ needs.plan.outputs.source_sha }}
-      system_sha: ${{ needs.plan.outputs.system_sha }}
-      packages_sha: ${{ needs.plan.outputs.packages_sha }}
-      os_base_sha: ${{ needs.plan.outputs.os_base_sha }}
-      freebsd_sha: ${{ needs.plan.outputs.freebsd_sha }}
-      ports_sha: ${{ needs.plan.outputs.ports_sha }}
-      image_sha256: ${{ needs.plan.outputs.image_sha256 }}
-      worker_tools_sha256: ${{ needs.plan.outputs.worker_tools_sha256 }}
-      jail_object: ${{ needs.plan.outputs.jail_object }}
-      freebsd_pin_id: ${{ needs.plan.outputs.freebsd_pin_id }}
-      product_version: ${{ needs.plan.outputs.product_version }}
-      package_train: ${{ needs.plan.outputs.package_train }}
-      generation: ${{ needs.plan.outputs.generation }}
-      public_base_url: ${{ needs.plan.outputs.public_base_url }}
-      target: ${{ needs.plan.outputs.target }}
-      architecture: ${{ needs.plan.outputs.architecture }}
-      package_arch: ${{ needs.plan.outputs.package_arch }}
-      abi: ${{ needs.plan.outputs.abi }}
-      altabi: ${{ needs.plan.outputs.altabi }}
-      freebsd_target: ${{ needs.plan.outputs.freebsd_target }}
-      freebsd_target_arch: ${{ needs.plan.outputs.freebsd_target_arch }}
-      poudriere_arch: ${{ needs.plan.outputs.poudriere_arch }}
-      kernel: ${{ needs.plan.outputs.kernel }}
-      executor: ${{ needs.plan.outputs.executor }}
-      image_profile: ${{ needs.plan.outputs.image_profile }}
-      firmware: ${{ needs.plan.outputs.firmware }}
-      image_capabilities: ${{ needs.plan.outputs.image_capabilities }}
-      installer_format: ${{ needs.plan.outputs.installer_format }}
-      publish_enabled: ${{ needs.plan.outputs.publish_enabled }}
-      system_part: ${{ matrix.part }}
-      system_shard_index: ${{ matrix.shard }}
-      system_shard_count: ${{ matrix.count }}
-      build_host: ${{ needs.plan.outputs.target == 'amd64' && 'github-hosted' || 'dedicated' }}
-    secrets: inherit
-
-  build_bootstrap:
-    needs: plan
-    if: needs.plan.outputs.needed == 'true' && needs.plan.outputs.target == 'amd64'
-    uses: ./.github/workflows/runner-build.yml
-    with:
-      stage: system
-      fingerprint: ${{ needs.plan.outputs.system }}
-      platform_id: ${{ needs.plan.outputs.platform }}
-      system_id: ${{ needs.plan.outputs.system }}
-      source_sha: ${{ needs.plan.outputs.source_sha }}
-      system_sha: ${{ needs.plan.outputs.system_sha }}
-      packages_sha: ${{ needs.plan.outputs.packages_sha }}
-      os_base_sha: ${{ needs.plan.outputs.os_base_sha }}
-      freebsd_sha: ${{ needs.plan.outputs.freebsd_sha }}
-      ports_sha: ${{ needs.plan.outputs.ports_sha }}
-      image_sha256: ${{ needs.plan.outputs.image_sha256 }}
-      worker_tools_sha256: ${{ needs.plan.outputs.worker_tools_sha256 }}
-      jail_object: ${{ needs.plan.outputs.jail_object }}
-      freebsd_pin_id: ${{ needs.plan.outputs.freebsd_pin_id }}
-      product_version: ${{ needs.plan.outputs.product_version }}
-      package_train: ${{ needs.plan.outputs.package_train }}
-      generation: ${{ needs.plan.outputs.generation }}
-      public_base_url: ${{ needs.plan.outputs.public_base_url }}
-      target: ${{ needs.plan.outputs.target }}
-      architecture: ${{ needs.plan.outputs.architecture }}
-      package_arch: ${{ needs.plan.outputs.package_arch }}
-      abi: ${{ needs.plan.outputs.abi }}
-      altabi: ${{ needs.plan.outputs.altabi }}
-      freebsd_target: ${{ needs.plan.outputs.freebsd_target }}
-      freebsd_target_arch: ${{ needs.plan.outputs.freebsd_target_arch }}
-      poudriere_arch: ${{ needs.plan.outputs.poudriere_arch }}
-      kernel: ${{ needs.plan.outputs.kernel }}
-      executor: ${{ needs.plan.outputs.executor }}
-      image_profile: ${{ needs.plan.outputs.image_profile }}
-      firmware: ${{ needs.plan.outputs.firmware }}
-      image_capabilities: ${{ needs.plan.outputs.image_capabilities }}
-      installer_format: ${{ needs.plan.outputs.installer_format }}
-      publish_enabled: ${{ needs.plan.outputs.publish_enabled }}
-      system_part: bootstrap
-      system_shard_index: "0"
-      system_shard_count: "19"
-      build_host: github-hosted
-    secrets: inherit
-
-  build_dependent:
-    needs: [plan, build_bootstrap]
-    if: needs.plan.outputs.needed == 'true' && needs.plan.outputs.target == 'amd64' && needs.build_bootstrap.result == 'success'
-    uses: ./.github/workflows/runner-build.yml
-    with:
-      stage: system
-      fingerprint: ${{ needs.plan.outputs.system }}
-      platform_id: ${{ needs.plan.outputs.platform }}
-      system_id: ${{ needs.plan.outputs.system }}
-      source_sha: ${{ needs.plan.outputs.source_sha }}
-      system_sha: ${{ needs.plan.outputs.system_sha }}
-      packages_sha: ${{ needs.plan.outputs.packages_sha }}
-      os_base_sha: ${{ needs.plan.outputs.os_base_sha }}
-      freebsd_sha: ${{ needs.plan.outputs.freebsd_sha }}
-      ports_sha: ${{ needs.plan.outputs.ports_sha }}
-      image_sha256: ${{ needs.plan.outputs.image_sha256 }}
-      worker_tools_sha256: ${{ needs.plan.outputs.worker_tools_sha256 }}
-      jail_object: ${{ needs.plan.outputs.jail_object }}
-      freebsd_pin_id: ${{ needs.plan.outputs.freebsd_pin_id }}
-      product_version: ${{ needs.plan.outputs.product_version }}
-      package_train: ${{ needs.plan.outputs.package_train }}
-      generation: ${{ needs.plan.outputs.generation }}
-      public_base_url: ${{ needs.plan.outputs.public_base_url }}
-      target: ${{ needs.plan.outputs.target }}
-      architecture: ${{ needs.plan.outputs.architecture }}
-      package_arch: ${{ needs.plan.outputs.package_arch }}
-      abi: ${{ needs.plan.outputs.abi }}
-      altabi: ${{ needs.plan.outputs.altabi }}
-      freebsd_target: ${{ needs.plan.outputs.freebsd_target }}
-      freebsd_target_arch: ${{ needs.plan.outputs.freebsd_target_arch }}
-      poudriere_arch: ${{ needs.plan.outputs.poudriere_arch }}
-      kernel: ${{ needs.plan.outputs.kernel }}
-      executor: ${{ needs.plan.outputs.executor }}
-      image_profile: ${{ needs.plan.outputs.image_profile }}
-      firmware: ${{ needs.plan.outputs.firmware }}
-      image_capabilities: ${{ needs.plan.outputs.image_capabilities }}
-      installer_format: ${{ needs.plan.outputs.installer_format }}
-      publish_enabled: ${{ needs.plan.outputs.publish_enabled }}
-      system_part: dependent
-      system_shard_index: "18"
-      system_shard_count: "19"
-      build_host: github-hosted
-    secrets: inherit
-
-  build_finalize:
-    needs: [plan, build_parts, build_bootstrap, build_dependent]
-    if: >-
-      needs.plan.outputs.needed == 'true' && needs.plan.outputs.target == 'amd64' &&
-      needs.build_parts.result == 'success' && needs.build_bootstrap.result == 'success' &&
-      needs.build_dependent.result == 'success'
-    uses: ./.github/workflows/runner-build.yml
-    with:
-      stage: system
-      fingerprint: ${{ needs.plan.outputs.system }}
-      platform_id: ${{ needs.plan.outputs.platform }}
-      system_id: ${{ needs.plan.outputs.system }}
-      source_sha: ${{ needs.plan.outputs.source_sha }}
-      system_sha: ${{ needs.plan.outputs.system_sha }}
-      packages_sha: ${{ needs.plan.outputs.packages_sha }}
-      os_base_sha: ${{ needs.plan.outputs.os_base_sha }}
-      freebsd_sha: ${{ needs.plan.outputs.freebsd_sha }}
-      ports_sha: ${{ needs.plan.outputs.ports_sha }}
-      image_sha256: ${{ needs.plan.outputs.image_sha256 }}
-      worker_tools_sha256: ${{ needs.plan.outputs.worker_tools_sha256 }}
-      jail_object: ${{ needs.plan.outputs.jail_object }}
-      freebsd_pin_id: ${{ needs.plan.outputs.freebsd_pin_id }}
-      product_version: ${{ needs.plan.outputs.product_version }}
-      package_train: ${{ needs.plan.outputs.package_train }}
-      generation: ${{ needs.plan.outputs.generation }}
-      public_base_url: ${{ needs.plan.outputs.public_base_url }}
-      target: ${{ needs.plan.outputs.target }}
-      architecture: ${{ needs.plan.outputs.architecture }}
-      package_arch: ${{ needs.plan.outputs.package_arch }}
-      abi: ${{ needs.plan.outputs.abi }}
-      altabi: ${{ needs.plan.outputs.altabi }}
-      freebsd_target: ${{ needs.plan.outputs.freebsd_target }}
-      freebsd_target_arch: ${{ needs.plan.outputs.freebsd_target_arch }}
-      poudriere_arch: ${{ needs.plan.outputs.poudriere_arch }}
-      kernel: ${{ needs.plan.outputs.kernel }}
-      executor: ${{ needs.plan.outputs.executor }}
-      image_profile: ${{ needs.plan.outputs.image_profile }}
-      firmware: ${{ needs.plan.outputs.firmware }}
-      image_capabilities: ${{ needs.plan.outputs.image_capabilities }}
-      installer_format: ${{ needs.plan.outputs.installer_format }}
-      publish_enabled: ${{ needs.plan.outputs.publish_enabled }}
-      system_part: finalize
-      system_shard_index: "0"
-      system_shard_count: "19"
-      build_host: github-hosted
-    secrets: inherit
-
-  publish:
-    needs: [plan, build_parts, build_bootstrap, build_dependent, build_finalize]
-    if: >-
-      always() && !inputs.suppress_publication && needs.plan.result == 'success' && needs.plan.outputs.publish_enabled == 'true' &&
-      ((needs.plan.outputs.target == 'amd64' && needs.build_finalize.result == 'success') ||
-       (needs.plan.outputs.target != 'amd64' && needs.build_parts.result == 'success'))
-    runs-on: ubuntu-24.04
-    environment: channel-publisher
-    permissions: {contents: read, id-token: write}
-    steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with: {go-version-file: go.mod, cache: false}
-      - run: go build -trimpath -o "${RUNNER_TEMP}/fsbuild" ./cmd/fsbuild
-      - env:
-          R2_CREDENTIAL_BROKER_URL: ${{ vars.R2_CREDENTIAL_BROKER_URL }}
-          R2_CREDENTIAL_BROKER_AUDIENCE: ${{ vars.R2_CREDENTIAL_BROKER_AUDIENCE }}
-          R2_BUCKET: ${{ vars.R2_BUILD_BUCKET }}
-          R2_ENDPOINT: ${{ vars.R2_ENDPOINT }}
-          FSBUILD_STORE_PREFIX: v1
-        run: >-
-          "${RUNNER_TEMP}/fsbuild" credentials acquire --broker-url "${R2_CREDENTIAL_BROKER_URL}"
-          --audience "${R2_CREDENTIAL_BROKER_AUDIENCE}" --role channel-writer
-          --expected-bucket "${R2_BUCKET}" --expected-prefix v1 --expected-endpoint "${R2_ENDPOINT}"
-          --github-env "${GITHUB_ENV}"
-      - env:
-          R2_BUCKET: ${{ vars.R2_BUILD_BUCKET }}
-          FSBUILD_STORE_PREFIX: v1
-          SIGNING_KEY: ${{ secrets.FREESENSE_PKG_SIGNING_KEY }}
-        run: |
-          key=$(mktemp); trap 'rm -f "$key"' EXIT; chmod 600 "$key"; printf '%s' "${SIGNING_KEY}" >"$key"
-          if [[ "${{ needs.plan.outputs.package_arch }}" == amd64 ]]; then
-            "${RUNNER_TEMP}/fsbuild" channel update --component system \
-              --version "${{ needs.plan.outputs.release_version }}" \
-              --fingerprint "${{ needs.plan.outputs.system }}" \
-              --url "${{ needs.plan.outputs.public_base_url }}/artifacts/system/${{ needs.plan.outputs.system }}/amd64" \
-              --architecture amd64 --package-arch amd64 \
-              --generation "${{ needs.plan.outputs.generation }}" --package-train "${{ needs.plan.outputs.package_train }}" \
-              --freebsd-pin-id "${{ needs.plan.outputs.freebsd_pin_id }}" \
-              --abi "${{ needs.plan.outputs.abi }}" --altabi "${{ needs.plan.outputs.altabi }}" \
-              --osversion "${{ needs.plan.outputs.osversion }}" \
-              --published-at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --private-key "$key"
-            "${RUNNER_TEMP}/fsbuild" channel verify --component system \
-              --fingerprint "${{ needs.plan.outputs.system }}" --private-key "$key"
-          fi
-          "${RUNNER_TEMP}/fsbuild" channel update --qualified-manifest --component system \
-            --version "${{ needs.plan.outputs.release_version }}" \
-            --fingerprint "${{ needs.plan.outputs.system }}" \
-            --url "${{ needs.plan.outputs.public_base_url }}/artifacts/system/${{ needs.plan.outputs.system }}/${{ needs.plan.outputs.package_arch }}" \
-            --generation "${{ needs.plan.outputs.generation }}" --package-train "${{ needs.plan.outputs.package_train }}" \
-            --freebsd-pin-id "${{ needs.plan.outputs.freebsd_pin_id }}" \
-            --architecture "${{ needs.plan.outputs.architecture }}" --package-arch "${{ needs.plan.outputs.package_arch }}" \
-            --abi "${{ needs.plan.outputs.abi }}" --altabi "${{ needs.plan.outputs.altabi }}" \
-            --osversion "${{ needs.plan.outputs.osversion }}" \
-            --published-at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --private-key "$key"
-          "${RUNNER_TEMP}/fsbuild" channel verify --qualified-manifest \
-            --package-arch "${{ needs.plan.outputs.package_arch }}" --component system \
-            --fingerprint "${{ needs.plan.outputs.system }}" --private-key "$key"
-      - name: Record publication target for release orchestration
-        run: printf '%s\n' '${{ needs.plan.outputs.target }}' >"${RUNNER_TEMP}/publication-target"
-      - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
-        with:
-          name: publication-target
-          path: ${{ runner.temp }}/publication-target
-          retention-days: 1
