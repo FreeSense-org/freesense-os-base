@@ -50,6 +50,10 @@ install_worker_tools() (
     elif [ "${required_osversion}" -le $((running_osversion + 2)) ] && [ "${required_osversion}" -ge $((running_osversion - 2)) ]; then
       ignore_osversion=yes
       echo "Allowing worker bootstrap with revision skew: ${running_osversion} -> ${required_osversion}"
+    elif [ "${required_osversion}" -lt "${running_osversion}" ] && [ "${required_osversion}" -ge $((running_osversion - 4)) ]; then
+      # Older packages on newer userland, as the pin's catalog lag allows.
+      ignore_osversion=yes
+      echo "Allowing worker bootstrap with lagging catalog: ${running_osversion} -> ${required_osversion}"
     else
       echo "worker-tool OSVERSION ${required_osversion} is incompatible with userland ${running_osversion}" >&2
       exit 1

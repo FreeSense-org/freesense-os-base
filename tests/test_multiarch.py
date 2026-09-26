@@ -298,6 +298,12 @@ class RequirementsCollectorTests(unittest.TestCase):
         self.assertIn("running_osversion + 1", script)
         self.assertIn("required_osversion + 1", script)
 
+    def test_installer_accepts_a_catalog_lagging_userland_by_four_revisions(self):
+        script = (Path(__file__).resolve().parents[1] / "scripts/runner/install-worker-tools.sh").read_text()
+        self.assertIn('-ge $((running_osversion - 4))', script)
+        pin = (Path(__file__).resolve().parents[1] / "scripts/resolve_multiarch_pin.py").read_text()
+        self.assertIn("max_catalog_osversion_lag = 4", pin)
+
     def test_collector_handles_origin_aliases_for_identical_package(self):
         collector = object.__new__(package_requirements.Collector)
         collector.abi, collector.knobs, collector.changed = "FreeBSD:16:amd64", set(), set()
