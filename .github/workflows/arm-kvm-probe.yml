@@ -1,0 +1,42 @@
+name: ARM KVM probe (throwaway)
+
+# Temporary experiment: does any GitHub-hosted ARM image expose a usable
+# /dev/kvm? No credentials, no builds, no publication. Not for merge.
+
+on:
+  pull_request:
+    paths: ['.github/workflows/arm-kvm-probe.yml']
+
+permissions: {contents: read}
+
+jobs:
+  probe:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04-arm, ubuntu-26.04-arm]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 15
+    steps:
+      - name: Host facts
+        run: |
+          uname -a
+          grep -m1 -i 'model name\|CPU part' /proc/cpuinfo || true
+          nproc; free -g
+          sudo dmesg 2>/dev/null | grep -iE 'kvm|hyp mode|el2|virtualization' | head -20 || true
+          ls -l /dev/kvm || echo "NO /dev/kvm"
+      - name: Try a KVM-accelerated aarch64 guest
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends qemu-system-arm >/dev/null
+          if [[ -e /dev/kvm ]]; then sudo chmod a+rw /dev/kvm; fi
+          set +e
+          timeout 15 qemu-system-aarch64 -M virt,gic-version=host -accel kvm -cpu host \
+            -m 512 -S -nographic -display none -monitor none -serial none
+          rc=$?
+          set -e
+          if [[ $rc == 124 ]]; then
+            echo "::notice title=${{ matrix.runner }}::KVM WORKS (guest ran until timeout)"
+          else
+            echo "::warning title=${{ matrix.runner }}::KVM unavailable (qemu exit ${rc})"
+          fi
