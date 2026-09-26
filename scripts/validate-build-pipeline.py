@@ -114,8 +114,8 @@ for value in ("uses: ./.github/workflows/system.yml",
             f"the multiarch cycle is missing {value!r}")
 require('.inputs.built_against_system = $system' in common,
         "the Optional packages artifact does not record its immutable build System")
-require("cron: '0 6 * * *'" in multiarch_workflow,
-        "the daily multiarch cycle is not fixed at 06:00 UTC")
+require("cron: '0 1 * * *'" in multiarch_workflow,
+        "the daily multiarch cycle is not fixed at 01:00 UTC")
 retention_workflow = read(".github/workflows/retention.yml")
 for value in ('cron: "30 4 * * *"', "scripts/r2_retention.py",
               "--keep-devel 4", "--keep-mirrors 2", "--orphan-grace-hours 168",

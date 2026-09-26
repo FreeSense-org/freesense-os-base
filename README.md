@@ -32,7 +32,8 @@ policy-configured Development train:
   Poudriere from a compatible System repository without rebuilding System
   packages.
 
-`system.yml` starts every day at 06:00 UTC. Dedicated builds retain the shared
+The Development multiarch cycle (`development-multiarch.yml`) starts every day at
+01:00 UTC and rebuilds only the parts whose inputs changed. Dedicated builds retain the shared
 KVM concurrency group. Hosted System farm parts use stable per-part groups so
 separate workflow runs cannot overwrite each other's work while all shards in
 one farm can execute concurrently. A successful new System also produces one

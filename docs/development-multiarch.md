@@ -78,7 +78,7 @@ namespaces.
 
 ## Rollout boundaries
 
-- The new daily 06:00 UTC schedule is gated by
+- The daily 01:00 UTC schedule is gated by
   `MULTIARCH_DEVELOPMENT_ENABLED == 'true'`. Its current code is still a
   publication-disabled canary. Do not enable the variable as a production cutover.
 - The existing System schedule and legacy workflow chains remain active in code.
