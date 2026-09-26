@@ -96,7 +96,10 @@ def resolve(previous: dict, directory: Path, metadata: dict, sources: dict,
         ports[arch] = worker["ports_sha"]
         catalog_osversion = worker["osversion"]
         max_bootstrap_osversion_delta = 2
-        if (catalog_osversion < metadata["osversion"] - 1
+        # pkg.freebsd.org's builders can run several CURRENT revisions behind
+        # the weekly snapshot; older packages keep running on newer userland.
+        max_catalog_osversion_lag = 4
+        if (catalog_osversion < metadata["osversion"] - max_catalog_osversion_lag
                 or catalog_osversion > metadata["osversion"] + max_bootstrap_osversion_delta):
             raise ValueError(f"{arch} catalog OSVERSION is outside the bounded bootstrap window")
         reports[arch] = {
