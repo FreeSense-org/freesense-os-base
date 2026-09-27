@@ -26,7 +26,7 @@ expected_workflows = {
     "development-multiarch.yml", "development-multiarch-publish.yml", "component-farm.yml",
     "qualified-repository-document.yml", "publish-qualified-development.yml",
     "broker.yml", "ci.yml", "mirror.yml", "observe.yml",
-    "packages.yml", "pin.yml",
+    "packages.yml", "pin.yml", "pin-mirrors.yml",
     "pin-target.yml", "release.yml",
     "retention.yml", "runner-build.yml", "stable.yml", "system.yml",
 }
@@ -54,6 +54,12 @@ for value in ("security_rollover:", "SECURITY_REFERENCE", "Early security rollov
     require(value in pin_workflow, f"Pin FreeBSD security rollover contract is missing {value!r}")
 require("force:" not in pin_workflow and "FORCE_PIN" not in pin_workflow,
         "Pin FreeBSD retains a generic early-force escape hatch")
+pin_mirrors_workflow = read(".github/workflows/pin-mirrors.yml")
+for value in ("scripts/pin_mirrors.py missing", "scripts/pin_mirrors.py record",
+              "dispatch observe.yml", "dispatch mirror.yml", "gh pr merge"):
+    require(value in pin_mirrors_workflow, f"pin-mirrors is missing {value!r}")
+require("uses: ./.github/workflows/mirror.yml" not in pin_mirrors_workflow,
+        "mirror.yml must be dispatched directly; the broker issues mirror-writer to no caller")
 require("apt-get" not in pin_workflow,
         "the dedicated pin runner must be provisioned outside workflows")
 for value in ("build_host", "ubuntu-24.04", "Prepare disposable GitHub build host",

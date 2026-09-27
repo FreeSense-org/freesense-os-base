@@ -1,0 +1,132 @@
+name: Cut the mirrors for the current FreeBSD pin
+
+# pin.yml writes a pin without mirrors, and the delta build seeds from the
+# mirror (about 475 of 569 amd64 packages prebuilt instead of the smaller
+# binary seed). After every rollover this cuts a mirror per architecture and
+# pins it. It runs after pin.yml has usually merged; with mirrors already
+# pinned it stops at the first step.
+#
+# Observe and Mirror are dispatched as their own runs rather than called: the
+# credential broker issues mirror-writer only to a directly dispatched
+# mirror.yml, and this keeps that boundary unchanged.
+
+on:
+  schedule:
+    - cron: "30 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  actions: write
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: pin-mirrors
+  cancel-in-progress: false
+
+jobs:
+  mirrors:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 420
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          fetch-depth: 0
+
+      - id: missing
+        name: Find architectures without a pinned mirror
+        run: |
+          set -euo pipefail
+          archs=$(python3 scripts/pin_mirrors.py missing | tr '\n' ' ' | sed 's/ *$//')
+          echo "archs=${archs}" >>"${GITHUB_OUTPUT}"
+          if [[ -z ${archs} ]]; then
+            echo "Every architecture already has a pinned mirror."
+          else
+            echo "Cutting mirrors for: ${archs}"
+          fi
+          sha256sum config/freebsd-16.json | cut -d' ' -f1 >"${RUNNER_TEMP}/pin.sha256"
+
+      - name: Observe, then mirror, each architecture
+        if: steps.missing.outputs.archs != ''
+        env:
+          ARCHS: ${{ steps.missing.outputs.archs }}
+        run: |
+          set -euo pipefail
+          # gh workflow run prints no run id. Dispatches happen one at a time,
+          # so the newest dispatched run of that workflow created since just
+          # before this dispatch is ours (5 s allows for clock skew).
+          dispatch() {
+            workflow=$1 arch=$2; shift 2
+            since=$(date -u -d '-5 seconds' +%Y-%m-%dT%H:%M:%SZ)
+            gh workflow run "${workflow}" --ref main -f "architecture=${arch}" "$@" >&2
+            for _ in $(seq 60); do
+              sleep 10
+              id=$(gh run list --workflow "${workflow}" --event workflow_dispatch --limit 20 \
+                --json databaseId,createdAt \
+                --jq "[.[] | select(.createdAt >= \"${since}\")] | sort_by(.createdAt) | last | .databaseId // empty")
+              [[ -n ${id} ]] && { echo "${id}"; return 0; }
+            done
+            echo "no ${workflow} run appeared for ${arch}" >&2
+            return 1
+          }
+          declare -A observe
+          for arch in ${ARCHS}; do
+            observe[${arch}]=$(dispatch observe.yml "${arch}")
+            echo "Observe ${arch}: run ${observe[${arch}]}"
+          done
+          for arch in ${ARCHS}; do
+            gh run watch "${observe[${arch}]}" --interval 60 --exit-status >/dev/null
+            echo "Observe ${arch} succeeded"
+          done
+          source_sha=$(gh api repos/FreeSense-org/freesense/commits/main --jq .sha)
+          generation=$(date -u +%s)
+          declare -A mirror
+          for arch in ${ARCHS}; do
+            mirror[${arch}]=$(dispatch mirror.yml "${arch}" \
+              -f "observe_run_id=${observe[${arch}]}" -f "source_sha=${source_sha}" \
+              -f "generation=${generation}")
+            echo "Mirror ${arch}: run ${mirror[${arch}]}"
+          done
+          args=()
+          for arch in ${ARCHS}; do
+            gh run watch "${mirror[${arch}]}" --interval 60 --exit-status >/dev/null
+            echo "Mirror ${arch} succeeded"
+            gh run download "${mirror[${arch}]}" --name "mirror-${arch}" --dir "${RUNNER_TEMP}/mirror-${arch}"
+            args+=(--mirror "${arch}" "${RUNNER_TEMP}/mirror-${arch}")
+          done
+          git fetch --no-tags origin main
+          git show origin/main:config/freebsd-16.json | sha256sum | cut -d' ' -f1 | cmp -s - "${RUNNER_TEMP}/pin.sha256" || {
+            echo "the pin on main changed while mirrors were cut; the next run starts over" >&2
+            exit 1
+          }
+          python3 scripts/pin_mirrors.py record "${args[@]}"
+          python3 scripts/pin_mirrors.py missing | { ! grep -q .; }
+
+      - name: Open or update the single mirror PR
+        if: steps.missing.outputs.archs != ''
+        env:
+          ARCHS: ${{ steps.missing.outputs.archs }}
+        run: |
+          set -euo pipefail
+          branch=automation/freebsd-mirror
+          cp config/freebsd-16.json "${RUNNER_TEMP}/freebsd-16.json"
+          git config user.name freesense-ci
+          git config user.email ci@freesense.org
+          git checkout -- config/freebsd-16.json
+          git switch -C "${branch}" origin/main
+          cp "${RUNNER_TEMP}/freebsd-16.json" config/freebsd-16.json
+          git add config/freebsd-16.json
+          git commit -m "build: pin the mirrors cut for the current FreeBSD snapshot (${ARCHS})"
+          git push --force origin "HEAD:refs/heads/${branch}"
+          number=$(gh pr list --head "${branch}" --state open --json number --jq '.[0].number // empty')
+          if [[ -z "${number}" ]]; then
+            gh pr create --head "${branch}" --base main \
+              --title "Pin the mirrors for the current FreeBSD snapshot" \
+              --body "Automated: observed the upstream ports commit and cut the frozen mirror for ${ARCHS}, then recorded each mirror's plan object, fingerprint and ports commit in the pin (pin-mirrors.yml run ${GITHUB_RUN_ID}). The delta build seeds from these mirrors."
+            number=$(gh pr list --head "${branch}" --state open --json number --jq '.[0].number')
+          fi
+          gh workflow run ci.yml --ref "${branch}"
+          gh pr merge "${number}" --auto --squash || echo "Auto-merge could not be enabled; PR #${number} remains open for review."
+          echo "Dispatched required CI and configured auto-merge for PR #${number}."
