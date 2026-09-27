@@ -328,9 +328,20 @@ EOF
 IGNORE_OSVERSION: true
 ASSUME_ALWAYS_YES: true
 EOF
+  # lang/go/bsd.go.mk IGNOREs the Go compilers under qemu-user, and Poudriere
+  # trims IGNOREd ports and their dependents before it looks for existing
+  # packages, so emulated arm64 builds skipped every Go program although the
+  # mirror supplies the compilers. A .MAKEFLAGS (command-line) assignment
+  # outranks the port's own: IGNORE reads empty to Poudriere, the mirrored
+  # package is used, and a missing compiler is still refused by bsd.port.mk's
+  # defined(IGNORE) check. This is build environment, not a package option, so
+  # it lives here rather than in the audited FreeSense make.conf.
   cat >/usr/local/etc/poudriere.d/make.conf <<'EOF'
 IGNORE_OSVERSION=yes
 PKG_ENV+= IGNORE_OSVERSION=yes
+.if defined(QEMU_EMULATING) && ${.CURDIR:M*/lang/go1[0-9][0-9]}
+.MAKEFLAGS: IGNORE=
+.endif
 EOF
   cp -f /usr/local/etc/poudriere.d/pkg.conf /usr/local/etc/pkg.conf
   cp -f /usr/local/etc/poudriere.d/pkg.conf /etc/pkg.conf
