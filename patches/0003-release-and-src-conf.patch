@@ -210,8 +210,18 @@ index 00000000000..02cbb6bb449
 +BOOT_BOOT0_COMCONSOLE_SPEED=0
 diff --git a/release/conf/pfSense_src-env.conf b/release/conf/pfSense_src-env.conf
 new file mode 100644
-index 00000000000..b3fbbc5d9b5
+index 00000000000..2ed7677595a
 --- /dev/null
 +++ b/release/conf/pfSense_src-env.conf
-@@ -0,0 +1 @@
+@@ -0,0 +1,11 @@
 +WITH_META_MODE=YES
++# The build VM is the pinned FreeBSD snapshot, so its LLVM binary utilities
++# (multi-target, same LLVM as the source tree) can build the kernel. Giving
++# their full paths stops FreeBSD bootstrapping LLVM for llvm-ar/nm/objcopy/size
++# (Makefile.inc1: MK_LLVM_BINUTILS_BOOTSTRAP=no when all six are absolute).
++XAR?=/usr/bin/ar
++XNM?=/usr/bin/nm
++XOBJCOPY?=/usr/bin/objcopy
++XSIZE?=/usr/bin/size
++XSTRINGS?=/usr/bin/strings
++XSTRIPBIN?=/usr/bin/strip
