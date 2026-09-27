@@ -66,7 +66,8 @@ def main() -> None:
         root = Path(directory)
         mirrors[arch] = mirror_entry(arch, json.loads((root / "mirror-plan.json").read_text(encoding="utf-8")),
                                      json.loads((root / "mirror-plan.blob.json").read_text(encoding="utf-8")))
-    args.pin.write_text(json.dumps(apply(pin, mirrors), indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    args.pin.write_text(json.dumps(apply(pin, mirrors), indent=2, sort_keys=True) + "\n",
+                        encoding="utf-8", newline="\n")
 
 
 if __name__ == "__main__":
