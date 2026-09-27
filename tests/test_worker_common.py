@@ -342,10 +342,11 @@ class WorkerVersionValidationTests(unittest.TestCase):
         merge_at = final.index("/root/mirror-repo/All")
         seed_at = final.index("seed_poudriere_repository")
         self.assertLess(merge_at, seed_at, "the mirror must be merged before the seed")
-        # and prepare_system_ports must not seed separately on this path
+        # and prepare_system_ports must not seed separately on this path; only
+        # a whole (dedicated, shardless) build seeds the mirror there.
         prepare = system[system.index("prepare_system_ports() {"):]
         prepare = prepare[:prepare.index(chr(10) + "}" + chr(10))]
-        self.assertIn('if [ "${roots_mode}" != full ]; then', prepare)
+        self.assertIn('if [ "${roots_mode}" != full ] || [ "${SYSTEM_PART}" = full ]; then', prepare)
 
     def test_both_root_paths_reach_the_shard_slice(self) -> None:
         # The delta branch must not return early: the tail after it partitions

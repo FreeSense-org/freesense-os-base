@@ -86,6 +86,9 @@ if [ "${SYSTEM_PART}" = finalize ]; then
     done
     shard=$((shard + 1))
   done
+elif [ "${SYSTEM_PART}" = full ]; then
+  # The dedicated host builds every Optional root in this one VM.
+  :
 else
   # poudriere_packages is a template: 34 of its origins are spelled
   # %%PRODUCT_NAME%%-pkg-*. partition_roots.py's ORIGIN pattern does not admit

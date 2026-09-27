@@ -10,6 +10,21 @@ from build_platform import load_policy, target
 from multiarch_pin import SHA256, validate, worker
 
 
+def farm_matrix(stage: str, build_host: str) -> list[dict]:
+    """Parts a component is built in.
+
+    The dedicated host runs one job at a time, so splitting there only repeats
+    VM setup per part and rebuilds dependencies shared between shards. It
+    builds the component whole; hosted runners keep the parallel farm.
+    """
+    if build_host == "dedicated":
+        return [{"part": "full", "shard": "0"}]
+    matrix = [{"part": "shard", "shard": str(index)} for index in range(8)]
+    if stage == "system":
+        matrix.insert(0, {"part": "core", "shard": "0"})
+    return matrix
+
+
 def check(plan: dict, stage: str, generation: str, pin: dict, policy: dict) -> dict:
     if stage not in {"system", "packages"} or not re.fullmatch(r"[1-9][0-9]*", generation):
         raise ValueError("farm requires a component and reserved pair generation")
@@ -46,9 +61,7 @@ def check(plan: dict, stage: str, generation: str, pin: dict, policy: dict) -> d
             raise ValueError(f"invalid source identity: {field}")
     if plan["os_base_sha"] != os.environ.get("GITHUB_SHA", plan["os_base_sha"]):
         raise ValueError("coordinator plan was created with a different workflow revision")
-    matrix = [{"part": "shard", "shard": str(index)} for index in range(8)]
-    if stage == "system":
-        matrix.insert(0, {"part": "core", "shard": "0"})
+    matrix = farm_matrix(stage, plan["build_host"])
     return {"fingerprint": plan[stage], "matrix": {"include": matrix}}
 
 

@@ -33,8 +33,10 @@ policy-configured Development train:
   packages.
 
 The Development multiarch cycle (`development-multiarch.yml`) starts every day at
-01:00 UTC and rebuilds only the parts whose inputs changed. Dedicated builds retain the shared
-KVM concurrency group. Hosted System farm parts use stable per-part groups so
+01:00 UTC and rebuilds only the parts whose inputs changed. The dedicated
+build-runner builds System and Optional Packages whole, one VM per component;
+the core/shard/finalize farm is kept for hosted runners, where its parts run in
+parallel. Dedicated builds retain the shared KVM concurrency group. Hosted System farm parts use stable per-part groups so
 separate workflow runs cannot overwrite each other's work while all shards in
 one farm can execute concurrently. A successful new System also produces one
 development ISO for that System identity.
