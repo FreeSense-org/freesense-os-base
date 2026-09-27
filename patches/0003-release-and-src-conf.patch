@@ -210,9 +210,8 @@ index 00000000000..02cbb6bb449
 +BOOT_BOOT0_COMCONSOLE_SPEED=0
 diff --git a/release/conf/pfSense_src-env.conf b/release/conf/pfSense_src-env.conf
 new file mode 100644
-index 00000000000..90c70e74fa7
+index 00000000000..b3fbbc5d9b5
 --- /dev/null
 +++ b/release/conf/pfSense_src-env.conf
-@@ -0,0 +1,2 @@
+@@ -0,0 +1 @@
 +WITH_META_MODE=YES
-+WITHOUT_SYSTEM_COMPILER=YES

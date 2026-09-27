@@ -47,14 +47,21 @@ if [ "${STAGE}" = system ] || [ "${STAGE}" = packages ]; then
   [ "${FARM_LAYOUT}" = delta-v1 ] || { echo "System and Optional require the delta farm" >&2; exit 1; }
 fi
 if [ "${FARM_LAYOUT}" = delta-v1 ]; then
-  [ "${SYSTEM_SHARD_COUNT}" -eq 8 ] || { echo "delta farm requires eight shards" >&2; exit 1; }
+  if [ "${SYSTEM_PART}" = full ]; then
+    # The dedicated host builds a component whole, in one VM.
+    [ "${SYSTEM_SHARD_INDEX}:${SYSTEM_SHARD_COUNT}" = 0:1 ] || {
+      echo "a whole delta build requires default shard coordinates" >&2; exit 1;
+    }
+  else
+    [ "${SYSTEM_SHARD_COUNT}" -eq 8 ] || { echo "delta farm requires eight shards" >&2; exit 1; }
+  fi
   [ "${SHARD_POLICY_VERSION}" = dependency-cost-v2 ] || { echo "invalid shard policy version" >&2; exit 1; }
   case "${PREVIOUS_FREESENSE_REPOSITORY}" in
     '') ;;
     *[!0-9a-f]*) echo "invalid previous FreeSense repository" >&2; exit 1 ;;
     *) [ "${#PREVIOUS_FREESENSE_REPOSITORY}" -eq 64 ] || { echo "invalid previous FreeSense repository" >&2; exit 1; } ;;
   esac
-  case "${STAGE}:${SYSTEM_PART}" in system:core|system:shard|system:finalize|packages:shard|packages:finalize) : ;;
+  case "${STAGE}:${SYSTEM_PART}" in system:core|system:shard|system:finalize|system:full|packages:shard|packages:finalize|packages:full) : ;;
     *) echo "invalid delta farm part" >&2; exit 1 ;;
   esac
   case "${BINARY_SEED_OBJECT}" in inputs/sha256/*) : ;; *) echo "delta farm requires a pinned binary seed" >&2; exit 1 ;; esac

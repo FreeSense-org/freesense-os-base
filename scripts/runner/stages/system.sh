@@ -179,8 +179,9 @@ prepare_system_ports() {
     # finalize is the exception: it seeds once, from the mirror merged with
     # the collected shard output. seed_poudriere_repository replaces the
     # repository wholesale, so seeding here would simply be deleted by that
-    # call and the build would run with no lower layer at all.
-    if [ "${roots_mode}" != full ]; then
+    # call and the build would run with no lower layer at all. A whole build
+    # has no shard output, so it seeds the mirror here.
+    if [ "${roots_mode}" != full ] || [ "${SYSTEM_PART}" = full ]; then
       phase system-mirror-seed
       seed_poudriere_repository /root/mirror-repo
       phase system-mirror-seed-ready

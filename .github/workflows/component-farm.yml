@@ -59,8 +59,8 @@ jobs:
     needs: prepare
     strategy:
       fail-fast: false
-      # One self-hosted build-runner takes one job at a time; queue there one
-      # part per farm so no part waits past GitHub's 24-hour queue limit.
+      # The dedicated build-runner gets a single whole part (component_farm.py);
+      # hosted runners build the eight-shard farm in parallel.
       max-parallel: ${{ fromJSON(inputs.plan).build_host == 'dedicated' && 1 || 9 }}
       matrix: ${{ fromJSON(needs.prepare.outputs.matrix) }}
     uses: ./.github/workflows/runner-build.yml
@@ -108,11 +108,13 @@ jobs:
       shard_policy_version: dependency-cost-v2
       system_part: ${{ matrix.part }}
       system_shard_index: ${{ matrix.shard }}
-      system_shard_count: '8'
+      system_shard_count: ${{ matrix.part == 'full' && '1' || '8' }}
     secrets: inherit
 
   finalize:
     needs: [prepare, parts]
+    # A whole part already composed and published the component.
+    if: fromJSON(inputs.plan).build_host != 'dedicated'
     uses: ./.github/workflows/runner-build.yml
     with:
       stage: ${{ inputs.stage }}
