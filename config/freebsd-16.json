@@ -458,8 +458,8 @@
         "size": 175151160
       },
       "mirror": {
-        "fingerprint": "ea32f709f212f6ad0335ba3befd5c997218cdf359acd1a73bdb324eb50be8266",
-        "object": "inputs/sha256/3cfdac772316f4184941f4d65084de44fe9874a3f64492cdba7607ce1019e335",
+        "fingerprint": "c2f56bd21625d7775bc44a563c2e87544a8a135ec0ae1b0c9f568f561f9c5f37",
+        "object": "inputs/sha256/017b986cbff11d95349124f6921cad19fe7ebe210702b5239a3e25d91f900f54",
         "ports_commit": "cc0257f28136d6ca4caee40976b203dea30a5462"
       },
       "package_catalog": {
@@ -800,8 +800,8 @@
         "size": 163399564
       },
       "mirror": {
-        "fingerprint": "5d2153a7d6785c10ee720f2192ef208ce902bee66fe466ad84112f3e6bb98283",
-        "object": "inputs/sha256/9575c4a10ab88c73b202a4cbe3369800d54696b8de033b002e70c9af21f565ff",
+        "fingerprint": "6866c2556563ce1f5df01adab8674ab26a2731ebab3fbb7f9317315b5165317e",
+        "object": "inputs/sha256/367a3592cc7a7b052f1b0a0303b103e39fbb05d7962517e80d5ddb3d06ecb13a",
         "ports_commit": "e26b1e4bc8ec94e73586539808ef21695232e8aa"
       },
       "package_catalog": {
