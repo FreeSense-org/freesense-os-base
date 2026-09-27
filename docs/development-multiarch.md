@@ -50,6 +50,12 @@ for both targets. The collector rejects unaudited make.conf assignments, and the
 selector excludes overlays, custom patches and kernel-sensitive packages.
 The v4 pin orchestrator in `pin.yml` resolves common source revisions, runs `pin-target.yml` in parallel on native amd64 and native ARM64 runners, downloads target reports, verifies identical revision and builddate, checks mirrored R2 inputs, assembles the pin via `assemble_multiarch_pin.py`, updates `config/freebsd-16.json` only when both targets pass, and opens or updates the automated pin pull request without force-pushing shared history.
 
+That pin carries no frozen mirror, so `pin-mirrors.yml` follows it daily at 06:30 UTC: for each
+architecture without a pinned mirror it dispatches `observe.yml`, then `mirror.yml` (dispatched,
+not called, because the broker issues `mirror-writer` only to a directly dispatched `mirror.yml`),
+records each plan object, fingerprint and ports commit with `scripts/pin_mirrors.py`, and opens the
+`automation/freebsd-mirror` pull request with auto-merge. With every mirror pinned it exits at once.
+
 Delta finalizers discard conflicting package variants from their disposable
 seed, remembering discarded identities across later shards. Poudriere then runs
 the complete root list. The final repository merge remains strict; this repair
