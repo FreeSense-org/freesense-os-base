@@ -32,6 +32,10 @@ def verify(pages: list[dict], run_id: int, run_attempt: int | None = None) -> di
             continue  # This verifier records completed build jobs, not itself.
         if job.get("conclusion") == "skipped":
             continue
+        # verify_pair needs every build job, so a job still queued or running
+        # here is a publication job running beside it, not missing evidence.
+        if job.get("status") in {"queued", "waiting", "pending", "requested", "in_progress"}:
+            continue
         if job.get("status") != "completed" or not job.get("started_at") or not job.get("completed_at"):
             raise ValueError("build job timing evidence is incomplete")
         start = datetime.fromisoformat(job["started_at"].replace("Z", "+00:00"))
@@ -39,11 +43,16 @@ def verify(pages: list[dict], run_id: int, run_attempt: int | None = None) -> di
         if start.tzinfo is None or end.tzinfo is None:
             raise ValueError("job timing evidence must include timezones")
         duration = (end - start).total_seconds()
-        if duration < 0 or duration >= WATCHDOG_SECONDS:
+        hosted = "self-hosted" not in job.get("labels", [])
+        if duration < 0:
+            raise ValueError(f"job has a negative duration: {job['name']}")
+        # The watchdog guards GitHub's 6-hour limit for hosted jobs; the
+        # dedicated build-runner builds a whole component under its own limit.
+        if hosted and duration >= WATCHDOG_SECONDS:
             raise ValueError(f"job violates the 5.5-hour watchdog: {job['name']}")
         durations.append({"id": job["id"], "name": job["name"], "seconds": duration,
                           "conclusion": job.get("conclusion")})
-        if "self-hosted" not in job.get("labels", []) and end > start:
+        if hosted and end > start:
             intervals.extend([(start, 1), (end, -1)])
     if not durations:
         raise ValueError("no completed jobs in canary timing evidence")

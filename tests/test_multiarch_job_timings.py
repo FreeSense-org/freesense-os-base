@@ -32,9 +32,23 @@ class TimingTests(unittest.TestCase):
             self.verify([job(i) for i in range(20)])
 
     def test_watchdog_boundary_and_negative_duration_fail(self):
-        for duration in (-1, timings.WATCHDOG_SECONDS, timings.WATCHDOG_SECONDS + 1):
+        for duration in (timings.WATCHDOG_SECONDS, timings.WATCHDOG_SECONDS + 1):
             with self.subTest(duration=duration), self.assertRaisesRegex(ValueError, "watchdog"):
                 self.verify([job(1, duration=duration)])
+        with self.assertRaisesRegex(ValueError, "negative duration"):
+            self.verify([job(1, duration=-1)])
+
+    def test_dedicated_whole_component_may_exceed_the_hosted_watchdog(self):
+        report = self.verify([job(1), job(2, duration=timings.WATCHDOG_SECONDS + 3600, dedicated=True)])
+        self.assertEqual(report["maximum_job_seconds"], timings.WATCHDOG_SECONDS + 3600)
+        with self.assertRaisesRegex(ValueError, "negative duration"):
+            self.verify([job(1, duration=-1, dedicated=True)])
+
+    def test_publication_jobs_running_beside_the_verifier_are_not_evidence(self):
+        publishing = {"id": 9, "run_id": 123, "name": "publish_amd64 / publish", "status": "in_progress"}
+        queued = {"id": 10, "run_id": 123, "name": "publish_arm64 / publish", "status": "queued"}
+        report = self.verify([job(1), publishing, queued])
+        self.assertEqual([item["id"] for item in report["jobs"]], [1])
 
     def test_a_previous_attempt_does_not_condemn_this_one(self):
         """filter=all returns every attempt of the run.
