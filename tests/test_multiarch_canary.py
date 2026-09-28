@@ -154,6 +154,21 @@ class CanaryTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "shared pair generation"):
             self.verify()
 
+    def test_reused_system_may_carry_an_older_os_definition_but_not_other_sources(self):
+        document = json.loads(self.documents["amd64"])
+        document["provenance"]["os_definition"] = "9" * 40
+        self.documents["amd64"] = encoded(document)
+        self.verify()
+        document["provenance"]["os_definition"] = "not-a-commit"
+        self.documents["amd64"] = encoded(document)
+        with self.assertRaises((ValueError, SystemExit)):  # the download schema rejects it first
+            self.verify()
+        document["provenance"]["os_definition"] = "9" * 40
+        document["provenance"]["source"] = "9" * 40
+        self.documents["amd64"] = encoded(document)
+        with self.assertRaisesRegex(ValueError, "source closure"):
+            self.verify()
+
     def test_reused_artifact_can_keep_its_original_bundle_identity(self):
         url = json.loads(self.documents["arm64"])["artifacts"][0]["marker_url"]
         marker = json.loads(self.objects[url])
