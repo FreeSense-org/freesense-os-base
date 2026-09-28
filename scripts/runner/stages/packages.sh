@@ -14,6 +14,23 @@ clone_exact https://github.com/FreeSense-org/freesense-os-base.git \
   /root/os-definition "${OS_BASE_SHA}"
 configure_source
 fetch_repository system "${SYSTEM_ID}" /root/system-repo
+
+# The Optional repository is seeded with the whole System repository, whose core
+# packages (FreeSense-base, the kernel, FreeSense-rc, ...) come from
+# build.sh --build-core rather than ports and so appear in no mirror plan list.
+# The System stage verified them already; sanction them here as well, so the
+# check still catches anything Optional itself builds outside the plan.
+optional_verify_plan() {
+  for system_package in /root/system-repo/All/*.pkg; do
+    [ -f "${system_package}" ] || continue
+    pkg query -F "${system_package}" '%n'
+  done | LC_ALL=C sort -u >/tmp/optional-system-names
+  jq --rawfile system /tmp/optional-system-names \
+    '.delta_packages += ($system | split("\n") | map(select(length > 0)))' \
+    /root/mirror-plan.json >/tmp/optional-verify-plan.json
+  printf '%s\n' /tmp/optional-verify-plan.json
+}
+
 cd /root/freesense-src
 configure_poudriere
 create_jail
@@ -138,7 +155,7 @@ if [ "${SYSTEM_PART}" = shard ]; then
     phase optional-packages-ready
     latest=$(poudriere_latest_repository)
     if [ -n "${MIRROR_PLAN_OBJECT}" ]; then
-      verify_delta_build "${latest}" /root/mirror-plan.json
+      verify_delta_build "${latest}" "$(optional_verify_plan)"
     fi
     CHECKPOINT_BATCH=${next_batch}; export CHECKPOINT_BATCH
     publish_system_checkpoint shard "${SYSTEM_SHARD_INDEX}" "${latest}"
@@ -151,7 +168,7 @@ run_poudriere_build env NOLINUX=yes IGNORE_OSVERSION=yes ASSUME_ALWAYS_YES=yes .
 phase optional-packages-ready
 latest=$(poudriere_latest_repository)
 if [ -n "${MIRROR_PLAN_OBJECT}" ]; then
-  verify_delta_build "${latest}" /root/mirror-plan.json
+  verify_delta_build "${latest}" "$(optional_verify_plan)"
 fi
 mkdir -p /root/work/packages/All
 inventory=/tmp/combined-package-inventory
