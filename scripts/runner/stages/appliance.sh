@@ -48,7 +48,7 @@ chroot "${root}" /usr/bin/env PKG_INSTALL_EPOCH="${SOURCE_DATE_EPOCH}" /bin/sh -
   pkg add /tmp/pkg-bootstrap.pkg
   pkg -o REPOS_DIR=/tmp/assembly-repos -o PKG_CACHEDIR=/tmp/assembly-cache \
     install -y -r FreeSenseAssembly FreeSense FreeSense-base \
-    FreeSense-kernel-FreeSense FreeSense-rc FreeSense-system \
+    FreeSense-kernel-FreeSense FreeSense-system \
     FreeSense-default-config-serial FreeSense-repoc
   pkg -o REPOS_DIR=/tmp/assembly-repos -o PKG_CACHEDIR=/tmp/assembly-cache \
     install -f -y -r FreeSenseAssembly FreeSense-system
