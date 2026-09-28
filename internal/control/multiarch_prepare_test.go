@@ -28,7 +28,7 @@ func preparationFixture(t *testing.T, key *rsa.PrivateKey) (CanaryEvidence, map[
 		abi := map[string]string{"amd64": "FreeBSD:16:amd64", "arm64": "FreeBSD:16:aarch64"}[arch]
 		altabi := map[string]string{"amd64": "freebsd:16:x86:64", "arm64": "freebsd:16:aarch64:64"}[arch]
 		payload := Payload{Channels: map[string]Channel{"devel": {
-			Name: "devel", Default: true, Version: "1.1.0", PackageTrain: "1.1",
+			Name: "devel", Description: "Development version", Default: true, Version: "1.1.0", PackageTrain: "1.1",
 			Architecture: arch, PackageArch: packageArch, ABI: abi, AltABI: altabi,
 			System: &Component{Fingerprint: entry.SystemFingerprint, FreeBSDPinID: pin, Verified: true,
 				URL:        "https://pkg.freesense.org/v1/artifacts/system/" + entry.SystemFingerprint + "/" + packageArch,

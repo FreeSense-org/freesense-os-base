@@ -147,7 +147,7 @@ def main() -> int:
             "schema_version": "freesense.channels/v3",
             "channels": {"devel": {
                 "name": "devel",
-                "description": "Experimental staged ARM64 acceptance build",
+                "description": "Development version",
                 "version": closure["release_version"],
                 "package_train": inputs["package_train"],
                 "abi": target["abi"],

@@ -37,9 +37,10 @@ func pairGeneration(channel Channel) uint64 {
 
 // qualifiedPair identifies one published System/Packages pair.
 type qualifiedPair struct {
-	Generation uint64
-	System     string
-	Packages   string
+	Generation  uint64
+	System      string
+	Packages    string
+	Description string
 }
 
 func parseQualified(repositories, release []byte, architecture string, key *rsa.PublicKey) (qualifiedPair, error) {
@@ -68,7 +69,8 @@ func parseQualified(repositories, release []byte, architecture string, key *rsa.
 	if document.System != channel.System.Fingerprint || document.Packages != channel.Packages.Fingerprint {
 		return qualifiedPair{}, errors.New("qualified release does not bind its exact repository components")
 	}
-	return qualifiedPair{Generation: document.Generation, System: document.System, Packages: document.Packages}, nil
+	return qualifiedPair{Generation: document.Generation, System: document.System, Packages: document.Packages,
+		Description: channel.Description}, nil
 }
 
 func putQualifiedDocument(ctx context.Context, backend store.Backend, key string, data []byte, pair qualifiedPair, signed bool, publicKey *rsa.PublicKey) (bool, error) {
@@ -100,7 +102,7 @@ func putQualifiedDocument(ctx context.Context, backend store.Backend, key string
 			return false, nil
 		}
 		var oldGeneration uint64
-		var oldSystem, oldPackages string
+		var oldSystem, oldPackages, oldDescription string
 		if signed {
 			old, parseErr := ParseSigned(current.Data, publicKey)
 			if parseErr != nil {
@@ -112,6 +114,7 @@ func putQualifiedDocument(ctx context.Context, backend store.Backend, key string
 			}
 			oldGeneration = pairGeneration(channel)
 			oldSystem = channel.System.Fingerprint
+			oldDescription = channel.Description
 			if channel.Packages != nil {
 				oldPackages = channel.Packages.Fingerprint
 			}
@@ -130,11 +133,16 @@ func putQualifiedDocument(ctx context.Context, backend store.Backend, key string
 			// A later cycle republishing the pair already live at this
 			// generation regenerates the documents (fresh timestamps) but not
 			// their identity: the first publication stands. A different pair
-			// at the same generation is still refused.
-			if pair.System == oldSystem && pair.Packages == oldPackages {
+			// at the same generation is still refused. The one exception is a
+			// signed manifest whose channel label differs (the staged closure
+			// once labelled both architectures "Experimental staged ARM64
+			// acceptance build"): the same pair is rewritten to correct it.
+			if pair.System != oldSystem || pair.Packages != oldPackages {
+				return false, errors.New("qualified generation cannot be rewritten")
+			}
+			if !signed || oldDescription == pair.Description {
 				return false, nil
 			}
-			return false, errors.New("qualified generation cannot be rewritten")
 		}
 		_, swapErr := backend.CompareAndSwap(ctx, key, current.ETag, content)
 		if swapErr == nil {
