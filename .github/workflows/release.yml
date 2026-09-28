@@ -212,7 +212,7 @@ jobs:
     needs: release_gate
     if: >-
       always() &&
-      (((github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call') &&
+      ((github.event_name != 'workflow_run' &&
        (inputs.operation == 'bundle' || inputs.operation == 'retry-stable-bundle')) ||
        (github.event_name == 'workflow_run' &&
         needs.release_gate.result == 'success' && needs.release_gate.outputs.ready == 'true'))
