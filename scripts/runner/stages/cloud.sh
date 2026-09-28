@@ -102,7 +102,7 @@ run_in_cloud_chroot "${root}" /usr/bin/env \
   done
   pkg -o REPOS_DIR=/tmp/assembly-repos \
     -o PKG_CACHEDIR=/tmp/assembly-cache install -y -r FreeSenseAssembly \
-    FreeSense FreeSense-base FreeSense-kernel-FreeSense FreeSense-rc FreeSense-system \
+    FreeSense FreeSense-base FreeSense-kernel-FreeSense FreeSense-system \
     FreeSense-default-config-serial FreeSense-repoc FreeSense-cloud-init qemu-guest-agent
   # FreeSense-base expands its base payload during installation. Reapply the
   # signed product overlay last so its absolute /etc files win deterministically.
