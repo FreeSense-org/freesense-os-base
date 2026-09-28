@@ -69,6 +69,21 @@ jobs:
             --repositories "${RUNNER_TEMP}/bundle/repository/repos.${package_arch}.manifest.json" \
             --release "${RUNNER_TEMP}/bundle/release/devel.json" \
             --public-key config/channel-signing-public.pem
+
+  # The broker issues the coordinator role only to the build-coordinator
+  # environment, and the channel roles only to channel-publisher, so the cycle
+  # is marked published by its own job once the architecture is published.
+  cycle:
+    needs: publish
+    runs-on: ubuntu-24.04
+    environment: build-coordinator
+    # amd64 and arm64 each mark the same cycle document; one at a time.
+    concurrency: {group: development-cycle-commit, cancel-in-progress: false}
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+        with: {go-version-file: go.mod, cache: false}
+      - run: go build -trimpath -o "${RUNNER_TEMP}/fsbuild" ./cmd/fsbuild
       - name: Acquire cycle coordinator
         env:
           R2_CREDENTIAL_BROKER_URL: ${{ vars.R2_CREDENTIAL_BROKER_URL }}
