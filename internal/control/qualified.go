@@ -67,7 +67,12 @@ func parseQualified(repositories, release []byte, architecture string, key *rsa.
 func putQualifiedDocument(ctx context.Context, backend store.Backend, key string, data []byte, generation uint64, signed bool, publicKey *rsa.PublicKey) (bool, error) {
 	content := store.BytesContent(data)
 	for attempt := 0; attempt < 5; attempt++ {
-		current, err := backend.Get(ctx, key)
+		// The published documents predate fsbuild publication (the live
+		// releases/devel.arm64.json was uploaded without fsbuild's SHA-256
+		// metadata), so read them like artifacts: the bytes are hashed either
+		// way, the manifest's signature and the release fields are verified
+		// below, and the compare-and-swap still uses the object's ETag.
+		current, err := store.GetArtifact(ctx, backend, key)
 		if errors.Is(err, store.ErrNotFound) {
 			_, created, putErr := backend.PutIfAbsent(ctx, key, content)
 			if putErr == nil && created {
