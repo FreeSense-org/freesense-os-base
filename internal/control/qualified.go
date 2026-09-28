@@ -20,6 +20,21 @@ type qualifiedReleaseIdentity struct {
 	Packages      string `json:"packages_fingerprint"`
 }
 
+// pairGeneration is the newest generation among a published pair's
+// components. A component is reused across cycles while its fingerprint is
+// unchanged and keeps the generation it was built in, so a System-only or
+// Packages-only change legitimately pairs two generations.
+func pairGeneration(channel Channel) uint64 {
+	var generation uint64
+	if channel.System != nil {
+		generation = channel.System.Generation
+	}
+	if channel.Packages != nil && channel.Packages.Generation > generation {
+		generation = channel.Packages.Generation
+	}
+	return generation
+}
+
 func parseQualified(repositories, release []byte, architecture string, key *rsa.PublicKey) (uint64, error) {
 	packageArch := map[string]string{"amd64": "amd64", "arm64": "aarch64"}[architecture]
 	if packageArch == "" {
@@ -33,14 +48,14 @@ func parseQualified(repositories, release []byte, architecture string, key *rsa.
 		return 0, err
 	}
 	channel := payload.Channels["devel"]
-	if channel.System.Generation != channel.Packages.Generation {
-		return 0, errors.New("qualified components must share the frozen cycle generation")
-	}
 	var document qualifiedReleaseIdentity
 	if err := json.Unmarshal(release, &document); err != nil {
 		return 0, err
 	}
-	if document.Channel != "devel" || document.Architecture != architecture || document.Generation != channel.System.Generation || document.Generation == 0 {
+	// The release carries the cycle's pair generation. It can be newer than
+	// both components (one reverted to a fingerprint an earlier cycle built),
+	// but never older than either.
+	if document.Channel != "devel" || document.Architecture != architecture || document.Generation == 0 || document.Generation < pairGeneration(channel) {
 		return 0, errors.New("qualified release does not bind its repository generation")
 	}
 	if document.System != channel.System.Fingerprint || document.Packages != channel.Packages.Fingerprint {
@@ -79,7 +94,7 @@ func putQualifiedDocument(ctx context.Context, backend store.Backend, key string
 			if !ok || channel.System == nil {
 				return false, errors.New("existing qualified manifest has no Development generation")
 			}
-			oldGeneration = channel.System.Generation
+			oldGeneration = pairGeneration(channel)
 		} else {
 			var old qualifiedReleaseIdentity
 			if json.Unmarshal(current.Data, &old) != nil || old.Channel != "devel" || old.Generation == 0 {
