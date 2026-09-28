@@ -169,12 +169,18 @@ jobs:
         if: inputs.build_host != 'dedicated'
         env:
           SELECTED_HOST: ${{ inputs.build_host }}
+          SELECTED_TARGET: ${{ inputs.target }}
         run: |
           sudo apt-get update
           if [[ "${SELECTED_HOST}" == github-arm64 ]]; then
             sudo apt-get install -y --no-install-recommends qemu-system-arm qemu-utils qemu-efi-aarch64 cloud-image-utils
           else
             sudo apt-get install -y --no-install-recommends qemu-system-x86 qemu-utils ovmf cloud-image-utils
+            # An arm64 image assembled on an amd64 host is boot-checked in an
+            # emulated arm64 VM, which needs the AArch64 QEMU and AAVMF firmware.
+            if [[ "${SELECTED_TARGET}" == arm64 ]]; then
+              sudo apt-get install -y --no-install-recommends qemu-system-arm qemu-efi-aarch64
+            fi
           fi
           sudo chmod a+rw /dev/kvm
           nproc
