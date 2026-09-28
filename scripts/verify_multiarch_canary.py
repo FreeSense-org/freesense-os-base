@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import re
 from pathlib import Path
 import urllib.request
 
@@ -73,12 +74,18 @@ def verify(plan: dict, documents: dict[str, bytes], policy: dict, *, read=fetch_
         if (actual != expected_artifacts(policy, arch) or len(actual) != len(release["artifacts"])
                 or release.get("architecture") != arch or release.get("system") != system_plan["system"]):
             raise ValueError("release is missing artifacts or belongs to a different target/System")
+        provenance = release.get("provenance", {})
         for source, expected in {
             "source": system_plan["source_sha"], "ports": system_plan["ports_sha"],
-            "os_definition": system_plan["os_base_sha"], "freebsd": system_plan["freebsd_sha"],
+            "freebsd": system_plan["freebsd_sha"],
         }.items():
-            if release.get("provenance", {}).get(source) != expected:
+            if provenance.get(source) != expected:
                 raise ValueError("release source closure differs from frozen coordinator plan")
+        # The os-definition commit is recorded but not part of the System
+        # fingerprint: a System reused across os-base changes keeps the commit
+        # that built it, which is older than this cycle's plan.
+        if not re.fullmatch(r"[0-9a-f]{40}", str(provenance.get("os_definition", ""))):
+            raise ValueError("release os-definition provenance is not an exact commit")
         markers, artifact_documents = {}, {}
         for item in release["artifacts"]:
             if (not isinstance(item.get("file"), str) or not item["file"]
