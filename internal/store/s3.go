@@ -642,7 +642,12 @@ func s3ResponseError(method, key string, response *http.Response) error {
 	case http.StatusNotFound:
 		return ErrNotFound
 	case http.StatusConflict, http.StatusPreconditionFailed:
-		return ErrPrecondition
+		// Keep R2's status and message: a precondition that never holds is
+		// otherwise indistinguishable from a real concurrent update.
+		if detail != "" {
+			return fmt.Errorf("%w: S3 %s %q returned %s (%s)", ErrPrecondition, method, key, response.Status, detail)
+		}
+		return fmt.Errorf("%w: S3 %s %q returned %s", ErrPrecondition, method, key, response.Status)
 	default:
 		if detail != "" {
 			return fmt.Errorf(

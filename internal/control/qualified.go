@@ -66,6 +66,8 @@ func parseQualified(repositories, release []byte, architecture string, key *rsa.
 
 func putQualifiedDocument(ctx context.Context, backend store.Backend, key string, data []byte, generation uint64, signed bool, publicKey *rsa.PublicKey) (bool, error) {
 	content := store.BytesContent(data)
+	var lastSwap error
+	var lastETag string
 	for attempt := 0; attempt < 5; attempt++ {
 		// The published documents predate fsbuild publication (the live
 		// releases/devel.arm64.json was uploaded without fsbuild's SHA-256
@@ -86,6 +88,7 @@ func putQualifiedDocument(ctx context.Context, backend store.Backend, key string
 		if err != nil {
 			return false, err
 		}
+		lastETag = current.ETag
 		if bytes.Equal(current.Data, data) {
 			return false, nil
 		}
@@ -113,13 +116,19 @@ func putQualifiedDocument(ctx context.Context, backend store.Backend, key string
 		if generation == oldGeneration {
 			return false, errors.New("qualified generation cannot be rewritten")
 		}
-		if _, swapErr := backend.CompareAndSwap(ctx, key, current.ETag, content); swapErr == nil {
+		_, swapErr := backend.CompareAndSwap(ctx, key, current.ETag, content)
+		if swapErr == nil {
 			return true, nil
-		} else if !errors.Is(swapErr, store.ErrPrecondition) {
+		}
+		if !errors.Is(swapErr, store.ErrPrecondition) {
 			return false, swapErr
 		}
+		lastSwap = swapErr
 	}
-	return false, errors.New("qualified publication changed repeatedly")
+	if lastSwap == nil {
+		return false, fmt.Errorf("qualified publication of %q changed repeatedly", key)
+	}
+	return false, fmt.Errorf("qualified publication of %q changed repeatedly (etag %q): %w", key, lastETag, lastSwap)
 }
 
 // CommitQualified stages the release document and commits the signed repository
