@@ -117,3 +117,44 @@ func TestDevelopmentCycleRejectsSameGenerationInputRewrite(t *testing.T) {
 		t.Fatal("rewrote frozen pin")
 	}
 }
+
+func TestDevelopmentCycleCompletedAllowsSameGenerationReplan(t *testing.T) {
+	// A control-plane change after a published cycle keeps the pair
+	// fingerprint, so the next cycle reserves the published generation again.
+	backend := newMemoryStore()
+	cycle := cycleFixture()
+	done := ArchitectureCycleStatus{System: "complete", Packages: "complete", Artifacts: "complete", Published: true}
+	cycle.Architectures["amd64"], cycle.Architectures["arm64"] = done, done
+	if _, _, err := CommitDevelopmentCycle(context.Background(), backend, cycle); err != nil {
+		t.Fatal(err)
+	}
+	replan := cycleFixture()
+	var nextPlan map[string]any
+	_ = json.Unmarshal(replan.Plan, &nextPlan)
+	nextPlan["os_base_sha"] = strings.Repeat("d", 40)
+	replan.Plan, _ = json.Marshal(nextPlan)
+	if _, updated, err := CommitDevelopmentCycle(context.Background(), backend, replan); err != nil || !updated {
+		t.Fatalf("replan completed cycle: %v %v", updated, err)
+	}
+	stored, _ := backend.Get(context.Background(), DevelopmentCycleKey)
+	var written DevelopmentCycle
+	if err := json.Unmarshal(stored.Data, &written); err != nil {
+		t.Fatal(err)
+	}
+	if written.Architectures["amd64"].Published || written.Architectures["arm64"].Published {
+		t.Fatal("the replanned cycle inherited the previous publication")
+	}
+	// The new cycle is incomplete, so its own inputs are frozen again.
+	other := cycleFixture()
+	if _, _, err := CommitDevelopmentCycle(context.Background(), backend, other); err == nil {
+		t.Fatal("rewrote the replanned cycle's inputs")
+	}
+	// A completed cycle still cannot be replaced under another pin.
+	backend = newMemoryStore()
+	_, _, _ = CommitDevelopmentCycle(context.Background(), backend, cycle)
+	moved := replan
+	moved.Pin = strings.Repeat("b", 64)
+	if _, _, err := CommitDevelopmentCycle(context.Background(), backend, moved); err == nil {
+		t.Fatal("replaced a completed cycle under another pin at the same generation")
+	}
+}

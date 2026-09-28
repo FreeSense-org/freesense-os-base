@@ -120,7 +120,15 @@ func CommitDevelopmentCycle(ctx context.Context, backend store.Backend, next Dev
 		// plan. Without this, abandoning a cycle is only possible when the
 		// fingerprint also moved, which is precisely when abandoning is least
 		// needed.
-		if next.Generation == old.Generation && !old.Superseded {
+		// A completed cycle is replanned the same way: the next cycle for an
+		// unchanged pair (a control-plane or relabel fix) reserves the published
+		// generation again. Its pin and pair must still match; only the plan
+		// that produced them may move.
+		oldComplete := old.Architectures["amd64"].Published && old.Architectures["arm64"].Published
+		replanComplete := next.Generation == old.Generation && !old.Superseded && oldComplete &&
+			next.Pin == old.Pin && next.PairFingerprint == old.PairFingerprint &&
+			(!mapsEqual(next.Sources, old.Sources) || !rawJSONEqual(next.Plan, old.Plan))
+		if next.Generation == old.Generation && !old.Superseded && !replanComplete {
 			if next.Pin != old.Pin || next.PairFingerprint != old.PairFingerprint || !mapsEqual(next.Sources, old.Sources) || !rawJSONEqual(next.Plan, old.Plan) {
 				return store.ObjectInfo{}, false, errors.New("frozen Development cycle inputs cannot change")
 			}
@@ -148,7 +156,7 @@ func CommitDevelopmentCycle(ctx context.Context, backend store.Backend, next Dev
 			if bytes.Equal(raw, current.Data) {
 				return store.ObjectInfo{Key: current.Key, Size: current.Size, ETag: current.ETag, SHA256: current.SHA256}, false, nil
 			}
-		} else if !old.Superseded && !(old.Architectures["amd64"].Published && old.Architectures["arm64"].Published) {
+		} else if !old.Superseded && !oldComplete {
 			return store.ObjectInfo{}, false, errors.New("incomplete Development cycle must be resumed")
 		}
 		info, swapErr := backend.CompareAndSwap(ctx, DevelopmentCycleKey, current.ETag, store.BytesContent(raw))
