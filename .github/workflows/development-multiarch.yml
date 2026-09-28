@@ -272,7 +272,10 @@ jobs:
       system_fingerprint: ${{ needs.system_amd64.outputs.system_fingerprint }}
       packages_fingerprint: ${{ needs.packages_amd64.outputs.packages_fingerprint }}
       pair_generation: ${{ needs.prepare.outputs.pair_generation }}
-      build_host: ${{ fromJSON(needs.prepare.outputs.amd64_system).build_host }}
+      # Image assembly compiles nothing, so it runs in parallel on hosted
+      # runners and leaves the build-runner free. DEVELOPMENT_RELEASE_HOST=dedicated
+      # moves it back.
+      build_host: ${{ vars.DEVELOPMENT_RELEASE_HOST || 'github-amd64' }}
       suppress_publication: true
     secrets: inherit
 
@@ -286,7 +289,10 @@ jobs:
       system_fingerprint: ${{ needs.system_arm64.outputs.system_fingerprint }}
       packages_fingerprint: ${{ needs.packages_arm64.outputs.packages_fingerprint }}
       pair_generation: ${{ needs.prepare.outputs.pair_generation }}
-      build_host: ${{ fromJSON(needs.prepare.outputs.arm64_system).build_host }}
+      # Image assembly compiles nothing, so it runs in parallel on hosted
+      # runners and leaves the build-runner free. DEVELOPMENT_RELEASE_HOST=dedicated
+      # moves it back.
+      build_host: ${{ vars.DEVELOPMENT_RELEASE_HOST || 'github-amd64' }}
       suppress_publication: true
     secrets: inherit
 
