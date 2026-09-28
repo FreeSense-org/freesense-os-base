@@ -5,9 +5,12 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/FreeSense-org/freesense-os-base/internal/store"
 )
 
 func qualifiedFixture(t *testing.T, key *rsa.PrivateKey, arch string, generation uint64) ([]byte, []byte) {
@@ -111,5 +114,42 @@ func TestQualifiedPairMayMixComponentGenerations(t *testing.T) {
 	repo, release = qualifiedPairFixture(t, key, "arm64", 5, 9, 15)
 	if updated, err := CommitQualified(context.Background(), backend, repo, release, "arm64", &key.PublicKey); err != nil || !updated {
 		t.Fatalf("reverted pair under a newer cycle generation: %v %v", updated, err)
+	}
+}
+
+// legacyStore models objects uploaded before fsbuild published them: the strict
+// Get refuses them for missing fsbuild SHA-256 metadata, the artifact reader
+// returns them, as the S3 backend does.
+type legacyStore struct {
+	*memoryStore
+	legacy map[string]bool
+}
+
+func (l *legacyStore) Get(ctx context.Context, key string) (store.Object, error) {
+	if l.legacy[key] {
+		return store.Object{}, errors.New("S3 object has no valid fsbuild SHA-256 metadata")
+	}
+	return l.memoryStore.Get(ctx, key)
+}
+
+func (l *legacyStore) GetArtifact(ctx context.Context, key string) (store.Object, error) {
+	return l.memoryStore.Get(ctx, key)
+}
+
+func (l *legacyStore) HeadArtifact(ctx context.Context, key string) (store.ObjectInfo, error) {
+	return l.memoryStore.Head(ctx, key)
+}
+
+func TestQualifiedCommitReplacesDocumentsWithoutFsbuildMetadata(t *testing.T) {
+	key, _ := rsa.GenerateKey(rand.Reader, 2048)
+	memory := newMemoryStore()
+	backend := &legacyStore{memoryStore: memory, legacy: map[string]bool{"releases/devel.arm64.json": true}}
+	_, oldRelease := qualifiedFixture(t, key, "arm64", 3)
+	if _, _, err := memory.PutIfAbsent(context.Background(), "releases/devel.arm64.json", store.BytesContent(oldRelease)); err != nil {
+		t.Fatal(err)
+	}
+	repo, release := qualifiedPairFixture(t, key, "arm64", 5, 9, 9)
+	if updated, err := CommitQualified(context.Background(), backend, repo, release, "arm64", &key.PublicKey); err != nil || !updated {
+		t.Fatalf("replace legacy release document: %v %v", updated, err)
 	}
 }
