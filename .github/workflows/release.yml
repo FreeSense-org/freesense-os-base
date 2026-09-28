@@ -5,6 +5,9 @@ on:
     inputs:
       pair_generation: {type: string, required: false, default: ''}
       build_host: {type: string, required: false, default: ''}
+      # Where the image jobs run. The plan still uses build_host: the image
+      # identity must name the executor the System was built by.
+      image_host: {type: string, required: false, default: ''}
       suppress_publication: {type: boolean, required: false, default: false}
       operation:
         type: string
@@ -402,7 +405,7 @@ jobs:
       image_capabilities: ${{ needs.iso-plan.outputs.image_capabilities }}
       installer_format: ${{ needs.iso-plan.outputs.installer_format }}
       publish_enabled: ${{ needs.iso-plan.outputs.publish_enabled }}
-      build_host: ${{ inputs.build_host || 'dedicated' }}
+      build_host: ${{ inputs.image_host || inputs.build_host || 'dedicated' }}
     secrets: inherit
 
   appliance-rpi4b:
@@ -445,7 +448,7 @@ jobs:
       poudriere_arch: arm64.aarch64
       kernel: FreeSense
       executor: ${{ needs.iso-plan.outputs.executor }}
-      build_host: ${{ inputs.build_host || 'dedicated' }}
+      build_host: ${{ inputs.image_host || inputs.build_host || 'dedicated' }}
       image_profile: arm64-rpi4b
       system_image_profile: generic-arm64-uefi
       firmware: raspberry-pi-firmware,u-boot
@@ -500,7 +503,7 @@ jobs:
       poudriere_arch: arm64.aarch64
       kernel: FreeSense
       executor: ${{ needs.iso-plan.outputs.executor }}
-      build_host: ${{ inputs.build_host || 'dedicated' }}
+      build_host: ${{ inputs.image_host || inputs.build_host || 'dedicated' }}
       image_profile: arm64-rpi5-d0
       system_image_profile: generic-arm64-uefi
       firmware: raspberry-pi,uefi
@@ -562,7 +565,7 @@ jobs:
       publish_enabled: ${{ needs.iso-plan.outputs.publish_enabled }}
       cloud_filesystem: ufs
       cloud_virtual_size_gib: ${{ needs.iso-plan.outputs.cloud_ufs_virtual_size_gib }}
-      build_host: ${{ inputs.build_host || 'dedicated' }}
+      build_host: ${{ inputs.image_host || inputs.build_host || 'dedicated' }}
     secrets: inherit
 
   cloud-zfs:
@@ -612,7 +615,7 @@ jobs:
       publish_enabled: ${{ needs.iso-plan.outputs.publish_enabled }}
       cloud_filesystem: zfs
       cloud_virtual_size_gib: ${{ needs.iso-plan.outputs.cloud_zfs_virtual_size_gib }}
-      build_host: ${{ inputs.build_host || 'dedicated' }}
+      build_host: ${{ inputs.image_host || inputs.build_host || 'dedicated' }}
     secrets: inherit
 
   publish-download:
