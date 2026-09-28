@@ -343,3 +343,20 @@ func TestS3RejectsObjectsAboveR2AtomicPutLimitBeforeOpeningBody(t *testing.T) {
 		t.Fatal("oversized content body was opened")
 	}
 }
+
+func TestNormalizeETagStripsWeakValidator(t *testing.T) {
+	for input, want := range map[string]string{
+		`"0bd9e903"`:   "0bd9e903",
+		` "0bd9e903" `: "0bd9e903",
+		`W/"0bd9e903"`: "0bd9e903",
+		`w/"0bd9e903"`: "0bd9e903",
+		"0bd9e903":     "0bd9e903",
+	} {
+		if got := normalizeETag(input); got != want {
+			t.Errorf("normalizeETag(%q) = %q, want %q", input, got, want)
+		}
+	}
+	if got := quoteETag(`W/"0bd9e903"`); got != `"0bd9e903"` {
+		t.Errorf("quoteETag of a weak validator = %q", got)
+	}
+}

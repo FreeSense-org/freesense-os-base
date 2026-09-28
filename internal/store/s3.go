@@ -800,8 +800,15 @@ func unique(values []string) []string {
 	return result
 }
 
+// normalizeETag returns the bare entity tag. R2 answers GET for some objects
+// (the pre-fsbuild channel documents) with a weak W/"..." validator; its opaque
+// part is the same object hash, and If-Match needs it without the W/ prefix --
+// sent as "W/"..." the precondition could never hold.
 func normalizeETag(value string) string {
-	return strings.Trim(strings.TrimSpace(value), `"`)
+	value = strings.TrimSpace(value)
+	value = strings.TrimPrefix(value, "W/")
+	value = strings.TrimPrefix(value, "w/")
+	return strings.Trim(value, `"`)
 }
 
 func quoteETag(value string) string {
