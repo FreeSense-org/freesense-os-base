@@ -654,6 +654,14 @@ def main() -> int:
         if (args.channel == "devel" and requested_version == current_version
                 and args.generation == existing["generation"]
                 and existing_identity != args.bundle_fingerprint):
+            # Generations are reserved per System/Packages pair, so a later
+            # cycle for the same pair (a control-plane change moved only the
+            # image fingerprints) lands on the published generation. Its first
+            # images stand, as the qualified manifests' first publication does.
+            if (existing.get("system") == args.system
+                    and existing.get("packages_fingerprint") == args.packages_fingerprint):
+                args.output.write_text(json.dumps(existing, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+                return 0
             raise SystemExit("an immutable development generation cannot be rewritten")
 
     release_id = args.version if args.channel == "stable" else f"{args.version}-g{args.generation}"
