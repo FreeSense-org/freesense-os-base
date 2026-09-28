@@ -163,3 +163,42 @@ func TestQualifiedCommitReplacesDocumentsWithoutFsbuildMetadata(t *testing.T) {
 		t.Fatalf("replace legacy release document: %v %v", updated, err)
 	}
 }
+
+func TestQualifiedCommitCorrectsMislabelledChannel(t *testing.T) {
+	key, _ := rsa.GenerateKey(rand.Reader, 2048)
+	backend := newMemoryStore()
+	repo, release := qualifiedFixture(t, key, "amd64", 10)
+	live, err := ParseSigned(repo, &key.PublicKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	channel := live.Channels["devel"]
+	channel.Description = "Experimental staged ARM64 acceptance build"
+	live.Channels["devel"] = channel
+	mislabelled, err := MarshalSigned(live, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := CommitQualified(context.Background(), backend, mislabelled, release, "amd64", &key.PublicKey); err == nil {
+		t.Fatal("accepted a mislabelled Development channel")
+	}
+	ctx := context.Background()
+	for name, data := range map[string][]byte{"releases/devel.amd64.json": release, "repos.amd64.manifest.json": mislabelled} {
+		if _, _, err := backend.PutIfAbsent(ctx, name, store.BytesContent(data)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if updated, err := CommitQualified(ctx, backend, repo, release, "amd64", &key.PublicKey); err != nil || !updated {
+		t.Fatalf("relabel: %v %v", updated, err)
+	}
+	current, err := store.GetArtifact(ctx, backend, "repos.amd64.manifest.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := ParseSigned(current.Data, &key.PublicKey); got.Channels["devel"].Description != "Development version" {
+		t.Fatalf("description not corrected: %q", got.Channels["devel"].Description)
+	}
+	if updated, err := CommitQualified(ctx, backend, repo, release, "amd64", &key.PublicKey); err != nil || updated {
+		t.Fatalf("corrected retry: %v %v", updated, err)
+	}
+}

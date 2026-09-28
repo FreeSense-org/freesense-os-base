@@ -517,7 +517,7 @@ func ValidateDevelopmentPair(payload Payload, architecture, packageArch string) 
 	expectedABI := map[string]string{"amd64": "FreeBSD:16:amd64", "arm64": "FreeBSD:16:aarch64"}[architecture]
 	expectedAltABI := map[string]string{"amd64": "freebsd:16:x86:64", "arm64": "freebsd:16:aarch64:64"}[architecture]
 	channel, ok := payload.Channels["devel"]
-	if !ok || len(payload.Channels) != 1 || channel.Name != "devel" || channel.Default != true ||
+	if !ok || len(payload.Channels) != 1 || channel.Name != "devel" || channel.Description != "Development version" || channel.Default != true ||
 		channel.Architecture != architecture || channel.PackageArch != packageArch ||
 		(channel.Architecture == "amd64" && channel.PackageArch != "amd64") ||
 		(channel.Architecture == "arm64" && channel.PackageArch != "aarch64") ||
