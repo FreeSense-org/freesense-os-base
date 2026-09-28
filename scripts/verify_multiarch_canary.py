@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import http.client
 import json
+import time
 import re
 from pathlib import Path
 import urllib.request
@@ -16,7 +18,29 @@ from verify_multiarch_catalogues import inventory, verify_closure, verify_signat
 from resolve_worker_tools import parse_checksum, zbase32
 
 
+RETRY_DELAYS = (1, 3)
+
+
+class _TruncatedDownload(ValueError):
+    """The body ended before its declared size: a broken download, not bad bytes."""
+
+
 def verify_file(url: str, expected_sha: str, expected_size: int, *, catalog_checksum: str | None = None) -> None:
+    """Verify one published file, retrying only transport failures.
+
+    A connection error or a body shorter than declared is retried; bytes that
+    are too long or hash differently fail at once.
+    """
+    for delay in (*RETRY_DELAYS, None):
+        try:
+            return _verify_file_once(url, expected_sha, expected_size, catalog_checksum=catalog_checksum)
+        except (OSError, http.client.HTTPException, _TruncatedDownload):
+            if delay is None:
+                raise
+            time.sleep(delay)
+
+
+def _verify_file_once(url: str, expected_sha: str, expected_size: int, *, catalog_checksum: str | None = None) -> None:
     checksum, size = hashlib.sha256(), 0
     signed_digest = None
     if catalog_checksum is not None:
@@ -32,6 +56,8 @@ def verify_file(url: str, expected_sha: str, expected_size: int, *, catalog_chec
             checksum.update(chunk)
             if signed_digest is not None:
                 signed_digest.update(chunk)
+    if size < expected_size:
+        raise _TruncatedDownload("immutable artifact byte verification failed")
     if size != expected_size or checksum.hexdigest() != expected_sha:
         raise ValueError("immutable artifact byte verification failed")
     if signed_digest is not None:

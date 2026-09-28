@@ -20,7 +20,11 @@ func qualifiedFixture(t *testing.T, key *rsa.PrivateKey, arch string, generation
 
 func qualifiedPairFixture(t *testing.T, key *rsa.PrivateKey, arch string, systemGeneration, packagesGeneration, releaseGeneration uint64) ([]byte, []byte) {
 	t.Helper()
-	hash := strings.Repeat("a", 64)
+	return qualifiedComponentsFixture(t, key, arch, systemGeneration, packagesGeneration, releaseGeneration, strings.Repeat("a", 64))
+}
+
+func qualifiedComponentsFixture(t *testing.T, key *rsa.PrivateKey, arch string, systemGeneration, packagesGeneration, releaseGeneration uint64, hash string) ([]byte, []byte) {
+	t.Helper()
 	packageArch := map[string]string{"amd64": "amd64", "arm64": "aarch64"}[arch]
 	abi := map[string]string{"amd64": "FreeBSD:16:amd64", "arm64": "FreeBSD:16:aarch64"}[arch]
 	alt := map[string]string{"amd64": "freebsd:16:x86:64", "arm64": "freebsd:16:aarch64:64"}[arch]
@@ -54,10 +58,16 @@ func TestQualifiedCommitIsIndependentMonotonicAndIdempotent(t *testing.T) {
 	if _, err := CommitQualified(context.Background(), backend, olderRepo, olderRelease, "amd64", &key.PublicKey); err == nil {
 		t.Fatal("accepted rollback")
 	}
-	conflictRepo, conflictRelease := qualifiedFixture(t, key, "amd64", 10)
-	conflictRelease = append(conflictRelease, ' ')
+	// A later cycle republishing the live pair regenerates its documents;
+	// the first publication at that generation stands.
+	republishRepo, republishRelease := qualifiedFixture(t, key, "amd64", 10)
+	republishRelease = append(republishRelease, ' ')
+	if updated, err := CommitQualified(context.Background(), backend, republishRepo, republishRelease, "amd64", &key.PublicKey); err != nil || updated {
+		t.Fatalf("republished same pair: %v %v", updated, err)
+	}
+	conflictRepo, conflictRelease := qualifiedComponentsFixture(t, key, "amd64", 10, 10, 10, strings.Repeat("c", 64))
 	if _, err := CommitQualified(context.Background(), backend, conflictRepo, conflictRelease, "amd64", &key.PublicKey); err == nil {
-		t.Fatal("accepted same-generation conflict")
+		t.Fatal("accepted a different pair at the same generation")
 	}
 }
 
