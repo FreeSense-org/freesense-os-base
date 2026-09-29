@@ -53,7 +53,35 @@ jobs:
             --arm64-repositories "${RUNNER_TEMP}/bundle/repositories/repos.aarch64.manifest.json" \
             --amd64-release "${RUNNER_TEMP}/bundle/amd64/devel.json" \
             --arm64-release "${RUNNER_TEMP}/bundle/arm64/devel.json"
+      # Generations are reserved per System/Packages pair, so a cycle that
+      # changed nothing (a nightly after a manual run, say) re-signs the pair
+      # already committed. Its fresh timestamps can never match the live bytes,
+      # which the first publication keeps, so it is not published again.
+      - id: live
+        name: Skip a pair that is already the authoritative commit point
+        run: |
+          set -euo pipefail
+          status=$(curl --silent --show-error --location --output "${RUNNER_TEMP}/live-multiarch.json" \
+            --write-out '%{http_code}' "https://pkg.freesense.org/v1/releases/devel.multiarch.json?multiarch=verify")
+          committed=false
+          if [[ "${status}" == 200 ]]; then
+            "${RUNNER_TEMP}/fsbuild" multiarch verify \
+              --document "${RUNNER_TEMP}/live-multiarch.json" \
+              --public-key config/channel-signing-public.pem \
+              --output "${RUNNER_TEMP}/live-payload.json"
+            if jq -e --slurpfile next "${RUNNER_TEMP}/bundle/completion/payload.json" \
+                '.generation == $next[0].generation and .pair_fingerprint == $next[0].pair_fingerprint' \
+                "${RUNNER_TEMP}/live-payload.json" >/dev/null; then
+              committed=true
+              echo "::notice::Generation $(jq -r .generation "${RUNNER_TEMP}/live-payload.json") of this pair is already the authoritative commit point; nothing to publish."
+            fi
+          elif [[ "${status}" != 404 ]]; then
+            echo "::error::Unexpected HTTP ${status} reading the live multiarch commit point" >&2
+            exit 1
+          fi
+          echo "committed=${committed}" >>"${GITHUB_OUTPUT}"
       - name: Acquire downloads writer
+        if: steps.live.outputs.committed != 'true'
         env:
           R2_CREDENTIAL_BROKER_URL: ${{ vars.R2_CREDENTIAL_BROKER_URL }}
           R2_CREDENTIAL_BROKER_AUDIENCE: ${{ vars.R2_CREDENTIAL_BROKER_AUDIENCE }}
@@ -65,6 +93,7 @@ jobs:
           --expected-bucket "${R2_BUCKET}" --expected-prefix v1 --expected-endpoint "${R2_ENDPOINT}"
           --github-env "${GITHUB_ENV}"
       - name: Publish all immutable download artifacts
+        if: steps.live.outputs.committed != 'true'
         env:
           R2_BUCKET: ${{ vars.R2_DOWNLOAD_BUCKET }}
           R2_ENDPOINT: ${{ vars.R2_ENDPOINT }}
@@ -72,6 +101,7 @@ jobs:
           bash scripts/publish_iso.sh "${RUNNER_TEMP}/bundle/amd64/devel.json"
           bash scripts/publish_iso.sh "${RUNNER_TEMP}/bundle/arm64/devel.json"
       - name: Acquire channel writer
+        if: steps.live.outputs.committed != 'true'
         env:
           R2_CREDENTIAL_BROKER_URL: ${{ vars.R2_CREDENTIAL_BROKER_URL }}
           R2_CREDENTIAL_BROKER_AUDIENCE: ${{ vars.R2_CREDENTIAL_BROKER_AUDIENCE }}
@@ -83,6 +113,7 @@ jobs:
           --expected-bucket "${R2_BUCKET}" --expected-prefix v1 --expected-endpoint "${R2_ENDPOINT}"
           --github-env "${GITHUB_ENV}"
       - name: Verify independently committed qualified documents before the aggregate commit point
+        if: steps.live.outputs.committed != 'true'
         run: |
           set -euo pipefail
           python3 scripts/verify_multiarch_publication.py \
@@ -92,6 +123,7 @@ jobs:
             --amd64-release "${RUNNER_TEMP}/bundle/amd64/devel.json" \
             --arm64-release "${RUNNER_TEMP}/bundle/arm64/devel.json"
       - name: Commit the complete pair atomically
+        if: steps.live.outputs.committed != 'true'
         env:
           R2_BUCKET: ${{ vars.R2_BUILD_BUCKET }}
           R2_ENDPOINT: ${{ vars.R2_ENDPOINT }}
@@ -105,6 +137,7 @@ jobs:
             --document "${RUNNER_TEMP}/bundle/completion/multiarch-release.json" \
             --private-key "${RUNNER_TEMP}/channel.key"
       - name: Refresh legacy amd64 aliases after the commit point
+        if: steps.live.outputs.committed != 'true'
         env:
           R2_BUCKET: ${{ vars.R2_BUILD_BUCKET }}
           R2_ENDPOINT: ${{ vars.R2_ENDPOINT }}
