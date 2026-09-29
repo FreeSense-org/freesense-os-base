@@ -482,6 +482,27 @@ class PublishDownloadTests(unittest.TestCase):
                 with self.assertRaisesRegex(SystemExit, "cannot be rewritten"):
                     publish.main()
 
+    def test_development_generation_keeps_first_images_of_the_same_pair(self):
+        existing = release("devel", generation=8, fingerprint="9" * 64)
+        existing["packages_fingerprint"] = PACKAGES_FINGERPRINT
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory, "devel.json")
+            responses = iter((marker("devel", generation=8), cloud_marker("devel", 8), cloud_marker("devel", 8, "zfs"), existing))
+            with mock.patch.object(sys, "argv", publisher_argv(output, "devel", 8)), \
+                    mock.patch.object(publish, "fetch_json", side_effect=lambda *_args, **_kwargs: next(responses)):
+                self.assertEqual(publish.main(), 0)
+            self.assertEqual(json.loads(output.read_text()), existing)
+
+    def test_development_generation_refuses_another_pair(self):
+        existing = release("devel", generation=8, fingerprint="9" * 64)
+        existing["packages_fingerprint"] = "7" * 64
+        with tempfile.TemporaryDirectory() as directory:
+            responses = iter((marker("devel", generation=8), cloud_marker("devel", 8), cloud_marker("devel", 8, "zfs"), existing))
+            with mock.patch.object(sys, "argv", publisher_argv(Path(directory, "devel.json"), "devel", 8)), \
+                    mock.patch.object(publish, "fetch_json", side_effect=lambda *_args, **_kwargs: next(responses)):
+                with self.assertRaisesRegex(SystemExit, "cannot be rewritten"):
+                    publish.main()
+
     def test_development_generation_cannot_move_backwards(self):
         existing = release("devel", generation=8)
         with tempfile.TemporaryDirectory() as directory:
