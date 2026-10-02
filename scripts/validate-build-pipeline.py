@@ -28,7 +28,7 @@ expected_workflows = {
     "broker.yml", "ci.yml", "mirror.yml", "observe.yml",
     "packages.yml", "pin.yml", "pin-mirrors.yml",
     "pin-target.yml", "release.yml",
-    "retention.yml", "runner-build.yml", "scorecard.yml", "stable.yml", "system.yml",
+    "retention.yml", "runner-build.yml", "stable.yml", "system.yml",
 }
 workflow_paths = sorted(WORKFLOWS.glob("*.yml"))
 require({path.name for path in workflow_paths} == expected_workflows,
