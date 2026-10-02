@@ -28,6 +28,19 @@ install_worker_tools() (
   done
   [ "${download_ok}" = true ] || {
     echo "failed to download worker tools from ${PUBLIC_BASE_URL}/inputs/sha256/${WORKER_TOOLS_SHA256}" >&2
+    # The guest's boot output does not reach the serial log, so show how its
+    # network ended up configured before giving up.
+    lookup_host=${PUBLIC_BASE_URL#*://}
+    lookup_host=${lookup_host%%/*}
+    {
+      echo "Guest network state:"
+      ifconfig -a
+      netstat -rn -f inet
+      echo "--- /etc/resolv.conf"
+      cat /etc/resolv.conf
+      echo "--- lookup ${lookup_host}"
+      host -W 5 "${lookup_host}" || getent hosts "${lookup_host}"
+    } >&2 2>&1 || true
     exit 1
   }
   mkdir -p "${worker_tools}"
