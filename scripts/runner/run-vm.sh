@@ -19,6 +19,7 @@ minimum_free_gib=80
 serve_dir=""
 serve_port=8765
 http_pid=""
+passt_pid=""
 while (($#)); do
   case "$1" in
     --host-architecture) host_architecture=${2:-}; shift 2 ;;
@@ -180,6 +181,9 @@ cleanup() {
   if [[ $http_pid =~ ^[0-9]+$ ]]; then
     kill "$http_pid" 2>/dev/null || true
   fi
+  if [[ $passt_pid =~ ^[0-9]+$ ]]; then
+    kill "$passt_pid" 2>/dev/null || true
+  fi
   return "$status"
 }
 trap cleanup EXIT
@@ -308,6 +312,32 @@ if [[ -n $serve_dir ]]; then
   echo "Serving ${serve_dir} to the guest at http://10.0.2.2:${serve_port}/"
 fi
 
+# Guest networking. QEMU's built-in user networking (slirp) is slow for traffic
+# leaving the guest, which made the final repository upload crawl. passt is an
+# unprivileged user-mode replacement with far higher throughput. It is used
+# when installed; otherwise the build keeps QEMU user networking. Both present
+# the same 10.0.2.0/24 layout, so the guest still reaches the host at 10.0.2.2.
+net_args=(-netdev user,id=net0)
+if command -v passt >/dev/null 2>&1; then
+  passt_socket=${run_dir}/passt.sock
+  passt_pidfile=${run_dir}/passt.pid
+  if passt --quiet --one-off --socket "$passt_socket" --pid "$passt_pidfile" \
+      --address 10.0.2.15 --netmask 24 --gateway 10.0.2.2 --mtu 1500 \
+      --dns 10.0.2.3 --dns-forward 10.0.2.3 --map-host-loopback 10.0.2.2 \
+      --ipv4-only >/dev/null 2>&1; then
+    for _ in {1..50}; do [[ -S $passt_socket ]] && break; sleep 0.1; done
+  fi
+  if [[ -S $passt_socket ]]; then
+    passt_pid=$(cat "$passt_pidfile" 2>/dev/null || true)
+    net_args=(-netdev "stream,id=net0,server=off,addr.type=unix,addr.path=${passt_socket}")
+    echo "Guest networking: passt"
+  else
+    echo "Guest networking: QEMU user networking (passt did not start)"
+  fi
+else
+  echo "Guest networking: QEMU user networking (passt not installed)"
+fi
+
 touch "$serial"
 "$qemu" \
   -name freesense-${nonce} \
@@ -321,7 +351,7 @@ touch "$serial"
   -drive if=virtio,format=qcow2,cache=none,discard=unmap,file="$overlay" \
   -drive if="$seed_interface",format=raw,readonly=on,file="$seed" \
   -device virtio-net-pci,netdev=net0,romfile="" \
-  -netdev user,id=net0 \
+  "${net_args[@]}" \
   -display none \
   -serial file:"$serial" \
   -no-reboot \
