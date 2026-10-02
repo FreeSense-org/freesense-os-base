@@ -345,6 +345,33 @@ PKG_ENV+= IGNORE_OSVERSION=yes
 EOF
   cp -f /usr/local/etc/poudriere.d/pkg.conf /usr/local/etc/pkg.conf
   cp -f /usr/local/etc/poudriere.d/pkg.conf /etc/pkg.conf
+  patch_poudriere_qemu_osversion
+}
+
+# Under qemu-user emulation Poudriere puts both OSVERSION and
+# ABI_FILE=/usr/lib/crt1.o into the jail's login environment, so every pkg(8)
+# call in an emulated (arm64) jail prints "Both ABI_FILE and OSVERSION are set,
+# ABI_FILE overrides OSVERSION" (freebsd/poudriere#1389). pkg already ignores
+# OSVERSION there because ABI is unset, and bsd.port.mk reads the same value
+# from the jail's /usr/include/sys/param.h when OSVERSION is absent, so dropping
+# it for emulated jails only changes the log. A Poudriere without the expected
+# line is left alone.
+patch_poudriere_qemu_osversion() {
+  common=/usr/local/share/poudriere/common.sh
+  old='login_env="${login_env},ABI_FILE='
+  new='login_env="${login_env%,OSVERSION=*},ABI_FILE='
+  [ -f "${common}" ] || return 0
+  grep -Fq "${new}" "${common}" && return 0
+  if ! grep -Fq "${old}" "${common}"; then
+    echo "Poudriere qemu OSVERSION patch not applicable; leaving common.sh unchanged" >&2
+    return 0
+  fi
+  sed -i '' 's|login_env="${login_env},ABI_FILE=|login_env="${login_env%,OSVERSION=*},ABI_FILE=|' \
+    "${common}"
+  grep -Fq "${new}" "${common}" || {
+    echo "failed to patch Poudriere qemu OSVERSION handling" >&2
+    return 1
+  }
 }
 
 run_poudriere_build() {
