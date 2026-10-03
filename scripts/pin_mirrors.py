@@ -19,12 +19,40 @@ from multiarch_pin import ARCHES, SHA256, validate  # noqa: E402
 COMMIT = re.compile(r"[0-9a-f]{40}")
 
 
-def missing(pin: dict) -> list[str]:
-    """Architectures whose pin target has no mirror yet."""
-    return [arch for arch in ARCHES if not pin["targets"][arch].get("mirror")]
+def overlay_origins(directories: list[Path]) -> list[str]:
+    """Port origins (category/port) the FreeSense overlays change.
+
+    Overlaid ports are built from source, so a mirror plan must have been cut
+    knowing them; a plan cut before an overlay existed still lists the port as
+    a prebuilt mirror package and the repositories fail to compose.
+    """
+    origins = set()
+    for directory in directories:
+        for makefile in directory.glob("*/*/Makefile"):
+            category, port = makefile.parent.parent.name, makefile.parent.name
+            if not category.startswith(".") and category not in {"Mk", "tools", "tests", "docs"}:
+                origins.add(f"{category}/{port}")
+    return sorted(origins)
 
 
-def mirror_entry(arch: str, plan: dict, blob: dict) -> dict:
+def missing(pin: dict, overlays: list[str] | None = None) -> list[str]:
+    """Architectures whose pin target needs a (new) mirror.
+
+    An architecture needs one when it has none, or when its mirror was cut for
+    a different set of overlaid ports than the overlays have now. A mirror cut
+    before the set was recorded is left alone until something re-cuts it.
+    """
+    stale = []
+    for arch in ARCHES:
+        mirror = pin["targets"][arch].get("mirror")
+        if not mirror:
+            stale.append(arch)
+        elif overlays is not None and "overlay_origins" in mirror and mirror["overlay_origins"] != overlays:
+            stale.append(arch)
+    return stale
+
+
+def mirror_entry(arch: str, plan: dict, blob: dict, overlays: list[str] | None = None) -> dict:
     if plan.get("schema_version") != "freesense.mirror-plan/v1" or plan.get("abi") != ARCHES[arch]:
         raise ValueError(f"{arch} mirror plan is not a {ARCHES[arch]} mirror plan")
     fingerprint = str(plan.get("fingerprint", ""))
@@ -34,7 +62,10 @@ def mirror_entry(arch: str, plan: dict, blob: dict) -> dict:
         raise ValueError(f"{arch} mirror plan has no exact identity")
     if blob.get("schema_version") != "freesense.blob/v1" or obj != f"inputs/sha256/{blob.get('sha256')}":
         raise ValueError(f"{arch} mirror plan was not sealed as an immutable input")
-    return {"fingerprint": fingerprint, "object": obj, "ports_commit": ports_commit}
+    entry = {"fingerprint": fingerprint, "object": obj, "ports_commit": ports_commit}
+    if overlays is not None:
+        entry["overlay_origins"] = overlays
+    return entry
 
 
 def apply(pin: dict, mirrors: dict[str, dict], *, now: datetime | None = None) -> dict:
@@ -49,14 +80,17 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--pin", type=Path, default=Path("config/freebsd-16.json"))
     sub = parser.add_subparsers(dest="command", required=True)
+    parser.add_argument("--overlay", type=Path, action="append", default=None,
+                        help="a FreeSense ports overlay checkout (freesense-system-ports, freesense-packages)")
     sub.add_parser("missing", help="print the architectures that need a mirror, one per line")
     record = sub.add_parser("record", help="write mirrors from Mirror-run artifact directories")
     record.add_argument("--mirror", nargs=2, action="append", metavar=("ARCH", "DIR"), required=True,
                         help="architecture and the directory holding its mirror-plan(.blob).json")
     args = parser.parse_args()
     pin = json.loads(args.pin.read_text(encoding="utf-8"))
+    overlays = overlay_origins(args.overlay) if args.overlay else None
     if args.command == "missing":
-        for arch in missing(pin):
+        for arch in missing(pin, overlays):
             print(arch)
         return
     mirrors = {}
@@ -65,7 +99,8 @@ def main() -> None:
             raise SystemExit(f"unknown architecture: {arch}")
         root = Path(directory)
         mirrors[arch] = mirror_entry(arch, json.loads((root / "mirror-plan.json").read_text(encoding="utf-8")),
-                                     json.loads((root / "mirror-plan.blob.json").read_text(encoding="utf-8")))
+                                     json.loads((root / "mirror-plan.blob.json").read_text(encoding="utf-8")),
+                                     overlays)
     args.pin.write_text(json.dumps(apply(pin, mirrors), indent=2, sort_keys=True) + "\n",
                         encoding="utf-8", newline="\n")
 

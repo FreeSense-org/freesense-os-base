@@ -1317,6 +1317,31 @@ fetch_delta_mirror() {
   phase delta-mirror-ready
 }
 
+# A port an overlay changes is built from source, so the mirror plan must not
+# list it as a prebuilt mirror package. A plan cut before the overlay existed
+# still does: the stage then compiles its own copy anyway, and composing the
+# repositories fails hours later on two different packages of one name
+# (softflowd, runs 37123254611 and 37131607890). Refuse before building.
+verify_mirror_plan_current() {
+  phase mirror-plan-overlay-check
+  stale_work=$(mktemp -d) || return 1
+  for stale_overlay in "$@"; do
+    [ -d "${stale_overlay}" ] || continue
+    (cd "${stale_overlay}" && find . -mindepth 3 -maxdepth 3 -type f -name Makefile) \
+      | sed -e 's,^\./,,' -e 's,/Makefile$,,'
+  done | LC_ALL=C sort -u >"${stale_work}/overlaid"
+  jq -r '.packages[].origin' "${MIRROR_PLAN_FILE:-/root/mirror-plan.json}" | tr -d '\r' | sed 's/@.*//' \
+    | LC_ALL=C sort -u >"${stale_work}/mirrored"
+  stale_origins=$(LC_ALL=C comm -12 "${stale_work}/overlaid" "${stale_work}/mirrored")
+  rm -rf "${stale_work}"
+  [ -z "${stale_origins}" ] || {
+    echo "the pinned mirror plan predates these overlaid ports and still lists them as prebuilt:" >&2
+    printf '  %s\n' ${stale_origins} >&2
+    echo "re-cut the mirror plan first: run pin-mirrors.yml with recut=true" >&2
+    return 1
+  }
+}
+
 # Everything a delta build produced must be something the plan meant us to
 # build, or something the mirror supplied. A third category means Poudriere
 # pulled a port into the queue that nothing sanctioned -- a stale seed, a

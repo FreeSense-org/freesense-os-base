@@ -14,6 +14,11 @@ on:
   schedule:
     - cron: "30 6 * * *"
   workflow_dispatch:
+    inputs:
+      recut:
+        description: Re-cut the mirrors for every architecture, even if one is pinned
+        type: boolean
+        default: false
 
 permissions:
   actions: write
@@ -35,11 +40,28 @@ jobs:
         with:
           fetch-depth: 0
 
-      - id: missing
-        name: Find architectures without a pinned mirror
+      # A mirror must be cut knowing which ports the overlays change: those are
+      # built from source. A mirror cut before an overlay existed still lists
+      # the port as prebuilt and the repositories fail to compose, so a change
+      # in the overlaid ports makes the pinned mirror stale.
+      - name: Check out the ports overlays
         run: |
           set -euo pipefail
-          archs=$(python3 scripts/pin_mirrors.py missing | tr '\n' ' ' | sed 's/ *$//')
+          git clone --quiet --depth 1 https://github.com/FreeSense-org/freesense-system-ports.git "${RUNNER_TEMP}/overlay-system"
+          git clone --quiet --depth 1 https://github.com/FreeSense-org/freesense-packages.git "${RUNNER_TEMP}/overlay-packages"
+
+      - id: missing
+        name: Find architectures without a current mirror
+        env:
+          RECUT: ${{ inputs.recut || false }}
+        run: |
+          set -euo pipefail
+          overlays=(--overlay "${RUNNER_TEMP}/overlay-system" --overlay "${RUNNER_TEMP}/overlay-packages")
+          if [[ ${RECUT} == true ]]; then
+            archs=$(python3 -c 'import sys; sys.path.insert(0, "scripts"); from multiarch_pin import ARCHES; print(" ".join(ARCHES))')
+          else
+            archs=$(python3 scripts/pin_mirrors.py "${overlays[@]}" missing | tr '\n' ' ' | sed 's/ *$//')
+          fi
           echo "archs=${archs}" >>"${GITHUB_OUTPUT}"
           if [[ -z ${archs} ]]; then
             echo "Every architecture already has a pinned mirror."
@@ -101,8 +123,9 @@ jobs:
             echo "the pin on main changed while mirrors were cut; the next run starts over" >&2
             exit 1
           }
-          python3 scripts/pin_mirrors.py record "${args[@]}"
-          python3 scripts/pin_mirrors.py missing | { ! grep -q .; }
+          overlays=(--overlay "${RUNNER_TEMP}/overlay-system" --overlay "${RUNNER_TEMP}/overlay-packages")
+          python3 scripts/pin_mirrors.py "${overlays[@]}" record "${args[@]}"
+          python3 scripts/pin_mirrors.py "${overlays[@]}" missing | { ! grep -q .; }
 
       - name: Open or update the single mirror PR
         if: steps.missing.outputs.archs != ''
