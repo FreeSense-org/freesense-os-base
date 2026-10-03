@@ -45,6 +45,7 @@ PKG_ENV+= IGNORE_OSVERSION=yes
 EOF
 if [ -n "${MIRROR_PLAN_OBJECT}" ]; then
   fetch_delta_mirror
+  verify_mirror_plan_current /root/freesense-system-ports /root/freesense-packages
   write_delta_bulk optional
 else
   cp tools/conf/pfPorts/poudriere_packages tools/conf/pfPorts/poudriere_bulk

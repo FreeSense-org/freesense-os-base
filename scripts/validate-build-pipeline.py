@@ -55,7 +55,11 @@ for value in ("security_rollover:", "SECURITY_REFERENCE", "Early security rollov
 require("force:" not in pin_workflow and "FORCE_PIN" not in pin_workflow,
         "Pin FreeBSD retains a generic early-force escape hatch")
 pin_mirrors_workflow = read(".github/workflows/pin-mirrors.yml")
-for value in ("scripts/pin_mirrors.py missing", "scripts/pin_mirrors.py record",
+# The overlays decide which ports are source-built, so both the staleness check
+# and the recorded mirror must see them.
+for value in ('scripts/pin_mirrors.py "${overlays[@]}" missing',
+              'scripts/pin_mirrors.py "${overlays[@]}" record',
+              "overlay-system", "overlay-packages",
               "dispatch observe.yml", "dispatch mirror.yml", "gh pr merge"):
     require(value in pin_mirrors_workflow, f"pin-mirrors is missing {value!r}")
 require("uses: ./.github/workflows/mirror.yml" not in pin_mirrors_workflow,

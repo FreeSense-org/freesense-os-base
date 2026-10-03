@@ -151,6 +151,7 @@ prepare_system_ports() {
   ./build.sh --update-poudriere-ports
   if [ -n "${MIRROR_PLAN_OBJECT}" ]; then
     fetch_delta_mirror
+    verify_mirror_plan_current /root/freesense-system-ports
     write_delta_bulk system
   else
     cp tools/conf/pfPorts/poudriere_system tools/conf/pfPorts/poudriere_bulk

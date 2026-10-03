@@ -51,6 +51,38 @@ class PinMirrorsTests(unittest.TestCase):
         pin["targets"]["amd64"]["mirror"] = PINNED_BY_224
         self.assertEqual(pin_mirrors.missing(pin), ["arm64"])
 
+    def test_overlay_origins_lists_overlaid_ports_only(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for origin in ("net-mgmt/softflowd", "net/haproxy", "Mk/sub", "tools/ci"):
+                (root / origin).mkdir(parents=True)
+                (root / origin / "Makefile").write_text("", encoding="utf-8")
+            (root / "net" / "notaport").mkdir()
+            self.assertEqual(pin_mirrors.overlay_origins([root]), ["net-mgmt/softflowd", "net/haproxy"])
+
+    def test_mirror_cut_for_other_overlays_is_stale(self):
+        pin = current_pin()
+        for arch in pin_mirrors.ARCHES:
+            pin["targets"][arch]["mirror"] = {**PINNED_BY_224, "overlay_origins": ["net/haproxy"]}
+        self.assertEqual(pin_mirrors.missing(pin, ["net/haproxy"]), [])
+        self.assertEqual(pin_mirrors.missing(pin, ["net-mgmt/softflowd", "net/haproxy"]),
+                         list(pin_mirrors.ARCHES))
+        # Without the current overlays nothing can be compared: only absence counts.
+        self.assertEqual(pin_mirrors.missing(pin), [])
+
+    def test_mirror_without_a_recorded_overlay_set_is_left_alone(self):
+        pin = current_pin()
+        for arch in pin_mirrors.ARCHES:
+            pin["targets"][arch]["mirror"] = dict(PINNED_BY_224)
+        self.assertEqual(pin_mirrors.missing(pin, ["net-mgmt/softflowd"]), [])
+
+    def test_entry_records_the_overlay_set_and_stays_a_valid_pin(self):
+        entry = pin_mirrors.mirror_entry("amd64", PLAN, BLOB, ["net/haproxy"])
+        self.assertEqual(entry, {**PINNED_BY_224, "overlay_origins": ["net/haproxy"]})
+        pin = current_pin()
+        updated = pin_mirrors.apply(pin, {"amd64": entry}, now=inside(pin))
+        self.assertEqual(updated["targets"]["amd64"]["mirror"]["overlay_origins"], ["net/haproxy"])
+
     def test_apply_writes_a_valid_pin_and_leaves_the_input_alone(self):
         pin = current_pin()
         before = json.dumps(pin, sort_keys=True)
