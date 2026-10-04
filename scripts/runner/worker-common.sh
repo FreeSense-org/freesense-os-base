@@ -23,6 +23,7 @@ for name in AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN R2_ENDPOIN
   TARGET ARCHITECTURE PACKAGE_ARCH ABI OSVERSION ALTABI FREEBSD_TARGET FREEBSD_TARGET_ARCH POUDRIERE_ARCH KERNEL \
   EXECUTOR IMAGE_PROFILE FIRMWARE IMAGE_CAPABILITIES INSTALLER_FORMAT PUBLISH_ENABLED \
   SYSTEM_PART SYSTEM_SHARD_INDEX SYSTEM_SHARD_COUNT BINARY_SEED_OBJECT BINARY_SEED_PROVENANCE_SHA256 PREVIOUS_FREESENSE_REPOSITORY FARM_LAYOUT SHARD_POLICY_VERSION MIRROR_PLAN_OBJECT \
+  FREEBSD_SRC_OBJECT PORTS_OBJECT \
   BOOT_INPUTS TARGET_MODELS PARTITION_SCHEME APPLIANCE_FILESYSTEM APPLIANCE_FORMAT APPLIANCE_COMPRESSION; do
   eval "$name=\$(decode \"\${${name}_B64}\")"
 done
@@ -215,6 +216,26 @@ clone_exact() {
   test "$(git -C "${destination}" rev-parse HEAD)" = "${commit}"
 }
 
+# The pin stores each FreeBSD src and ports commit once as a bare one-commit
+# repository whose main branch is that commit. Restored here, the builder clones
+# it over file:// instead of fetching the same commit from GitHub every build.
+restore_upstream() {
+  object=$1 destination=$2 commit=$3
+  case "${object}" in
+    inputs/sha256/*) : ;;
+    *) echo "upstream archive is not an immutable input" >&2; return 1 ;;
+  esac
+  phase "restore-$(basename "${destination}" .git)"
+  rm -rf "${destination}" "${destination}.tar"
+  fetch_input "${object}" "${destination}.tar"
+  tar -C "$(dirname "${destination}")" -xf "${destination}.tar"
+  rm -f "${destination}.tar"
+  test "$(git -C "${destination}" rev-parse refs/heads/main)" = "${commit}" || {
+    echo "upstream archive does not hold the pinned commit ${commit}" >&2
+    return 1
+  }
+}
+
 configure_source() {
   os_definition_dir=
   phase clone-source
@@ -236,6 +257,12 @@ configure_source() {
       phase clone-optional-packages
       clone_exact https://github.com/FreeSense-org/freesense-packages.git \
         /root/freesense-packages "${PACKAGES_SHA}"
+      # The stage signs with config/channel-signing-public.pem and reads
+      # partition_roots.py, multiarch-shards.json and package_provenance.py from
+      # here. It is not a patch set: Free\D src is never built in this stage.
+      phase clone-os-definition
+      clone_exact https://github.com/FreeSense-org/freesense-os-base.git \
+        /root/os-definition "${OS_BASE_SHA}"
       ;;
     iso) : ;;
   esac
@@ -243,7 +270,25 @@ configure_source() {
   if [ "${STAGE}" = system ]; then
     sed -i '' "s/^UPSTREAM_REF=.*/UPSTREAM_REF=\"${FREEBSD_SHA}\"/" \
       /root/os-definition/manifest.env
+    if [ -n "${FREE\D_SRC_OBJECT}" ]; then
+      restore_upstream "${FREE\D_SRC_OBJECT}" /root/freebsd-src.git "${FREE\D_SHA}"
+      sed -i '' 's|^UPSTREAM_URL=.*|UPSTREAM_URL="file:///root/freebsd-src.git"|' \
+        /root/os-definition/manifest.env
+    else
+      echo "No stored Free\D src archive; fetching ${FREE\D_SHA} from GitHub."
+    fi
   fi
+  ports_url=https://github.com/freebsd/freebsd-ports.git
+  case "${STAGE}" in
+    system|packages)
+      if [ -n "${PORTS_OBJECT}" ]; then
+        restore_upstream "${PORTS_OBJECT}" /root/freebsd-ports.git "${PORTS_SHA}"
+        ports_url=file:///root/freebsd-ports.git
+      else
+        echo "No stored ports archive; fetching ${PORTS_SHA} from GitHub."
+      fi
+      ;;
+  esac
   cd /root/freesense-src
   cp build.conf.sample build.conf
 
@@ -268,7 +313,7 @@ configure_source() {
 export PRODUCT_NAME_SUFFIX=""
 export PRODUCT_VERSION="${PRODUCT_VERSION}"
 export POUDRIERE_BRANCH=main
-export POUDRIERE_PORTS_GIT_URL="https://github.com/freebsd/freebsd-ports.git"
+export POUDRIERE_PORTS_GIT_URL="${ports_url}"
 export POUDRIERE_PORTS_GIT_BRANCH="main"
 export FREEBSD_SRC_PATCHES_DIR="${os_definition_dir}"
 export FREESENSE_PORTS_COMMIT="${PORTS_SHA}"
