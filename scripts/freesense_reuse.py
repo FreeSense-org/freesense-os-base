@@ -39,10 +39,16 @@ def reusable(previous: dict, current: dict, *, pin_unchanged: bool) -> tuple[boo
     if before != after:
         changed = next(field for field in (*FIELDS, "digest") if before.get(field) != after.get(field))
         return False, f"provenance changed: {changed}"
-    # Kernel-coupled and locally patched packages retain a source-only rule
-    # because their effective ABI is not fully represented by pkg metadata.
-    if current.get("kernel_sensitive") or current.get("patched"):
-        return False, "source-only architecture policy"
+    # Kernel-coupled packages stay source-only: a kmod's provenance does not
+    # name the kernel it was built against. A patched port needs no such rule
+    # here. Its files/ and port directory are part of the provenance, so an
+    # exact match is the same port, patches, options and dependencies on the
+    # same pin. (The official FreeBSD seed keeps its own source-only rule in
+    # binary_seed.py; an upstream package never carries FreeSense's patches.)
+    # Excluding patched ports here rebuilt nearly every source-built package,
+    # because almost every port has a files/ directory.
+    if current.get("kernel_sensitive"):
+        return False, "kernel-coupled package is source-only"
     return True, "exact provenance match"
 
 
