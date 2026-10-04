@@ -91,15 +91,28 @@ jobs:
           git config user.name freesense-ci
           git config user.email ci@freesense.org
           git fetch --no-tags origin main
-          git switch -C "${branch}" origin/main
           git show origin/main:config/freebsd-16.json | cmp -s - config/freebsd-16.json || {
             echo "the pin on main changed while the archives were stored; run this again" >&2
             exit 1
           }
+          if git ls-remote --exit-code --heads origin "${branch}"; then
+            git fetch --no-tags origin "${branch}"
+            git switch "${branch}"
+            git merge --no-edit origin/main || {
+              git merge --abort
+              git switch -C "${branch}" origin/main
+            }
+          else
+            git switch -c "${branch}" origin/main
+          fi
           cp "${RUNNER_TEMP}/freebsd-16.json" config/freebsd-16.json
           git add config/freebsd-16.json
+          if git diff --staged --quiet; then
+            echo "No content changes relative to ${branch}."
+            exit 0
+          fi
           git commit -m "build: record the stored FreeBSD src and ports archives in the pin"
-          git push --force origin "HEAD:refs/heads/${branch}"
+          git push origin "HEAD:refs/heads/${branch}"
           number=$(gh pr list --head "${branch}" --state open --json number --jq '.[0].number // empty')
           if [[ -z "${number}" ]]; then
             gh pr create --head "${branch}" --base main \
