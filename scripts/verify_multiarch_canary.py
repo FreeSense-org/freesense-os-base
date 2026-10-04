@@ -102,16 +102,18 @@ def verify(plan: dict, documents: dict[str, bytes], policy: dict, *, read=fetch_
             raise ValueError("release is missing artifacts or belongs to a different target/System")
         provenance = release.get("provenance", {})
         for source, expected in {
-            "source": system_plan["source_sha"], "ports": system_plan["ports_sha"],
-            "freebsd": system_plan["freebsd_sha"],
+            "ports": system_plan["ports_sha"], "freebsd": system_plan["freebsd_sha"],
         }.items():
             if provenance.get(source) != expected:
                 raise ValueError("release source closure differs from frozen coordinator plan")
-        # The os-definition commit is recorded but not part of the System
-        # fingerprint: a System reused across os-base changes keeps the commit
-        # that built it, which is older than this cycle's plan.
-        if not re.fullmatch(r"[0-9a-f]{40}", str(provenance.get("os_definition", ""))):
-            raise ValueError("release os-definition provenance is not an exact commit")
+        # Neither commit is part of the System fingerprint: it names what the
+        # build reads from freesense (plan.py SOURCE_UNREAD) and the os-base
+        # recipe, not the commits. A System reused across commits that left
+        # those unchanged keeps the commits that built it, older than this
+        # cycle's plan; the equal System identity above is what binds them.
+        for source in ("source", "os_definition"):
+            if not re.fullmatch(r"[0-9a-f]{40}", str(provenance.get(source, ""))):
+                raise ValueError(f"release {source} provenance is not an exact commit")
         markers, artifact_documents = {}, {}
         for item in release["artifacts"]:
             if (not isinstance(item.get("file"), str) or not item["file"]

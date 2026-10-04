@@ -47,6 +47,8 @@ class FrozenPlanningTests(unittest.TestCase):
                 mock.patch.object(plan, "recipe_digest", return_value="b" * 64), \
                 mock.patch.object(plan, "remote_recipe_digest", return_value=recipe), \
                 mock.patch.object(plan, "remote_sha", side_effect=AssertionError("moving branch lookup")), \
+                mock.patch.object(plan, "source_tree_digest",
+                                  side_effect=lambda repository, commit: plan.fingerprint({"r": repository, "c": commit})), \
                 mock.patch.object(sys, "argv", argv), redirect_stdout(io.StringIO()) as rendered:
             self.assertEqual(plan.main(), 0)
         return json.loads(rendered.getvalue())
