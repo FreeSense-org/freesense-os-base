@@ -7,7 +7,7 @@ from pathlib import Path
 import re
 
 from build_platform import load_policy, target
-from multiarch_pin import SHA256, validate, worker
+from multiarch_pin import SHA256, source_archive, validate, worker
 
 
 def farm_matrix(stage: str, build_host: str) -> list[dict]:
@@ -46,7 +46,13 @@ def check(plan: dict, stage: str, generation: str, pin: dict, policy: dict) -> d
         or pin["freebsd_ports"]["commit"],
         "mirror_plan_object": (execution.get("mirror") or {}).get("object", ""),
     }
-    if any(plan.get(key) != value for key, value in expected.items()):
+    expected.update(
+        freebsd_src_object=source_archive(pin, expected["freebsd_sha"], "freebsd/freebsd-src"),
+        ports_object=source_archive(pin, expected["ports_sha"], "freebsd/freebsd-ports"),
+    )
+    # A cycle frozen before the archives were planned carries neither field.
+    archived = {"freebsd_src_object", "ports_object"}
+    if any(plan.get(key, "" if key in archived else None) != value for key, value in expected.items()):
         raise ValueError("farm inputs differ from the selected immutable pin/executor")
     previous = plan.get("previous_freesense_repository", "")
     if previous and not SHA256.fullmatch(str(previous)):

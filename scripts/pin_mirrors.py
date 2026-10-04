@@ -14,7 +14,7 @@ from datetime import datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from multiarch_pin import ARCHES, SHA256, validate  # noqa: E402
+from multiarch_pin import ARCHES, SHA256, validate, with_source_archives  # noqa: E402
 
 COMMIT = re.compile(r"[0-9a-f]{40}")
 
@@ -68,10 +68,21 @@ def mirror_entry(arch: str, plan: dict, blob: dict, overlays: list[str] | None =
     return entry
 
 
-def apply(pin: dict, mirrors: dict[str, dict], *, now: datetime | None = None) -> dict:
+def ports_archive(entry: dict, archive: dict) -> dict[str, dict]:
+    """The stored ports archive a Mirror run made at its mirror's commit, if any."""
+    commit = archive.get("commit")
+    if commit != entry["ports_commit"] or archive.get("repository") != "freebsd/freebsd-ports":
+        raise ValueError("ports archive was stored for a different commit than the mirror")
+    return {commit: {key: value for key, value in archive.items() if key != "commit"}}
+
+
+def apply(pin: dict, mirrors: dict[str, dict], *, now: datetime | None = None,
+          archives: dict[str, dict] | None = None) -> dict:
     updated = json.loads(json.dumps(pin))
     for arch, entry in mirrors.items():
         updated["targets"][arch]["mirror"] = entry
+    # Re-cutting a mirror moves its ports commit; the old commit's archive goes.
+    updated = with_source_archives(updated, archives or {})
     validate(updated, now=now)
     return updated
 
@@ -93,7 +104,7 @@ def main() -> None:
         for arch in missing(pin, overlays):
             print(arch)
         return
-    mirrors = {}
+    mirrors, archives = {}, {}
     for arch, directory in args.mirror:
         if arch not in ARCHES:
             raise SystemExit(f"unknown architecture: {arch}")
@@ -101,7 +112,12 @@ def main() -> None:
         mirrors[arch] = mirror_entry(arch, json.loads((root / "mirror-plan.json").read_text(encoding="utf-8")),
                                      json.loads((root / "mirror-plan.blob.json").read_text(encoding="utf-8")),
                                      overlays)
-    args.pin.write_text(json.dumps(apply(pin, mirrors), indent=2, sort_keys=True) + "\n",
+        archive = root / "ports-archive.json"
+        if archive.is_file():
+            archives.update(ports_archive(mirrors[arch], json.loads(archive.read_text(encoding="utf-8"))))
+        else:
+            print(f"{arch} mirror has no stored ports archive; its builds fetch ports from GitHub")
+    args.pin.write_text(json.dumps(apply(pin, mirrors, archives=archives), indent=2, sort_keys=True) + "\n",
                         encoding="utf-8", newline="\n")
 
 

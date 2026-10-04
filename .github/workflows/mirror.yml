@@ -96,6 +96,19 @@ jobs:
           "${RUNNER_TEMP}/fsbuild" blob put --file "${RUNNER_TEMP}/mirror-plan.json"
           --output "${RUNNER_TEMP}/mirror-plan.blob.json"
 
+      # Builds over this mirror take ports at its commit. Stored once here,
+      # every build clones it from R2 instead of GitHub (pin_mirrors.py records it).
+      - name: Store the mirror's ports commit as an immutable input
+        # Without the archive builds fetch this commit from GitHub as before.
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          python3 scripts/pin_source_archives.py \
+            --fsbuild "${RUNNER_TEMP}/fsbuild" --work "${RUNNER_TEMP}/source-archive" \
+            commit --repository freebsd/freebsd-ports \
+            --commit "$(jq -er .ports_commit "${RUNNER_TEMP}/mirror-plan.json")" \
+            --output "${RUNNER_TEMP}/ports-archive.json"
+
       - name: Derive the worker inputs from the pin and the plan
         env:
           SOURCE_SHA_INPUT: ${{ inputs.source_sha }}
@@ -147,6 +160,7 @@ jobs:
           path: |
             ${{ runner.temp }}/mirror-plan.json
             ${{ runner.temp }}/mirror-plan.blob.json
+            ${{ runner.temp }}/ports-archive.json
             ${{ runner.temp }}/mirror-failure/
           if-no-files-found: ignore
           retention-days: 14

@@ -356,6 +356,12 @@ jobs:
             --output "${RUNNER_TEMP}/freebsd-16.json" \
             "${extra_flags[@]}"
 
+      - name: Store the pinned FreeBSD src and ports commits once for every build
+        run: |
+          python3 scripts/pin_source_archives.py \
+            --fsbuild "${RUNNER_TEMP}/fsbuild" --work "${RUNNER_TEMP}/source-archives" \
+            pin --pin "${RUNNER_TEMP}/freebsd-16.json" --previous config/freebsd-16.json
+
       - name: Open or update the single pin PR
         run: |
           set -euo pipefail
@@ -407,5 +413,5 @@ jobs:
             "${RUNNER_TEMP}/pin-amd64" "${RUNNER_TEMP}/pin-arm64" \
             "${RUNNER_TEMP}/freebsd-16.json" "${RUNNER_TEMP}/metadata.json" \
             "${RUNNER_TEMP}/sources.json" "${RUNNER_TEMP}/param.h" \
-            "${RUNNER_TEMP}/trusted_key"
+            "${RUNNER_TEMP}/trusted_key" "${RUNNER_TEMP}/source-archives"
           rm -f "${RUNNER_TEMP}/ports-pages.json" "${RUNNER_TEMP}/ports-candidates.json"

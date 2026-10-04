@@ -13,6 +13,8 @@ import re
 
 ARCHES = {"amd64": "FreeBSD:16:amd64", "arm64": "FreeBSD:16:aarch64"}
 SHA256 = re.compile(r"^[0-9a-f]{64}$")
+SOURCE_REPOSITORIES = {"freebsd/freebsd-src", "freebsd/freebsd-ports"}
+SOURCE_ARCHIVE_FORMAT = "freesense.git-bare-shallow-tar/v1"
 
 
 def digest(value: object) -> str:
@@ -82,6 +84,59 @@ def validate(pin: dict, *, now: datetime | None = None) -> None:
                 raise ValueError(f"{arch} mirror pin is incomplete")
     if not any("rust" in pin["targets"][arch]["binary_seed"].get("verified_roots", []) for arch in ARCHES):
         raise ValueError("pin has no official lang/rust package on any architecture")
+    validate_source_archives(pin)
+
+
+def validate_source_archives(pin: dict) -> None:
+    # Optional until a pin cycle stores them. Each one is a bare one-commit
+    # repository whose main branch is exactly the commit it is keyed by.
+    archives = pin.get("source_archives")
+    if archives is None:
+        return
+    if not isinstance(archives, dict):
+        raise ValueError("source archives must map commits to immutable blobs")
+    for commit, archive in archives.items():
+        if not re.fullmatch(r"[0-9a-f]{40}", str(commit)):
+            raise ValueError("source archive is not keyed by a full Git commit")
+        blob(archive, f"source archive {commit}")
+        if (archive.get("repository") not in SOURCE_REPOSITORIES
+                or archive.get("format") != SOURCE_ARCHIVE_FORMAT
+                or archive.get("ref") != "refs/heads/main"):
+            raise ValueError(f"source archive {commit} has an unsupported layout")
+
+
+def archivable_commits(pin: dict) -> dict[str, str]:
+    """Every upstream commit a build of this pin can clone, keyed to its repository.
+
+    Builds take ports from their target's mirror when one is pinned, so each
+    mirror's ports commit counts alongside the pin's own.
+    """
+    commits = {pin["freebsd_source"]["commit"]: "freebsd/freebsd-src",
+               pin["freebsd_ports"]["commit"]: "freebsd/freebsd-ports"}
+    for target in pin.get("targets", {}).values():
+        ports = (target.get("mirror") or {}).get("ports_commit")
+        if ports:
+            commits[ports] = "freebsd/freebsd-ports"
+    return commits
+
+
+def with_source_archives(pin: dict, additions: dict[str, dict]) -> dict:
+    """Merge archives into a pin, keeping only those its builds can still use."""
+    merged = {**(pin.get("source_archives") or {}), **additions}
+    wanted = archivable_commits(pin)
+    kept = {commit: archive for commit, archive in sorted(merged.items())
+            if wanted.get(commit) == archive.get("repository")}
+    updated = {key: value for key, value in pin.items() if key != "source_archives"}
+    if kept:
+        updated["source_archives"] = kept
+    validate_source_archives(updated)
+    return updated
+
+
+def source_archive(pin: dict, commit: str, repository: str) -> str:
+    """The pinned archive object for one upstream commit, or '' to fetch it."""
+    archive = (pin.get("source_archives") or {}).get(commit) or {}
+    return archive.get("object", "") if archive.get("repository") == repository else ""
 
 
 def worker(pin: dict, target: str, host: str) -> dict:
