@@ -151,5 +151,55 @@ class SourceArchiveCloneTests(unittest.TestCase):
             git("fetch", "-q", "--depth", "1", "origin", commit, cwd=ports)
 
 
+class WorkerRestoreTests(unittest.TestCase):
+    """worker-common.sh restore_upstream against a real archive, with the R2 download stubbed."""
+
+    def restore(self, root, tar, object_name, destination, commit):
+        common = (ROOT / "scripts/runner/worker-common.sh").read_text(encoding="utf-8")
+        start = common.index("restore_upstream() {")
+        function = common[start:common.index("\n}\n", start) + 3]
+        # Relative paths: GNU tar on Windows reads "C:" as a remote host.
+        tar, destination = tar.relative_to(root).as_posix(), destination.relative_to(root).as_posix()
+        script = (f"set -eu\nphase() {{ :; }}\nfetch_input() {{ cp '{tar}' \"$2\"; }}\n{function}"
+                  f"restore_upstream '{object_name}' '{destination}' '{commit}'\n")
+        return subprocess.run(["sh", "-c", script], cwd=root, capture_output=True, text=True)
+
+    def test_restores_the_pinned_commit_and_refuses_anything_else(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            upstream = root / "upstream"
+            upstream.mkdir()
+            git("init", "-q", "-b", "main", cwd=upstream)
+            git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "pinned", cwd=upstream)
+            commit = git("rev-parse", "HEAD", cwd=upstream)
+            bare = root / "work" / "freebsd-ports.git"
+            bare.parent.mkdir()
+            pin_source_archives.fetch_bare("freebsd/freebsd-ports", commit, bare, upstream.as_uri())
+            tar = root / "work" / "ports.tar"
+            pin_source_archives.write_tar(bare, tar)
+            vm = root / "vm"
+            vm.mkdir()
+            destination = vm / "freebsd-ports.git"
+            restored = self.restore(root, tar, "inputs/sha256/" + "c" * 64, destination, commit)
+            self.assertEqual(restored.returncode, 0, restored.stderr)
+            self.assertEqual(git("rev-parse", "refs/heads/main", cwd=destination), commit)
+            self.assertFalse((vm / "freebsd-ports.git.tar").exists())
+            wrong = self.restore(root, tar, "inputs/sha256/" + "c" * 64, destination, "f" * 40)
+            self.assertNotEqual(wrong.returncode, 0)
+            self.assertIn("does not hold the pinned commit", wrong.stderr)
+            mutable = self.restore(root, tar, "latest/ports.tar", destination, commit)
+            self.assertNotEqual(mutable.returncode, 0)
+            self.assertIn("not an immutable input", mutable.stderr)
+
+    def test_builder_uses_the_restored_trees_only_when_pinned(self):
+        common = (ROOT / "scripts/runner/worker-common.sh").read_text(encoding="utf-8")
+        self.assertIn('export POUDRIERE_PORTS_GIT_URL="${ports_url}"', common)
+        self.assertIn("ports_url=https://github.com/freebsd/freebsd-ports.git", common)
+        self.assertIn('UPSTREAM_URL="file:///root/freebsd-src.git"', common)
+        render = (ROOT / "scripts/render-worker.py").read_text(encoding="utf-8")
+        self.assertIn('"FREEBSD_SRC_OBJECT": ""', render)
+        self.assertIn('"PORTS_OBJECT": ""', render)
+
+
 if __name__ == "__main__":
     unittest.main()
