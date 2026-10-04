@@ -122,6 +122,9 @@ for value in ("uses: ./.github/workflows/system.yml",
               "target: arm64", "channel: devel", "operation: bundle"):
     require(value in multiarch_workflow,
             f"the multiarch cycle is missing {value!r}")
+require("'{generation:$generation}' >\"${RUNNER_TEMP}/pair-generation.json\"" not in multiarch_workflow
+        and 'schema_version:"freesense.generation/v1",fingerprint:.cycle.pair_fingerprint' in multiarch_workflow,
+        "a resumed multiarch cycle must write the full pair reservation verify_pair checks")
 require('.inputs.built_against_system = $system' in common,
         "the Optional packages artifact does not record its immutable build System")
 require("cron: '0 1 * * *'" in multiarch_workflow,
