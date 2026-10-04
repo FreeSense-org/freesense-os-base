@@ -259,7 +259,7 @@ configure_source() {
         /root/freesense-packages "${PACKAGES_SHA}"
       # The stage signs with config/channel-signing-public.pem and reads
       # partition_roots.py, multiarch-shards.json and package_provenance.py from
-      # here. It is not a patch set: Free\D src is never built in this stage.
+      # here. It is not a patch set: FreeBSD src is never built in this stage.
       phase clone-os-definition
       clone_exact https://github.com/FreeSense-org/freesense-os-base.git \
         /root/os-definition "${OS_BASE_SHA}"
@@ -270,12 +270,12 @@ configure_source() {
   if [ "${STAGE}" = system ]; then
     sed -i '' "s/^UPSTREAM_REF=.*/UPSTREAM_REF=\"${FREEBSD_SHA}\"/" \
       /root/os-definition/manifest.env
-    if [ -n "${FREE\D_SRC_OBJECT}" ]; then
-      restore_upstream "${FREE\D_SRC_OBJECT}" /root/freebsd-src.git "${FREE\D_SHA}"
+    if [ -n "${FREEBSD_SRC_OBJECT}" ]; then
+      restore_upstream "${FREEBSD_SRC_OBJECT}" /root/freebsd-src.git "${FREEBSD_SHA}"
       sed -i '' 's|^UPSTREAM_URL=.*|UPSTREAM_URL="file:///root/freebsd-src.git"|' \
         /root/os-definition/manifest.env
     else
-      echo "No stored Free\D src archive; fetching ${FREE\D_SHA} from GitHub."
+      echo "No stored FreeBSD src archive; fetching ${FREEBSD_SHA} from GitHub."
     fi
   fi
   ports_url=https://github.com/freebsd/freebsd-ports.git

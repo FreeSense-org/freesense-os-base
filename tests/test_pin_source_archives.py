@@ -201,5 +201,23 @@ class WorkerRestoreTests(unittest.TestCase):
         self.assertIn('"PORTS_OBJECT": ""', render)
 
 
+class ShellExpansionTests(unittest.TestCase):
+    """sh -n accepts a malformed ${...}; it only fails when the line runs."""
+
+    def test_every_parameter_expansion_names_a_valid_variable(self):
+        import re
+        expansion = re.compile(r"\$\{([^}]*)\}")
+        # Also allowed: bash arrays (${a[@]}), make variables in heredocs
+        # (${.CURDIR:...}) and the inner half of an eval'd ${${name}_B64}.
+        valid = re.compile(r"(\$\{)?#?([A-Za-z_.][A-Za-z0-9_.]*|[0-9]+|[@*#?$!-])(\[[^]]*\])?([:%#/+=?-].*)?", re.S)
+        scripts = [ROOT / "scripts/runner/worker-common.sh", *sorted((ROOT / "scripts/runner").glob("*.sh")),
+                   *sorted((ROOT / "scripts/runner/stages").glob("*.sh"))]
+        for script in dict.fromkeys(scripts):
+            for number, line in enumerate(script.read_text(encoding="utf-8").splitlines(), 1):
+                for body in expansion.findall(line):
+                    with self.subTest(script=script.name, line=number):
+                        self.assertIsNotNone(valid.fullmatch(body), f"{script.name}:{number}: ${{{body}}}")
+
+
 if __name__ == "__main__":
     unittest.main()
