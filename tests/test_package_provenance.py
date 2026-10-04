@@ -32,6 +32,25 @@ class PackageProvenanceTests(unittest.TestCase):
             selected = package_provenance.select(first, second, pin_unchanged=True)
             self.assertEqual(selected["accepted"], [])
 
+    def test_an_identical_patched_port_is_reused_and_a_changed_patch_is_not(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory); ports, config, policy = self._tree(root)
+            (ports / "devel/a/files").mkdir(); (ports / "devel/a/files/patch-main.c").write_text("one")
+            (ports / "net/k-kmod").mkdir(parents=True); (ports / "net/k-kmod/Makefile").write_text("k")
+            records = [{"name": "a", "origin": "devel/a", "version": "1", "options": {}, "dependencies": {}},
+                       {"name": "k-kmod", "origin": "net/k-kmod", "version": "1", "options": {}, "dependencies": {}}]
+            build = lambda: package_provenance.build(records, ports=ports, overlays=[], make_config=config,
+                                                     architecture_policy=policy, abi="FreeBSD:16:amd64", osversion=1600001)
+            first = build()
+            self.assertTrue(next(p for p in first["packages"] if p["name"] == "a")["provenance"]["patched"])
+            selected = package_provenance.select(first, build(), pin_unchanged=True)
+            self.assertEqual(selected["accepted"], ["a"])
+            self.assertIn("kernel", selected["rejected"]["k-kmod"])
+            (ports / "devel/a/files/patch-main.c").write_text("two")
+            selected = package_provenance.select(first, build(), pin_unchanged=True)
+            self.assertEqual(selected["accepted"], [])
+            self.assertIn("provenance changed", selected["rejected"]["a"])
+
     def _tree(self, root):
         ports = root / "ports"
         (ports / "Mk").mkdir(parents=True); (ports / "Mk/bsd.port.mk").write_text("mk")
