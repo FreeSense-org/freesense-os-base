@@ -19,6 +19,7 @@ from datetime import datetime, timedelta, timezone
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from build_platform import image_profile, load_policy, manifest_name, pin_target, release_profiles, target
+from multiarch_pin import source_archive
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -682,6 +683,10 @@ def main() -> int:
         "freebsd_sha": freebsd_sha,
         "ports_sha": ports_sha,
         "mirror_plan_object": target_mirror.get("object", ""),
+        # Pinned one-commit archives the worker clones from instead of GitHub;
+        # empty for a pin cut before they were stored.
+        "freebsd_src_object": source_archive(lock, freebsd_sha, "freebsd/freebsd-src"),
+        "ports_object": source_archive(lock, ports_sha, "freebsd/freebsd-ports"),
         "image_sha256": image_sha256,
         "worker_tools_sha256": worker_tools_sha256,
         "build_host": execution_inputs.get("host", "github-amd64"),
