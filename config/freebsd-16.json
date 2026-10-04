@@ -63,6 +63,40 @@
     }
   },
   "schema_version": "freesense.freebsd-pin/v4",
+  "source_archives": {
+    "2208b8828a2c4683ef0d87f4a8d2785324faefba": {
+      "format": "freesense.git-bare-shallow-tar/v1",
+      "object": "inputs/sha256/941eb2a7914bec9fcc6c3f0f767b4cf6d6e1988cbd93e9eae168a2c2145a43f8",
+      "ref": "refs/heads/main",
+      "repository": "freebsd/freebsd-ports",
+      "sha256": "941eb2a7914bec9fcc6c3f0f767b4cf6d6e1988cbd93e9eae168a2c2145a43f8",
+      "size": 118466560
+    },
+    "4af0312316c9ede1507ec0c36c3064c24df8b848": {
+      "format": "freesense.git-bare-shallow-tar/v1",
+      "object": "inputs/sha256/ac17e1584d5690f5ab59cea0c6c2be43213acb5e018222fb87d13ac315df6fc4",
+      "ref": "refs/heads/main",
+      "repository": "freebsd/freebsd-ports",
+      "sha256": "ac17e1584d5690f5ab59cea0c6c2be43213acb5e018222fb87d13ac315df6fc4",
+      "size": 118394880
+    },
+    "6f0fb7b8291b96c92e3b5e4d0a2078302220cbf7": {
+      "format": "freesense.git-bare-shallow-tar/v1",
+      "object": "inputs/sha256/7d4ba2e2198fa2ad3d0fcb813dbf0836eaf516caddb832d5f51746cd306bd206",
+      "ref": "refs/heads/main",
+      "repository": "freebsd/freebsd-ports",
+      "sha256": "7d4ba2e2198fa2ad3d0fcb813dbf0836eaf516caddb832d5f51746cd306bd206",
+      "size": 118384640
+    },
+    "a6deeaa2fb3b28a61ae56a85f2275f67fcf23262": {
+      "format": "freesense.git-bare-shallow-tar/v1",
+      "object": "inputs/sha256/a5cf8296e1b9428c2c9bdcd4fccf5259e651aed28dc0b797db91f332c1b2d4d7",
+      "ref": "refs/heads/main",
+      "repository": "freebsd/freebsd-src",
+      "sha256": "a5cf8296e1b9428c2c9bdcd4fccf5259e651aed28dc0b797db91f332c1b2d4d7",
+      "size": 415815680
+    }
+  },
   "targets": {
     "amd64": {
       "abi": "FreeBSD:16:amd64",
