@@ -86,6 +86,22 @@ def planning_closure(system: dict) -> dict:
     }
 
 
+def previous_seed(published: dict, planned: dict) -> str:
+    """The published repository a build may seed its unchanged packages from.
+
+    Only one built on the same FreeBSD pin qualifies; the worker then reuses a
+    package only where its recorded provenance still matches. Both records name
+    the pin by plan.py's freebsd_pin_id. Comparing against digest(pin) instead
+    -- a hash of the whole pin file -- never matched, so every build compiled
+    all of its own ports.
+    """
+    fingerprint = str(published.get("fingerprint", ""))
+    pin = str(planned.get("freebsd_pin_id", ""))
+    if not SHA256.fullmatch(fingerprint) or not SHA256.fullmatch(pin):
+        return ""
+    return fingerprint if published.get("freebsd_pin_id") == pin else ""
+
+
 def resolve(pin: dict, probe: dict, os_base_sha: str, *, force_dedicated: bool = False,
             all_dedicated: bool = False) -> dict:
     from plan import current_component_record, remote_sha
@@ -100,7 +116,6 @@ def resolve(pin: dict, probe: dict, os_base_sha: str, *, force_dedicated: bool =
     hosts = select_hosts(probe, pin, force_dedicated=force_dedicated, all_dedicated=all_dedicated)
     policy = load_policy()
     prior = {}
-    pin_id = digest(pin)
     for arch in ARCHES:
         descriptor = target(policy, arch)
         url = policy["public_base_url"] + "/" + manifest_name(descriptor, legacy=False)
@@ -117,14 +132,12 @@ def resolve(pin: dict, probe: dict, os_base_sha: str, *, force_dedicated: bool =
                       "--os-base-sha", os_base_sha, "--immutable-only"]
             system = json.loads(subprocess.check_output([*common, "system"], text=True))
             previous = prior[arch]["system"]
-            system["previous_freesense_repository"] = (previous.get("fingerprint", "")
-                if previous.get("freebsd_pin_id") == pin_id else "")
+            system["previous_freesense_repository"] = previous_seed(previous, system)
             closure = root / f"{arch}-closure.json"
             closure.write_text(json.dumps(planning_closure(system)), encoding="utf-8")
             packages = json.loads(subprocess.check_output([*common, "packages", "--system-closure", str(closure)], text=True))
             previous = prior[arch]["packages"]
-            packages["previous_freesense_repository"] = (previous.get("fingerprint", "")
-                if previous.get("freebsd_pin_id") == pin_id else "")
+            packages["previous_freesense_repository"] = previous_seed(previous, packages)
             targets[arch] = {"system": system, "packages": packages}
             fingerprints[arch] = {"system": system["system"], "packages": packages["packages"]}
     result = plan(pin, probe, fingerprints, force_dedicated=force_dedicated, all_dedicated=all_dedicated)
