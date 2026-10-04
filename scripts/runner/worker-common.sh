@@ -219,21 +219,26 @@ clone_exact() {
 # The pin stores each FreeBSD src and ports commit once as a bare one-commit
 # repository whose main branch is that commit. Restored here, the builder clones
 # it over file:// instead of fetching the same commit from GitHub every build.
+#
+# sh has no locals and fetch_input assigns object and destination, so these
+# names must stay distinct from every helper this calls.
 restore_upstream() {
-  object=$1 destination=$2 commit=$3
-  case "${object}" in
+  upstream_object=$1 upstream_dir=$2 upstream_commit=$3
+  upstream_tar="${upstream_dir}.tar"
+  case "${upstream_object}" in
     inputs/sha256/*) : ;;
     *) echo "upstream archive is not an immutable input" >&2; return 1 ;;
   esac
-  phase "restore-$(basename "${destination}" .git)"
-  rm -rf "${destination}" "${destination}.tar"
-  fetch_input "${object}" "${destination}.tar"
-  tar -C "$(dirname "${destination}")" -xf "${destination}.tar"
-  rm -f "${destination}.tar"
-  test "$(git -C "${destination}" rev-parse refs/heads/main)" = "${commit}" || {
-    echo "upstream archive does not hold the pinned commit ${commit}" >&2
+  phase "restore-$(basename "${upstream_dir}" .git)"
+  rm -rf "${upstream_dir}" "${upstream_tar}"
+  fetch_input "${upstream_object}" "${upstream_tar}"
+  tar -C "$(dirname "${upstream_dir}")" -xf "${upstream_tar}"
+  rm -f "${upstream_tar}"
+  test "$(git -C "${upstream_dir}" rev-parse refs/heads/main)" = "${upstream_commit}" || {
+    echo "upstream archive does not hold the pinned commit ${upstream_commit}" >&2
     return 1
   }
+  phase "restored-$(basename "${upstream_dir}" .git)"
 }
 
 configure_source() {

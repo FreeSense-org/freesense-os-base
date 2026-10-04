@@ -152,15 +152,26 @@ class SourceArchiveCloneTests(unittest.TestCase):
 
 
 class WorkerRestoreTests(unittest.TestCase):
-    """worker-common.sh restore_upstream against a real archive, with the R2 download stubbed."""
+    """worker-common.sh restore_upstream and the real fetch_input against a real archive.
+
+    Only rclone and FreeBSD's sha256 are stubbed: fetch_input assigns globals
+    (sh has no locals), and a stubbed fetch_input once hid that it clobbered
+    restore_upstream's destination.
+    """
+
+    @staticmethod
+    def function(common, name):
+        start = common.index(f"{name}() {{")
+        return common[start:common.index("\n}\n", start) + 3]
 
     def restore(self, root, tar, object_name, destination, commit):
         common = (ROOT / "scripts/runner/worker-common.sh").read_text(encoding="utf-8")
-        start = common.index("restore_upstream() {")
-        function = common[start:common.index("\n}\n", start) + 3]
         # Relative paths: GNU tar on Windows reads "C:" as a remote host.
         tar, destination = tar.relative_to(root).as_posix(), destination.relative_to(root).as_posix()
-        script = (f"set -eu\nphase() {{ :; }}\nfetch_input() {{ cp '{tar}' \"$2\"; }}\n{function}"
+        script = ("set -eu\nphase() { :; }\nR2_BUCKET=bucket PREFIX=v1\n"
+                  f"rclone() {{ for last; do :; done; cp '{tar}' \"$last\"; }}\n"
+                  "sha256() { sha256sum \"$2\" | cut -d' ' -f1; }\n"
+                  f"{self.function(common, 'fetch_input')}{self.function(common, 'restore_upstream')}"
                   f"restore_upstream '{object_name}' '{destination}' '{commit}'\n")
         return subprocess.run(["sh", "-c", script], cwd=root, capture_output=True, text=True)
 
@@ -180,11 +191,16 @@ class WorkerRestoreTests(unittest.TestCase):
             vm = root / "vm"
             vm.mkdir()
             destination = vm / "freebsd-ports.git"
-            restored = self.restore(root, tar, "inputs/sha256/" + "c" * 64, destination, commit)
+            import hashlib
+            stored = "inputs/sha256/" + hashlib.sha256(tar.read_bytes()).hexdigest()
+            restored = self.restore(root, tar, stored, destination, commit)
             self.assertEqual(restored.returncode, 0, restored.stderr)
             self.assertEqual(git("rev-parse", "refs/heads/main", cwd=destination), commit)
             self.assertFalse((vm / "freebsd-ports.git.tar").exists())
-            wrong = self.restore(root, tar, "inputs/sha256/" + "c" * 64, destination, "f" * 40)
+            corrupt = self.restore(root, tar, "inputs/sha256/" + "c" * 64, destination, commit)
+            self.assertNotEqual(corrupt.returncode, 0)
+            self.assertIn("checksum mismatch", corrupt.stderr)
+            wrong = self.restore(root, tar, stored, destination, "f" * 40)
             self.assertNotEqual(wrong.returncode, 0)
             self.assertIn("does not hold the pinned commit", wrong.stderr)
             mutable = self.restore(root, tar, "latest/ports.tar", destination, commit)
