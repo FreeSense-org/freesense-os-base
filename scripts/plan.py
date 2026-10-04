@@ -29,6 +29,20 @@ USER_AGENT = "FreeSense-build/1"
 OPTIONAL_PACKAGE_CONFIG_PATHS = (
     "tools/conf/pfPorts/make.conf",
 )
+# Top-level entries a build never reads, per source repository. A component
+# names the content of everything else rather than the commit, so a commit that
+# only touches these reuses the stored result. Anything added later counts
+# until it is listed here.
+SOURCE_UNREAD = {
+    # LICENSE is embedded in packages by builder_common.sh, so it is read.
+    "FreeSense-org/freesense": (".editorconfig", ".github", "BOOTSTRAP.md", "README.md",
+                                "rector.php", "tests"),
+    "FreeSense-org/freesense-system-ports": (".github", "README.md", "tests"),
+    # tools/ and policy/ serve the repository's own CI audits only.
+    "FreeSense-org/freesense-packages": (".github", "README.md", "docs", "policy", "tools"),
+}
+SOURCE_TREE_CACHE = Path(tempfile.gettempdir()) / "freesense-source-trees"
+SOURCE_URL = "https://github.com/{repository}.git"
 SEMVER = re.compile(r"^([0-9]+)\.([0-9]+)\.([0-9]+)$")
 TRAIN = re.compile(r"^[0-9]+\.[0-9]+$")
 
@@ -94,6 +108,42 @@ def remote_recipe_digest(repository: str, commit: str, paths: tuple[str, ...]) -
         digest.update(len(data).to_bytes(8, "big"))
         digest.update(data)
     return digest.hexdigest()
+
+
+def source_tree_entries(repository: str, commit: str) -> list[list[str]]:
+    """Top-level (name, type, object id) of one commit, fetched without blobs."""
+    if not SHA.fullmatch(commit):
+        raise SystemExit(f"{repository} source identity needs a full Git commit")
+    cache = SOURCE_TREE_CACHE / repository.replace("/", "_")
+    if not (cache / "HEAD").is_file():
+        cache.mkdir(parents=True, exist_ok=True)
+        subprocess.run(["git", "init", "-q", "--bare", str(cache)], check=True)
+    present = subprocess.run(["git", "-C", str(cache), "cat-file", "-e", f"{commit}^{{tree}}"],
+                             capture_output=True).returncode == 0
+    if not present:
+        subprocess.run(["git", "-C", str(cache), "fetch", "-q", "--depth", "1", "--filter=blob:none",
+                        SOURCE_URL.format(repository=repository), commit], check=True)
+    listing = subprocess.check_output(["git", "-C", str(cache), "ls-tree", "--full-tree", commit],
+                                      text=True)
+    entries = []
+    for line in listing.splitlines():
+        meta, name = line.split("\t", 1)
+        mode, kind, oid = meta.split()
+        entries.append([name, mode, kind, oid])
+    if not entries:
+        raise SystemExit(f"{repository}@{commit} has an empty tree")
+    return entries
+
+
+def source_tree_digest(repository: str, commit: str) -> str:
+    """Identity of what a build reads from one repository at one commit.
+
+    Git object ids are content hashes, so an entry whose content did not change
+    keeps its id across commits.
+    """
+    unread = set(SOURCE_UNREAD[repository])
+    read = [entry for entry in source_tree_entries(repository, commit) if entry[0] not in unread]
+    return fingerprint({"schema": 1, "kind": "source-tree", "repository": repository, "entries": read})
 
 
 def recipe_digest(paths: list[Path]) -> str:
@@ -393,8 +443,12 @@ def main() -> int:
     if args.kind == "system":
         latest_source_sha = resolved.get("source") or remote_sha("FreeSense-org/freesense")
         latest_system_sha = resolved.get("system_ports") or remote_sha("FreeSense-org/freesense-system-ports")
+        # What the build reads, not the commit: a commit that touches only
+        # unread paths keeps the identity, so the stored System is reused.
+        source_tree = source_tree_digest("FreeSense-org/freesense", latest_source_sha)
+        system_ports_tree = source_tree_digest("FreeSense-org/freesense-system-ports", latest_system_sha)
         desired_platform = fingerprint({
-            "schema": 3,
+            "schema": 4,
             "kind": "platform",
             "freebsd_source": lock["freebsd_source"]["commit"],
             "freebsd_ports": pinned_ports_commit,
@@ -402,8 +456,8 @@ def main() -> int:
             "jail_seed": jail_seed["sha256"],
             "worker_image": worker_image["sha256"],
             "worker_tools": worker_tools_lock_sha256,
-            "source": latest_source_sha,
-            "system_ports": latest_system_sha,
+            "source_tree": source_tree,
+            "system_ports_tree": system_ports_tree,
             "package_train": policy["package_train"],
             "artifact_policy": artifact_policy,
             "runner_policy": policy["runner"],
@@ -414,11 +468,11 @@ def main() -> int:
             **({} if args.target == "amd64" else {"target": selected_target}),
         })
         desired_system = fingerprint({
-            "schema": 2,
+            "schema": 3,
             "kind": "system",
             "platform": desired_platform,
-            "source": latest_source_sha,
-            "system_ports": latest_system_sha,
+            "source_tree": source_tree,
+            "system_ports_tree": system_ports_tree,
             "package_train": policy["package_train"],
             "recipe": recipe_digest([
                 ROOT / "scripts/render-worker.py",
@@ -537,11 +591,15 @@ def main() -> int:
         )
         if args.kind == "packages" else "0" * 64
     )
+    # Only a packages plan uses this identity; release images take the
+    # published one from the channel (current_packages_fingerprint).
+    packages_tree = (source_tree_digest("FreeSense-org/freesense-packages", packages_sha)
+                     if args.kind == "packages" else "")
     packages = fingerprint({
-        "schema": 4,
+        "schema": 5,
         "kind": "packages",
         "freebsd_pin": freebsd_pin_id,
-        "packages": packages_sha,
+        "packages_tree": packages_tree,
         "package_build_config": package_build_config,
         "architecture_policy": optional_architecture_policy,
         "package_train": selected_package_train,

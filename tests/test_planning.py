@@ -264,15 +264,23 @@ def stable_values(*, package_build_config: str, system_ports_sha: str = "2" * 40
     return json.loads(rendered.getvalue())
 
 
+def fake_source_tree(repository: str, commit: str) -> str:
+    return hashlib.sha256(f"{repository}@{commit}".encode()).hexdigest()
+
+
 class PlannerChannelTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.datetime_patcher = mock.patch.object(plan, "datetime", PinWindowDateTime)
         cls.datetime_patcher.start()
+        # The fixtures use made-up commits; a distinct commit stays a distinct tree.
+        cls.tree_patcher = mock.patch.object(plan, "source_tree_digest", side_effect=fake_source_tree)
+        cls.tree_patcher.start()
 
     @classmethod
     def tearDownClass(cls):
         cls.datetime_patcher.stop()
+        cls.tree_patcher.stop()
 
     def test_planning_clock_tracks_the_active_pin_fixture(self):
         with tempfile.TemporaryDirectory() as directory:
