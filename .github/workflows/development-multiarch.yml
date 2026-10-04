@@ -160,8 +160,11 @@ jobs:
           active=$(jq -r '.exists and (.cycle.superseded != true) and ((.cycle.architectures.amd64.published != true) or (.cycle.architectures.arm64.published != true))' "${RUNNER_TEMP}/cycle-state.json")
           if [[ "${active}" == true ]]; then
             jq -e .cycle.plan "${RUNNER_TEMP}/cycle-state.json" >"${RUNNER_TEMP}/multiarch-plan.json"
-            generation=$(jq -er .cycle.generation "${RUNNER_TEMP}/cycle-state.json")
-            jq -n --argjson generation "${generation}" '{generation:$generation}' >"${RUNNER_TEMP}/pair-generation.json"
+            # A resumed cycle carries the same reservation a fresh one gets from
+            # reserve-generation, so verify_pair can tie it to the frozen plan.
+            jq -e '{schema_version:"freesense.generation/v1",fingerprint:.cycle.pair_fingerprint,generation:.cycle.generation}
+                   | select((.fingerprint | type) == "string" and (.generation | type) == "number")' \
+              "${RUNNER_TEMP}/cycle-state.json" >"${RUNNER_TEMP}/pair-generation.json"
           else
           printf '%s' "${ARM_PROBE}" >"${RUNNER_TEMP}/arm-probe.json"
           args=()
