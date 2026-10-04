@@ -18,6 +18,11 @@ on:
         type: boolean
         default: false
         required: false
+      archive_sources_only:
+        description: Only store the current pin's FreeBSD src and ports commits in R2; leave the pin window alone
+        type: boolean
+        default: false
+        required: false
       arm64_runner:
         description: Host for the ARM64 pin VM. ubuntu-24.04 boots qemu-system-aarch64 with TCG on x86.
         type: choice
@@ -38,8 +43,79 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # A pin cut before source archives existed gets them without a rollover.
+  # The archives change no build identity, so nothing rebuilds for them.
+  archive_sources:
+    if: github.ref == 'refs/heads/main' && inputs.archive_sources_only
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    environment: pin
+    permissions:
+      actions: write
+      contents: write
+      id-token: write
+      pull-requests: write
+    env:
+      R2_CREDENTIAL_BROKER_URL: ${{ vars.R2_CREDENTIAL_BROKER_URL }}
+      R2_CREDENTIAL_BROKER_AUDIENCE: ${{ vars.R2_CREDENTIAL_BROKER_AUDIENCE }}
+      R2_BUCKET: ${{ vars.R2_BUILD_BUCKET }}
+      R2_ENDPOINT: ${{ vars.R2_ENDPOINT }}
+      FSBUILD_STORE_PREFIX: v1
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+        with: {go-version-file: go.mod, cache: false}
+      - run: go build -trimpath -o "${RUNNER_TEMP}/fsbuild" ./cmd/fsbuild
+      - name: Acquire immutable pin writer
+        run: >-
+          "${RUNNER_TEMP}/fsbuild" credentials acquire --broker-url "${R2_CREDENTIAL_BROKER_URL}"
+          --audience "${R2_CREDENTIAL_BROKER_AUDIENCE}" --role pin-writer
+          --expected-bucket "${R2_BUCKET}" --expected-prefix v1 --expected-endpoint "${R2_ENDPOINT}"
+          --github-env "${GITHUB_ENV}"
+      - name: Store every commit the current pin's builds clone
+        run: |
+          set -euo pipefail
+          cp config/freebsd-16.json "${RUNNER_TEMP}/freebsd-16.json"
+          python3 scripts/pin_source_archives.py \
+            --fsbuild "${RUNNER_TEMP}/fsbuild" --work "${RUNNER_TEMP}/source-archives" \
+            pin --pin "${RUNNER_TEMP}/freebsd-16.json" --previous config/freebsd-16.json
+      - name: Open or update the source archive PR
+        run: |
+          set -euo pipefail
+          if cmp -s "${RUNNER_TEMP}/freebsd-16.json" config/freebsd-16.json; then
+            echo "The current pin already records every source archive."
+            exit 0
+          fi
+          branch=automation/freebsd-source-archives
+          git config user.name freesense-ci
+          git config user.email ci@freesense.org
+          git fetch --no-tags origin main
+          git switch -C "${branch}" origin/main
+          git show origin/main:config/freebsd-16.json | cmp -s - config/freebsd-16.json || {
+            echo "the pin on main changed while the archives were stored; run this again" >&2
+            exit 1
+          }
+          cp "${RUNNER_TEMP}/freebsd-16.json" config/freebsd-16.json
+          git add config/freebsd-16.json
+          git commit -m "build: record the stored FreeBSD src and ports archives in the pin"
+          git push --force origin "HEAD:refs/heads/${branch}"
+          number=$(gh pr list --head "${branch}" --state open --json number --jq '.[0].number // empty')
+          if [[ -z "${number}" ]]; then
+            gh pr create --head "${branch}" --base main \
+              --title "Record the stored FreeBSD src and ports archives in the pin" \
+              --body "Automated (pin.yml run ${GITHUB_RUN_ID}, archive_sources_only): stored each FreeBSD src and ports commit the current pin's builds clone as an immutable input and recorded it under source_archives. No build identity changes."
+            number=$(gh pr list --head "${branch}" --state open --json number --jq '.[0].number')
+          fi
+          gh workflow run ci.yml --ref "${branch}"
+          gh pr merge "${number}" --auto --squash || echo "Auto-merge could not be enabled; PR #${number} remains open for review."
+          echo "Dispatched required CI and configured auto-merge for PR #${number}."
+      - name: Clean archive work
+        if: always()
+        run: rm -rf "${RUNNER_TEMP}/source-archives" "${RUNNER_TEMP}/freebsd-16.json"
+
   resolve:
-    if: github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main' && !inputs.archive_sources_only
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     environment: pin
