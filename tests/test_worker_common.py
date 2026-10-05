@@ -552,7 +552,7 @@ class WorkerVersionValidationTests(unittest.TestCase):
 
         source = (ROOT / "scripts/runner/worker-common.sh").read_text(encoding="utf-8")
         start = source.index("verify_repository()")
-        end = source.index("\nfetch_repository()", start)
+        end = source.index("\n)\n", start) + 3  # a subshell function: ( ... )
         fragment = source[start:end]
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
