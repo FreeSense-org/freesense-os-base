@@ -34,6 +34,21 @@ def file_digest(path: Path) -> str:
     return hashlib.sha256(path.read_bytes() if path.is_file() else b"").hexdigest()
 
 
+# The builder appends the freesense commit time to the poudriere make.conf so
+# packages carry reproducible timestamps. It changes with every commit but only
+# sets file times, so it is not part of what a package is built from. Keeping it
+# in the digest made every package look changed on every freesense commit.
+SOURCE_DATE_EPOCH_LINE = re.compile(r"^\s*(SOURCE_DATE_EPOCH\s*[?:!]?=.*|\.export\s+SOURCE_DATE_EPOCH\s*)$")
+
+
+def make_config_digest(path: Path) -> str:
+    if not path.is_file():
+        return file_digest(path)
+    lines = path.read_bytes().decode("utf-8", "surrogateescape").splitlines(keepends=True)
+    kept = "".join(line for line in lines if not SOURCE_DATE_EPOCH_LINE.match(line.rstrip("\r\n")))
+    return hashlib.sha256(kept.encode("utf-8", "surrogateescape")).hexdigest()
+
+
 def core_package(name: str, origin: str, product: str) -> bool:
     """A core package is built from a template, not from a port.
 
@@ -51,7 +66,7 @@ def build(records: list[dict], *, ports: Path, overlays: list[Path], make_config
           architecture_policy: Path, abi: str, osversion: int,
           product: str = "", core_inputs_sha256: str = "") -> dict:
     mk_hash = tree_digest(ports / "Mk")
-    config_hash, policy_hash = file_digest(make_config), file_digest(architecture_policy)
+    config_hash, policy_hash = make_config_digest(make_config), file_digest(architecture_policy)
     base = {}
     for record in records:
         name, origin = record.get("name"), record.get("origin")
