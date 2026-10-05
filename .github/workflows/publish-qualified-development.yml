@@ -4,6 +4,10 @@ on:
   workflow_call:
     inputs:
       architecture: {type: string, required: true}
+      # false: publish System and Packages to devices only (the daily path).
+      # true: also publish this run's image release (downloads and the
+      # website release documents); the device manifest is then already live.
+      release: {type: boolean, required: true}
 
 permissions: {actions: read, contents: read, id-token: write}
 
@@ -16,21 +20,24 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
         with: {go-version-file: go.mod, cache: false}
       - name: Download exact architecture documents
-        env: {GH_TOKEN: '${{ github.token }}', ARCH: '${{ inputs.architecture }}'}
+        env: {GH_TOKEN: '${{ github.token }}', ARCH: '${{ inputs.architecture }}', RELEASE: '${{ inputs.release }}'}
         run: |
           set -euo pipefail
           case "${ARCH}" in amd64) package_arch=amd64 ;; arm64) package_arch=aarch64 ;; *) exit 1 ;; esac
           mkdir -p "${RUNNER_TEMP}/bundle/repository" "${RUNNER_TEMP}/bundle/release"
           gh run download "${GITHUB_RUN_ID}" --repo "${GITHUB_REPOSITORY}" \
             --name "multiarch-repository-${ARCH}" --dir "${RUNNER_TEMP}/bundle/repository"
-          gh run download "${GITHUB_RUN_ID}" --repo "${GITHUB_REPOSITORY}" \
-            --name "multiarch-release-${ARCH}" --dir "${RUNNER_TEMP}/bundle/release"
           test -s "${RUNNER_TEMP}/bundle/repository/repos.${package_arch}.manifest.json"
-          test -s "${RUNNER_TEMP}/bundle/release/devel.json"
+          if [[ "${RELEASE}" == true ]]; then
+            gh run download "${GITHUB_RUN_ID}" --repo "${GITHUB_REPOSITORY}" \
+              --name "multiarch-release-${ARCH}" --dir "${RUNNER_TEMP}/bundle/release"
+            test -s "${RUNNER_TEMP}/bundle/release/devel.json"
+          fi
           go build -trimpath -o "${RUNNER_TEMP}/fsbuild" ./cmd/fsbuild
       # credentials acquire writes to GITHUB_ENV, which GitHub applies only to
       # later steps, so every credential is acquired in a step of its own.
       - name: Acquire downloads writer
+        if: inputs.release
         env:
           R2_CREDENTIAL_BROKER_URL: ${{ vars.R2_CREDENTIAL_BROKER_URL }}
           R2_CREDENTIAL_BROKER_AUDIENCE: ${{ vars.R2_CREDENTIAL_BROKER_AUDIENCE }}
@@ -42,6 +49,7 @@ jobs:
             --expected-bucket "${R2_BUCKET}" --expected-prefix v1 --expected-endpoint "${R2_ENDPOINT}" \
             --github-env "${GITHUB_ENV}"
       - name: Publish immutable downloads
+        if: inputs.release
         env:
           R2_BUCKET: ${{ vars.R2_DOWNLOAD_BUCKET }}
           R2_ENDPOINT: ${{ vars.R2_ENDPOINT }}
@@ -57,7 +65,20 @@ jobs:
             --audience "${R2_CREDENTIAL_BROKER_AUDIENCE}" --role channel-writer \
             --expected-bucket "${R2_BUCKET}" --expected-prefix v1 --expected-endpoint "${R2_ENDPOINT}" \
             --github-env "${GITHUB_ENV}"
+      - name: Commit the repositories devices update from
+        if: ${{ !inputs.release }}
+        env:
+          ARCH: ${{ inputs.architecture }}
+          R2_BUCKET: ${{ vars.R2_BUILD_BUCKET }}
+          R2_ENDPOINT: ${{ vars.R2_ENDPOINT }}
+          FSBUILD_STORE_PREFIX: v1
+        run: |
+          case "${ARCH}" in amd64) package_arch=amd64 ;; arm64) package_arch=aarch64 ;; *) exit 1 ;; esac
+          "${RUNNER_TEMP}/fsbuild" multiarch commit-repositories --architecture "${ARCH}" \
+            --repositories "${RUNNER_TEMP}/bundle/repository/repos.${package_arch}.manifest.json" \
+            --public-key config/channel-signing-public.pem
       - name: Commit qualified architecture
+        if: inputs.release
         env:
           ARCH: ${{ inputs.architecture }}
           R2_BUCKET: ${{ vars.R2_BUILD_BUCKET }}
@@ -98,13 +119,18 @@ jobs:
       - name: Commit architecture completion to the frozen cycle
         env:
           ARCH: ${{ inputs.architecture }}
+          RELEASE: ${{ inputs.release }}
           R2_BUCKET: ${{ vars.R2_BUILD_BUCKET }}
           R2_ENDPOINT: ${{ vars.R2_ENDPOINT }}
           FSBUILD_STORE_PREFIX: v1
         run: |
           "${RUNNER_TEMP}/fsbuild" multiarch cycle-get --output "${RUNNER_TEMP}/cycle-state.json"
-          jq -e --arg arch "${ARCH}" '
-            .cycle.architectures[$arch] = {system:"complete",packages:"complete",artifacts:"complete",published:true} |
+          # Devices have the pair once the repositories are committed. The
+          # artifacts field records whether this cycle also released images.
+          jq -e --arg arch "${ARCH}" --argjson release "${RELEASE}" '
+            .cycle.architectures[$arch] as $old |
+            .cycle.architectures[$arch] = {system:"complete",packages:"complete",
+              artifacts:(if $release then "complete" else ($old.artifacts // "pending") end),published:true} |
             .cycle
           ' "${RUNNER_TEMP}/cycle-state.json" >"${RUNNER_TEMP}/cycle-complete.json"
           "${RUNNER_TEMP}/fsbuild" multiarch cycle-commit --document "${RUNNER_TEMP}/cycle-complete.json"

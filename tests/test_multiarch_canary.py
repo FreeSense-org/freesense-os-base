@@ -122,6 +122,28 @@ class CanaryTests(unittest.TestCase):
             self.assertEqual(target["reused_packages"], {"system": 1, "packages": 1})
         self.assertEqual(self.objects, self.original)
 
+    def test_repositories_only_verifies_the_pair_without_images(self):
+        self.documents = None
+        # No image needs to exist: the daily publication carries none.
+        for url in [url for url in self.objects if "/artifacts/iso/" in url or "/artifacts/cloud/" in url
+                    or "/artifacts/appliance/" in url]:
+            del self.objects[url]
+        result = self.verify()
+        self.assertEqual(result["scope"], "repositories")
+        for target in result["architectures"].values():
+            self.assertIsNone(target["release_document_sha256"])
+            self.assertEqual(target["artifact_documents"], {})
+            self.assertEqual(target["reused_packages"], {"system": 1, "packages": 1})
+
+    def test_repositories_only_still_checks_the_components(self):
+        self.documents = None
+        marker_url = next(url for url in self.objects if url.endswith("/complete.json") and "/artifacts/system/" in url)
+        marker = json.loads(self.objects[marker_url])
+        marker["inputs"]["freebsd_pin_id"] = "0" * 64
+        self.objects[marker_url] = json.dumps(marker).encode()
+        with self.assertRaisesRegex(ValueError, "planned pin"):
+            self.verify()
+
     def test_missing_architecture_and_missing_pi_fail(self):
         del self.documents["arm64"]
         with self.assertRaisesRegex(ValueError, "both complete"):

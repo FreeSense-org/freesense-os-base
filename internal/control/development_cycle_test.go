@@ -158,3 +158,24 @@ func TestDevelopmentCycleCompletedAllowsSameGenerationReplan(t *testing.T) {
 		t.Fatal("replaced a completed cycle under another pin at the same generation")
 	}
 }
+
+func TestDevelopmentCyclePublishesSystemAndPackagesWithoutImages(t *testing.T) {
+	backend := newMemoryStore()
+	cycle := cycleFixture()
+	pending := ArchitectureCycleStatus{System: "pending", Packages: "pending", Artifacts: "pending"}
+	cycle.Architectures["amd64"], cycle.Architectures["arm64"] = pending, pending
+	if _, _, err := CommitDevelopmentCycle(context.Background(), backend, cycle); err != nil {
+		t.Fatal(err)
+	}
+	// Images are released separately: a published pair keeps artifacts pending.
+	devices := ArchitectureCycleStatus{System: "complete", Packages: "complete", Artifacts: "pending", Published: true}
+	cycle.Architectures["amd64"], cycle.Architectures["arm64"] = devices, devices
+	if _, updated, err := CommitDevelopmentCycle(context.Background(), backend, cycle); err != nil || !updated {
+		t.Fatalf("publish without images: %v %v", updated, err)
+	}
+	incomplete := cycleFixture()
+	incomplete.Architectures["amd64"] = ArchitectureCycleStatus{System: "complete", Packages: "pending", Artifacts: "complete", Published: true}
+	if err := incomplete.Validate(); err == nil {
+		t.Fatal("published a pair whose Packages are not complete")
+	}
+}

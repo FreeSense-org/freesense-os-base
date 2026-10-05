@@ -79,78 +79,91 @@ def expected_artifacts(policy: dict, arch: str) -> set[tuple]:
     return result
 
 
-def verify(plan: dict, documents: dict[str, bytes], policy: dict, *, read=fetch_bytes, check_file=verify_file,
+def verify_release(arch: str, raw: bytes, system_plan: dict, package_plan: dict, plan: dict, policy: dict,
+                   base: str, read, check_file) -> tuple[dict, dict]:
+    """One architecture's image release document and every image it lists."""
+    release = json.loads(raw)
+    validate_download(release, "devel", base)
+    if release["generation"] != plan["generation"]:
+        raise ValueError("release document differs from the reserved shared pair generation")
+    actual = {(item["kind"], item.get("platform", release.get("platform")), item.get("filesystem"), item["format"])
+              for item in release["artifacts"]}
+    if (actual != expected_artifacts(policy, arch) or len(actual) != len(release["artifacts"])
+            or release.get("architecture") != arch or release.get("system") != system_plan["system"]):
+        raise ValueError("release is missing artifacts or belongs to a different target/System")
+    provenance = release.get("provenance", {})
+    for source, expected in {
+        "ports": system_plan["ports_sha"], "freebsd": system_plan["freebsd_sha"],
+    }.items():
+        if provenance.get(source) != expected:
+            raise ValueError("release source closure differs from frozen coordinator plan")
+    # Neither commit is part of the System fingerprint: it names what the
+    # build reads from freesense (plan.py SOURCE_UNREAD) and the os-base
+    # recipe, not the commits. A System reused across commits that left
+    # those unchanged keeps the commits that built it, older than this
+    # cycle's plan; the equal System identity above is what binds them.
+    for source in ("source", "os_definition"):
+        if not re.fullmatch(r"[0-9a-f]{40}", str(provenance.get(source, ""))):
+            raise ValueError(f"release {source} provenance is not an exact commit")
+    markers, artifact_documents = {}, {}
+    for item in release["artifacts"]:
+        if (not isinstance(item.get("file"), str) or not item["file"]
+                or any(value in item["file"] for value in ("/", "\\", "..", "?", "#"))):
+            raise ValueError("invalid release artifact filename")
+        stage = {"installer": "iso", "cloud": "cloud", "appliance": "appliance"}[item["kind"]]
+        fingerprint = item.get("artifact_fingerprint", item.get("build_fingerprint"))
+        if not SHA256.fullmatch(str(fingerprint)):
+            raise ValueError("invalid release artifact identity")
+        url = f"{base}/artifacts/{stage}/{fingerprint}/complete.json"
+        if item["marker_url"] != url:
+            raise ValueError("release artifact points outside its immutable namespace")
+        raw = read(url)
+        marker = json.loads(raw)
+        inputs = marker.get("inputs", {})
+        if (marker.get("fingerprint") != fingerprint or marker.get("architecture") != arch
+                or (marker.get("system") or inputs.get("system")) != system_plan["system"]
+                or inputs.get("packages") != package_plan["packages"]
+                or inputs.get("platform") != system_plan["platform"]):
+            raise ValueError("artifact marker does not bind the selected complete pair")
+        expected_schema = {"cloud": "freesense.cloud-image/v1", "appliance": "freesense.appliance/v1",
+                           "iso": "freesense.iso/v2" if arch == "amd64" else "freesense.installer/v1"}[stage]
+        if marker.get("schema_version") != expected_schema:
+            raise ValueError("artifact has no supported completion marker")
+        files = marker.get("files", []) if stage == "cloud" else [marker]
+        if not any(all(file.get(key) == item.get(key) for key in ("file", "sha256", "size")) for file in files):
+            raise ValueError("release file differs from verified artifact marker")
+        if stage == "appliance" and (marker.get("hardware_verification") != "unverified"
+                                     or item.get("hardware_verification") != "unverified"):
+            raise ValueError("Pi canary must retain structural-only verification labels")
+        check_file(url.removesuffix("complete.json") + item["file"], item["sha256"], item["size"])
+        markers[url] = hashlib.sha256(raw).hexdigest()
+        identity = ("installer" if stage == "iso" else "cloud-" + item["filesystem"] if stage == "cloud"
+                    else item["platform"])
+        if identity in artifact_documents and artifact_documents[identity] != markers[url]:
+            raise ValueError("image formats belong to different immutable artifact documents")
+        artifact_documents[identity] = markers[url]
+    return markers, artifact_documents
+
+
+def verify(plan: dict, documents: dict[str, bytes] | None, policy: dict, *, read=fetch_bytes, check_file=verify_file,
            check_signature=verify_signature) -> dict:
-    if set(documents) != set(ARCHES) or set(plan.get("targets", {})) != set(ARCHES):
+    # documents=None verifies System and Packages only: what devices receive
+    # daily. Image release documents are verified when images are released.
+    if (documents is not None and set(documents) != set(ARCHES)) or set(plan.get("targets", {})) != set(ARCHES):
         raise ValueError("canary requires both complete architecture results")
     if type(plan.get("generation")) is not int or plan["generation"] <= 0:
         raise ValueError("canary requires the reserved shared pair generation")
     result = {"schema_version": "freesense.multiarch-canary/v1", "pair_fingerprint": plan["pair_fingerprint"],
               "freebsd_pin": plan["freebsd_pin"], "generation": plan["generation"],
-              "publication_enabled": False, "architectures": {}}
+              "publication_enabled": False, "architectures": {},
+              "scope": "repositories" if documents is None else "release"}
     base = policy["public_base_url"]
     for arch in ARCHES:
         system_plan, package_plan = plan["targets"][arch]["system"], plan["targets"][arch]["packages"]
-        release = json.loads(documents[arch])
-        validate_download(release, "devel", base)
-        if release["generation"] != plan["generation"]:
-            raise ValueError("release document differs from the reserved shared pair generation")
-        actual = {(item["kind"], item.get("platform", release.get("platform")), item.get("filesystem"), item["format"])
-                  for item in release["artifacts"]}
-        if (actual != expected_artifacts(policy, arch) or len(actual) != len(release["artifacts"])
-                or release.get("architecture") != arch or release.get("system") != system_plan["system"]):
-            raise ValueError("release is missing artifacts or belongs to a different target/System")
-        provenance = release.get("provenance", {})
-        for source, expected in {
-            "ports": system_plan["ports_sha"], "freebsd": system_plan["freebsd_sha"],
-        }.items():
-            if provenance.get(source) != expected:
-                raise ValueError("release source closure differs from frozen coordinator plan")
-        # Neither commit is part of the System fingerprint: it names what the
-        # build reads from freesense (plan.py SOURCE_UNREAD) and the os-base
-        # recipe, not the commits. A System reused across commits that left
-        # those unchanged keeps the commits that built it, older than this
-        # cycle's plan; the equal System identity above is what binds them.
-        for source in ("source", "os_definition"):
-            if not re.fullmatch(r"[0-9a-f]{40}", str(provenance.get(source, ""))):
-                raise ValueError(f"release {source} provenance is not an exact commit")
         markers, artifact_documents = {}, {}
-        for item in release["artifacts"]:
-            if (not isinstance(item.get("file"), str) or not item["file"]
-                    or any(value in item["file"] for value in ("/", "\\", "..", "?", "#"))):
-                raise ValueError("invalid release artifact filename")
-            stage = {"installer": "iso", "cloud": "cloud", "appliance": "appliance"}[item["kind"]]
-            fingerprint = item.get("artifact_fingerprint", item.get("build_fingerprint"))
-            if not SHA256.fullmatch(str(fingerprint)):
-                raise ValueError("invalid release artifact identity")
-            url = f"{base}/artifacts/{stage}/{fingerprint}/complete.json"
-            if item["marker_url"] != url:
-                raise ValueError("release artifact points outside its immutable namespace")
-            raw = read(url)
-            marker = json.loads(raw)
-            inputs = marker.get("inputs", {})
-            if (marker.get("fingerprint") != fingerprint or marker.get("architecture") != arch
-                    or (marker.get("system") or inputs.get("system")) != system_plan["system"]
-                    or inputs.get("packages") != package_plan["packages"]
-                    or inputs.get("platform") != system_plan["platform"]):
-                raise ValueError("artifact marker does not bind the selected complete pair")
-            expected_schema = {"cloud": "freesense.cloud-image/v1", "appliance": "freesense.appliance/v1",
-                               "iso": "freesense.iso/v2" if arch == "amd64" else "freesense.installer/v1"}[stage]
-            if marker.get("schema_version") != expected_schema:
-                raise ValueError("artifact has no supported completion marker")
-            files = marker.get("files", []) if stage == "cloud" else [marker]
-            if not any(all(file.get(key) == item.get(key) for key in ("file", "sha256", "size")) for file in files):
-                raise ValueError("release file differs from verified artifact marker")
-            if stage == "appliance" and (marker.get("hardware_verification") != "unverified"
-                                         or item.get("hardware_verification") != "unverified"):
-                raise ValueError("Pi canary must retain structural-only verification labels")
-            check_file(url.removesuffix("complete.json") + item["file"], item["sha256"], item["size"])
-            markers[url] = hashlib.sha256(raw).hexdigest()
-            identity = ("installer" if stage == "iso" else "cloud-" + item["filesystem"] if stage == "cloud"
-                        else item["platform"])
-            if identity in artifact_documents and artifact_documents[identity] != markers[url]:
-                raise ValueError("image formats belong to different immutable artifact documents")
-            artifact_documents[identity] = markers[url]
+        if documents is not None:
+            markers, artifact_documents = verify_release(arch, documents[arch], system_plan, package_plan,
+                                                         plan, policy, base, read, check_file)
         reused = {}
         catalogues, catalogue_hashes = {}, {}
         for component, component_plan in (("system", system_plan), ("packages", package_plan)):
@@ -196,7 +209,9 @@ def verify(plan: dict, documents: dict[str, bytes], policy: dict, *, read=fetch_
                            catalog_checksum=signed["sum"])
             reused[component] = len(names)
         verify_closure(catalogues["system"], catalogues["packages"])
-        result["architectures"][arch] = {"release_document_sha256": hashlib.sha256(documents[arch]).hexdigest(),
+        result["architectures"][arch] = {
+                                        "release_document_sha256": (hashlib.sha256(documents[arch]).hexdigest()
+                                                                    if documents is not None else None),
                                         "system_fingerprint": system_plan["system"],
                                         "packages_fingerprint": package_plan["packages"],
                                         "freebsd_pin_id": system_plan["freebsd_pin_id"],
@@ -209,8 +224,10 @@ def verify(plan: dict, documents: dict[str, bytes], policy: dict, *, read=fetch_
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--plan", type=Path, required=True)
-    parser.add_argument("--amd64", type=Path, required=True)
-    parser.add_argument("--arm64", type=Path, required=True)
+    parser.add_argument("--amd64", type=Path, help="amd64 image release document")
+    parser.add_argument("--arm64", type=Path, help="arm64 image release document")
+    parser.add_argument("--repositories-only", action="store_true",
+                        help="verify System and Packages only, without image release documents")
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--jobs", type=Path, required=True)
     parser.add_argument("--run-id", type=int, required=True)
@@ -225,6 +242,9 @@ if __name__ == "__main__":
             or reservation.get("fingerprint") != plan["pair_fingerprint"]):
         raise SystemExit("pair reservation does not belong to the frozen coordinator plan")
     plan["generation"] = reservation["generation"]
-    result = verify(plan, {arch: getattr(args, arch).read_bytes() for arch in ARCHES}, load_policy())
+    if args.repositories_only == bool(args.amd64 or args.arm64):
+        raise SystemExit("give both release documents, or --repositories-only and none")
+    documents = None if args.repositories_only else {arch: getattr(args, arch).read_bytes() for arch in ARCHES}
+    result = verify(plan, documents, load_policy())
     result["job_timings"] = timings
     args.output.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n")

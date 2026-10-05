@@ -202,3 +202,52 @@ func TestQualifiedCommitCorrectsMislabelledChannel(t *testing.T) {
 		t.Fatalf("corrected retry: %v %v", updated, err)
 	}
 }
+
+func TestRepositoryCommitPublishesDevicesWithoutAnImageRelease(t *testing.T) {
+	key, _ := rsa.GenerateKey(rand.Reader, 2048)
+	backend := newMemoryStore()
+	ctx := context.Background()
+	repo, release := qualifiedFixture(t, key, "amd64", 10)
+	if updated, err := CommitRepositories(ctx, backend, repo, "amd64", &key.PublicKey); err != nil || !updated {
+		t.Fatalf("first: %v %v", updated, err)
+	}
+	for _, name := range []string{"repos.amd64.manifest.json", "repos.manifest.json"} {
+		if object, err := backend.Get(ctx, name); err != nil || string(object.Data) != string(repo) {
+			t.Fatalf("%s not committed: %v", name, err)
+		}
+	}
+	for _, name := range []string{"releases/devel.amd64.json", "releases/devel.json"} {
+		if _, err := backend.Get(ctx, name); !errors.Is(err, store.ErrNotFound) {
+			t.Fatalf("%s written without an image release: %v", name, err)
+		}
+	}
+	if updated, err := CommitRepositories(ctx, backend, repo, "amd64", &key.PublicKey); err != nil || updated {
+		t.Fatalf("retry: %v %v", updated, err)
+	}
+	// The image release of the same pair later finds the manifest live.
+	if _, err := CommitQualified(ctx, backend, repo, release, "amd64", &key.PublicKey); err != nil {
+		t.Fatalf("image release after repositories: %v", err)
+	}
+	if object, err := backend.Get(ctx, "releases/devel.amd64.json"); err != nil || string(object.Data) != string(release) {
+		t.Fatalf("release document not committed: %v", err)
+	}
+	older, _ := qualifiedFixture(t, key, "amd64", 9)
+	if _, err := CommitRepositories(ctx, backend, older, "amd64", &key.PublicKey); err == nil {
+		t.Fatal("accepted a rollback")
+	}
+	newer, _ := qualifiedComponentsFixture(t, key, "amd64", 11, 11, 11, strings.Repeat("c", 64))
+	if updated, err := CommitRepositories(ctx, backend, newer, "amd64", &key.PublicKey); err != nil || !updated {
+		t.Fatalf("newer pair: %v %v", updated, err)
+	}
+	// arm64 has no legacy alias.
+	armRepo, _ := qualifiedFixture(t, key, "arm64", 4)
+	if updated, err := CommitRepositories(ctx, backend, armRepo, "arm64", &key.PublicKey); err != nil || !updated {
+		t.Fatalf("arm64: %v %v", updated, err)
+	}
+	if object, _ := backend.Get(ctx, "repos.manifest.json"); string(object.Data) != string(newer) {
+		t.Fatal("arm64 repositories touched the amd64 legacy manifest")
+	}
+	if _, err := CommitRepositories(ctx, backend, armRepo, "amd64", &key.PublicKey); err == nil {
+		t.Fatal("accepted an arm64 manifest as amd64")
+	}
+}

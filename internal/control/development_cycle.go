@@ -65,8 +65,11 @@ func (cycle DevelopmentCycle) Validate() error {
 				return fmt.Errorf("invalid %s cycle status", arch)
 			}
 		}
-		if status.Published && (status.System != "complete" || status.Packages != "complete" || status.Artifacts != "complete") {
-			return fmt.Errorf("%s cannot publish incomplete artifacts", arch)
+		// Published means devices have the pair: System and Packages. Images
+		// are released separately (after a pin rollover), so Artifacts only
+		// records whether this cycle also produced them.
+		if status.Published && (status.System != "complete" || status.Packages != "complete") {
+			return fmt.Errorf("%s cannot publish an incomplete System/Packages pair", arch)
 		}
 	}
 	for name, revision := range cycle.Sources {
