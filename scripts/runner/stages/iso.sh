@@ -163,19 +163,13 @@ grep -Fq '"${_repoc_root}/etc/version"' \
 phase iso-tools-fetch
 mkdir -p "/root/freebsd-tools/release/${FREEBSD_TARGET}" /root/freebsd-tools/release/scripts
 if [ "${ARCHITECTURE}" = arm64 ]; then
-  fetch -qo /root/freebsd-tools/release/arm64/make-memstick.sh \
-    "https://raw.githubusercontent.com/freebsd/freebsd-src/${FREEBSD_SHA}/release/arm64/make-memstick.sh"
+  freebsd_src_file release/arm64/make-memstick.sh /root/freebsd-tools/release/arm64/make-memstick.sh
 else
-  fetch -qo /root/freebsd-tools/release/amd64/mkisoimages.sh \
-    "https://raw.githubusercontent.com/freebsd/freebsd-src/${FREEBSD_SHA}/release/amd64/mkisoimages.sh"
+  freebsd_src_file release/amd64/mkisoimages.sh /root/freebsd-tools/release/amd64/mkisoimages.sh
 fi
-fetch -qo /root/freebsd-tools/release/scripts/make-manifest.sh \
-  "https://raw.githubusercontent.com/freebsd/freebsd-src/${FREEBSD_SHA}/release/scripts/make-manifest.sh"
-fetch -qo /root/freebsd-tools/release/scripts/tools.subr \
-  "https://raw.githubusercontent.com/freebsd/freebsd-src/${FREEBSD_SHA}/release/scripts/tools.subr"
-mkdir -p /root/freebsd-tools/tools/boot
-fetch -qo /root/freebsd-tools/tools/boot/install-boot.sh \
-  "https://raw.githubusercontent.com/freebsd/freebsd-src/${FREEBSD_SHA}/tools/boot/install-boot.sh"
+freebsd_src_file release/scripts/make-manifest.sh /root/freebsd-tools/release/scripts/make-manifest.sh
+freebsd_src_file release/scripts/tools.subr /root/freebsd-tools/release/scripts/tools.subr
+freebsd_src_file tools/boot/install-boot.sh /root/freebsd-tools/tools/boot/install-boot.sh
 if [ "${ARCHITECTURE}" = arm64 ]; then
   test -s /root/freebsd-tools/release/arm64/make-memstick.sh
 else
@@ -198,9 +192,7 @@ for installer_path in \
   usr.sbin/bsdinstall/scripts/config \
   usr.sbin/bsdinstall/scripts/zfsboot \
   usr.sbin/bsdinstall/startbsdinstall; do
-  fetch -qo "${installer_source}/${installer_path}" \
-    "https://raw.githubusercontent.com/freebsd/freebsd-src/${FREEBSD_SHA}/${installer_path}"
-  test -s "${installer_source}/${installer_path}"
+  freebsd_src_file "${installer_path}" "${installer_source}/${installer_path}"
 done
 printf '%s' "${FREESENSE_INSTALLER_PATCH_B64}" | \
   openssl base64 -d -A >"${installer_patch}"

@@ -152,3 +152,33 @@ acquire_sources() {
       ;;
   esac
 }
+
+# One file of the pinned FreeBSD source tree: from the stored src archive when
+# the plan names one (restored on first use), otherwise from GitHub at the
+# same commit. Names stay distinct from restore_upstream's and fetch_input's.
+freebsd_src_file() {
+  src_path=$1 src_destination=$2
+  mkdir -p "$(dirname "${src_destination}")"
+  if [ -n "${FREEBSD_SRC_OBJECT}" ]; then
+    [ -d /root/freebsd-src.git ] || \
+      restore_upstream "${FREEBSD_SRC_OBJECT}" /root/freebsd-src.git "${FREEBSD_SHA}"
+    git -C /root/freebsd-src.git show "${FREEBSD_SHA}:${src_path}" >"${src_destination}"
+  else
+    fetch -qo "${src_destination}" \
+      "https://raw.githubusercontent.com/freebsd/freebsd-src/${FREEBSD_SHA}/${src_path}"
+  fi
+  test -s "${src_destination}"
+}
+
+# A work tree of the pinned ports commit: from the stored ports archive when
+# the plan names one, otherwise from GitHub.
+freebsd_ports_tree() {
+  ports_destination=$1
+  if [ -n "${PORTS_OBJECT}" ]; then
+    [ -d /root/freebsd-ports.git ] || \
+      restore_upstream "${PORTS_OBJECT}" /root/freebsd-ports.git "${PORTS_SHA}"
+    clone_exact file:///root/freebsd-ports.git "${ports_destination}" "${PORTS_SHA}"
+  else
+    clone_exact https://github.com/freebsd/freebsd-ports.git "${ports_destination}" "${PORTS_SHA}"
+  fi
+}

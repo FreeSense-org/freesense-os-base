@@ -104,7 +104,7 @@ trap cleanup_appliance EXIT INT TERM
 gpart create -s mbr "${md}"
 mkdir -p /mnt/appliance-boot /mnt/appliance-root
 if [ "${IMAGE_PROFILE}" = arm64-rpi4b ]; then
-  fetch -o /root/RPI.conf "https://raw.githubusercontent.com/freebsd/freebsd-src/${FREEBSD_SHA}/release/arm64/RPI.conf"
+  freebsd_src_file release/arm64/RPI.conf /root/RPI.conf
   grep -q 'EMBEDDEDPORTS="sysutils/u-boot-rpi-arm64 sysutils/rpi-firmware"' /root/RPI.conf
   grep -q 'FAT_TYPE="16"' /root/RPI.conf
   grep -q 'PART_SCHEME="MBR"' /root/RPI.conf
@@ -181,7 +181,7 @@ done
 phase appliance-boot-inputs
 mkdir -p /mnt/appliance-boot/EFI/BOOT
 if [ "${IMAGE_PROFILE}" = arm64-rpi4b ]; then
-  clone_exact https://github.com/freebsd/freebsd-ports.git /root/freebsd-ports "${PORTS_SHA}"
+  freebsd_ports_tree /root/freebsd-ports
   env BATCH=yes WRKDIRPREFIX=/root/ports-work make -C /root/freebsd-ports/sysutils/u-boot-rpi-arm64 install clean
   env BATCH=yes WRKDIRPREFIX=/root/ports-work make -C /root/freebsd-ports/sysutils/rpi-firmware install clean
   cp /usr/local/share/u-boot/u-boot-rpi-arm64/u-boot.bin /mnt/appliance-boot/
