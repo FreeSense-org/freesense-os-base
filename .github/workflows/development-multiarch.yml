@@ -16,8 +16,15 @@ on:
         description: Supersede the frozen incomplete cycle and start a new one from current sources
         type: boolean
         default: false
+      images:
+        description: Images and the website release (auto = when the FreeBSD pin changed)
+        type: choice
+        options: [auto, force, skip]
+        default: auto
   schedule:
     # 01:00 UTC = 03:00 CEST / 02:00 CET. Unchanged parts reuse their stored output.
+    # Every run publishes System and Packages to devices; images and the
+    # website release follow only when the FreeBSD pin changed (images_due).
     - cron: '0 1 * * *'
 
 permissions: {actions: write, contents: read, id-token: write}
@@ -288,7 +295,10 @@ jobs:
     secrets: inherit
 
   release_amd64:
-    needs: [prepare, system_amd64, packages_amd64, repository_amd64]
+    needs: [prepare, system_amd64, packages_amd64, repository_amd64, images_due]
+    # !cancelled() rather than the default success(): publish_repos_* is
+    # skipped when publication is off, and success() would then skip images.
+    if: ${{ !cancelled() && needs.images_due.outputs.due == 'true' && needs.repository_amd64.result == 'success' }}
     uses: ./.github/workflows/release.yml
     with:
       operation: bundle
@@ -306,7 +316,10 @@ jobs:
     secrets: inherit
 
   release_arm64:
-    needs: [prepare, system_arm64, packages_arm64, repository_arm64]
+    needs: [prepare, system_arm64, packages_arm64, repository_arm64, images_due]
+    # !cancelled() rather than the default success(): publish_repos_* is
+    # skipped when publication is off, and success() would then skip images.
+    if: ${{ !cancelled() && needs.images_due.outputs.due == 'true' && needs.repository_arm64.result == 'success' }}
     uses: ./.github/workflows/release.yml
     with:
       operation: bundle
@@ -323,28 +336,103 @@ jobs:
       suppress_publication: true
     secrets: inherit
 
-  publish_amd64:
-    needs: [prepare, release_amd64, repository_amd64]
+  # Devices get the verified pair every day, without waiting for images.
+  publish_repos_amd64:
+    needs: [prepare, repository_amd64, verify_repositories]
     if: >-
       github.ref == 'refs/heads/main' &&
       needs.prepare.outputs.publication_enabled == 'true' &&
       vars.MULTIARCH_PUBLICATION_ENABLED == 'true'
     uses: ./.github/workflows/publish-qualified-development.yml
-    with: {architecture: amd64}
+    with: {architecture: amd64, release: false}
     secrets: inherit
 
-  publish_arm64:
-    needs: [prepare, release_arm64, repository_arm64]
+  # Devices get the verified pair every day, without waiting for images.
+  publish_repos_arm64:
+    needs: [prepare, repository_arm64, verify_repositories]
     if: >-
       github.ref == 'refs/heads/main' &&
       needs.prepare.outputs.publication_enabled == 'true' &&
       vars.MULTIARCH_PUBLICATION_ENABLED == 'true'
     uses: ./.github/workflows/publish-qualified-development.yml
-    with: {architecture: arm64}
+    with: {architecture: arm64, release: false}
     secrets: inherit
+
+  # Images and the website release follow the FreeBSD pin, not every build.
+  images_due:
+    needs: [prepare, verify_repositories, publish_repos_amd64, publish_repos_arm64]
+    if: >-
+      ${{ !cancelled() && needs.verify_repositories.result == 'success' &&
+      needs.publish_repos_amd64.result != 'failure' && needs.publish_repos_arm64.result != 'failure' }}
+    runs-on: ubuntu-24.04
+    permissions: {actions: read, contents: read}
+    outputs:
+      due: ${{ steps.decide.outputs.due }}
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+      - name: Download this run's plan
+        env: {GH_TOKEN: '${{ github.token }}'}
+        run: gh run download "${GITHUB_RUN_ID}" --repo "${GITHUB_REPOSITORY}" --name multiarch-plan --dir "${RUNNER_TEMP}/plan"
+      - id: decide
+        name: Decide whether this run releases images
+        env: {MODE: "${{ inputs.images || 'auto' }}"}
+        run: >-
+          python3 scripts/images_due.py --plan "${RUNNER_TEMP}/plan/multiarch-plan.json"
+          --mode "${MODE}" --github-output "${GITHUB_OUTPUT}"
+
+  publish_images_amd64:
+    needs: [prepare, release_amd64, repository_amd64, verify_pair]
+    if: >-
+      ${{ !cancelled() && needs.verify_pair.result == 'success' &&
+      github.ref == 'refs/heads/main' &&
+      needs.prepare.outputs.publication_enabled == 'true' &&
+      vars.MULTIARCH_PUBLICATION_ENABLED == 'true' }}
+    uses: ./.github/workflows/publish-qualified-development.yml
+    with: {architecture: amd64, release: true}
+    secrets: inherit
+
+  publish_images_arm64:
+    needs: [prepare, release_arm64, repository_arm64, verify_pair]
+    if: >-
+      ${{ !cancelled() && needs.verify_pair.result == 'success' &&
+      github.ref == 'refs/heads/main' &&
+      needs.prepare.outputs.publication_enabled == 'true' &&
+      vars.MULTIARCH_PUBLICATION_ENABLED == 'true' }}
+    uses: ./.github/workflows/publish-qualified-development.yml
+    with: {architecture: arm64, release: true}
+    secrets: inherit
+
+  verify_repositories:
+    needs: [repository_amd64, repository_arm64]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    environment: channel-publisher
+    permissions: {actions: read, contents: read}
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+      - name: Download this run's exact plan
+        env: {GH_TOKEN: '${{ github.token }}'}
+        run: |
+          gh run download "${GITHUB_RUN_ID}" --repo "${GITHUB_REPOSITORY}" --name multiarch-plan --dir "${RUNNER_TEMP}/plan"
+          gh api --paginate --slurp "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/jobs?filter=all&per_page=100" >"${RUNNER_TEMP}/jobs.json"
+      - name: Verify both architecture closures and all reused package bytes
+        run: |
+          python3 scripts/verify_multiarch_canary.py --plan "${RUNNER_TEMP}/plan/multiarch-plan.json" \
+            --repositories-only \
+            --jobs "${RUNNER_TEMP}/jobs.json" --run-id "${GITHUB_RUN_ID}" \
+            --run-attempt "${GITHUB_RUN_ATTEMPT}" \
+            --pair-reservation "${RUNNER_TEMP}/plan/pair-generation.json" \
+            --output "${RUNNER_TEMP}/multiarch-repositories.json"
+      - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f
+        with:
+          name: multiarch-repositories-verification
+          path: ${{ runner.temp }}/multiarch-repositories.json
+          if-no-files-found: error
+          retention-days: 30
 
   verify_pair:
     needs: [release_amd64, release_arm64, repository_amd64, repository_arm64]
+    if: ${{ !cancelled() && needs.release_amd64.result == 'success' && needs.release_arm64.result == 'success' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     environment: channel-publisher

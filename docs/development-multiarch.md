@@ -70,13 +70,33 @@ recorded job durations and standard-runner concurrency. Pi images retain their
 structural-only verification label. Reused images can retain their original
 build generation while the release documents identify the shared pair generation.
 
-Each architecture independently publishes immutable downloads and then its
-qualified release document, with the signed repository manifest last as its
-commit point. CAS rejects rollback and conflicting same-generation bytes, so
+Publication has two stages in every run:
+
+- **Devices, every run.** `verify_repositories` runs the canary with
+  `--repositories-only` (component markers, provenance, signed catalogues,
+  reused package bytes, closure, job timings, pair reservation). Each
+  architecture then commits only its signed repository manifest
+  (`fsbuild multiarch commit-repositories`, plus the legacy
+  `repos.manifest.json` for AMD64) and marks the cycle published. A cycle is
+  published once devices have the pair; its `artifacts` field only records
+  whether images were released too.
+- **Images and the website, when the FreeBSD pin changed.** `images_due`
+  (`scripts/images_due.py`) compares the pin of the live
+  `releases/devel.<arch>.json` with this run's pair; on a pin rollover or
+  mirror re-cut, or with dispatch input `images: force`, `release_*` build the
+  images from this run's pair, `verify_pair` runs the full canary, and
+  `publish_images_*` publish downloads and release documents. A failed image
+  stage leaves images due, so the next run retries. `images: skip` suppresses
+  them.
+
+When images are released, each architecture publishes immutable downloads and
+then its qualified release document, with the signed repository manifest (by
+then already live and unchanged) last as its commit point. CAS rejects rollback and conflicting same-generation bytes, so
 AMD64 may advance while ARM64 remains at its previous qualified release.
 `fsbuild multiarch prepare` still validates the eventual pair and creates the
 signed `freesense.multiarch-release/v1` completion document. The downstream
-`development-multiarch-publish.yml` runs only for the complete pair, verifies
+`development-multiarch-publish.yml` runs only for runs that released images
+(they upload `multiarch-authoritative-completion`) and only for the complete pair, verifies
 both qualified publications, commits `releases/devel.multiarch.json`, and then
 refreshes the legacy AMD64 aliases through monotonic CAS operations. Retention
 protects qualified releases plus incomplete-cycle component and checkpoint

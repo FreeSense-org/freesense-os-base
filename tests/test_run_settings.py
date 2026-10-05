@@ -29,16 +29,18 @@ class RunSettingsTests(unittest.TestCase):
 
     def test_publication_needs_the_flag_at_start_and_at_publish_time(self):
         for arch in ("amd64", "arm64"):
-            publish = job(f"publish_{arch}")
-            self.assertRegex(publish, r"needs: \[prepare, ")
-            self.assertIn("needs.prepare.outputs.publication_enabled == 'true'", publish)
-            self.assertIn("vars.MULTIARCH_PUBLICATION_ENABLED == 'true'", publish)
-            self.assertIn("github.ref == 'refs/heads/main'", publish)
+            for name in (f"publish_repos_{arch}", f"publish_images_{arch}"):
+                publish = job(name)
+                self.assertRegex(publish, r"needs: \[prepare, ")
+                self.assertIn("needs.prepare.outputs.publication_enabled == 'true'", publish)
+                self.assertIn("vars.MULTIARCH_PUBLICATION_ENABLED == 'true'", publish)
+                self.assertIn("github.ref == 'refs/heads/main'", publish)
 
     def test_no_later_job_reads_these_variables_directly(self):
         later = WORKFLOW.split("\n  system_amd64:", 1)[1]
         self.assertNotIn("vars.DEVELOPMENT_RELEASE_HOST", later)
-        self.assertEqual(later.count("vars.MULTIARCH_PUBLICATION_ENABLED"), 2)
+        # Only the four publication jobs re-check the flag (the emergency brake).
+        self.assertEqual(later.count("vars.MULTIARCH_PUBLICATION_ENABLED"), 4)
 
 
 if __name__ == "__main__":

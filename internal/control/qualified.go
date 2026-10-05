@@ -43,19 +43,28 @@ type qualifiedPair struct {
 	Description string
 }
 
-func parseQualified(repositories, release []byte, architecture string, key *rsa.PublicKey) (qualifiedPair, error) {
+// parseRepositories verifies one architecture's signed Development manifest
+// and returns its channel. It is all a device needs to update.
+func parseRepositories(repositories []byte, architecture string, key *rsa.PublicKey) (Channel, string, error) {
 	packageArch := map[string]string{"amd64": "amd64", "arm64": "aarch64"}[architecture]
 	if packageArch == "" {
-		return qualifiedPair{}, errors.New("invalid qualified architecture")
+		return Channel{}, "", errors.New("invalid qualified architecture")
 	}
 	payload, err := ParseSigned(repositories, key)
 	if err != nil {
-		return qualifiedPair{}, err
+		return Channel{}, "", err
 	}
 	if err := ValidateDevelopmentPair(payload, architecture, packageArch); err != nil {
+		return Channel{}, "", err
+	}
+	return payload.Channels["devel"], packageArch, nil
+}
+
+func parseQualified(repositories, release []byte, architecture string, key *rsa.PublicKey) (qualifiedPair, error) {
+	channel, _, err := parseRepositories(repositories, architecture, key)
+	if err != nil {
 		return qualifiedPair{}, err
 	}
-	channel := payload.Channels["devel"]
 	var document qualifiedReleaseIdentity
 	if err := json.Unmarshal(release, &document); err != nil {
 		return qualifiedPair{}, err
@@ -157,6 +166,30 @@ func putQualifiedDocument(ctx context.Context, backend store.Backend, key string
 		return false, fmt.Errorf("qualified publication of %q changed repeatedly", key)
 	}
 	return false, fmt.Errorf("qualified publication of %q changed repeatedly (etag %q): %w", key, lastETag, lastSwap)
+}
+
+// CommitRepositories publishes a verified System/Packages pair to devices
+// without an image release: only the signed repository manifest, and for amd64
+// also the legacy repos.manifest.json that amd64 devices fall back to and the
+// planner reads. The same forward-only compare-and-swap as a full qualified
+// commit applies, so a later image release of this pair (CommitQualified) finds
+// the manifest already live and leaves it unchanged.
+func CommitRepositories(ctx context.Context, backend store.Backend, repositories []byte, architecture string, key *rsa.PublicKey) (bool, error) {
+	channel, packageArch, err := parseRepositories(repositories, architecture, key)
+	if err != nil {
+		return false, err
+	}
+	pair := qualifiedPair{Generation: pairGeneration(channel), System: channel.System.Fingerprint,
+		Packages: channel.Packages.Fingerprint, Description: channel.Description}
+	if pair.Generation == 0 {
+		return false, errors.New("qualified repositories carry no generation")
+	}
+	updated, err := putQualifiedDocument(ctx, backend, "repos."+packageArch+".manifest.json", repositories, pair, true, key)
+	if err != nil || architecture != "amd64" {
+		return updated, err
+	}
+	legacy, err := putQualifiedDocument(ctx, backend, "repos.manifest.json", repositories, pair, true, key)
+	return updated || legacy, err
 }
 
 // CommitQualified stages the release document and commits the signed repository
