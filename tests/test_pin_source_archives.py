@@ -165,7 +165,7 @@ class WorkerRestoreTests(unittest.TestCase):
         return common[start:common.index("\n}\n", start) + 3]
 
     def restore(self, root, tar, object_name, destination, commit):
-        common = (ROOT / "scripts/runner/worker-common.sh").read_text(encoding="utf-8")
+        common = (ROOT / "scripts/runner/worker-inputs.sh").read_text(encoding="utf-8")
         # Relative paths: GNU tar on Windows reads "C:" as a remote host.
         tar, destination = tar.relative_to(root).as_posix(), destination.relative_to(root).as_posix()
         script = ("set -eu\nphase() { :; }\nR2_BUCKET=bucket PREFIX=v1\n"
@@ -209,9 +209,10 @@ class WorkerRestoreTests(unittest.TestCase):
 
     def test_builder_uses_the_restored_trees_only_when_pinned(self):
         common = (ROOT / "scripts/runner/worker-common.sh").read_text(encoding="utf-8")
+        inputs = (ROOT / "scripts/runner/worker-inputs.sh").read_text(encoding="utf-8")
         self.assertIn('export POUDRIERE_PORTS_GIT_URL="${ports_url}"', common)
-        self.assertIn("ports_url=https://github.com/freebsd/freebsd-ports.git", common)
-        self.assertIn('UPSTREAM_URL="file:///root/freebsd-src.git"', common)
+        self.assertIn("ports_url=https://github.com/freebsd/freebsd-ports.git", inputs)
+        self.assertIn('UPSTREAM_URL="file:///root/freebsd-src.git"', inputs)
         render = (ROOT / "scripts/render-worker.py").read_text(encoding="utf-8")
         self.assertIn('"FREEBSD_SRC_OBJECT": ""', render)
         self.assertIn('"PORTS_OBJECT": ""', render)

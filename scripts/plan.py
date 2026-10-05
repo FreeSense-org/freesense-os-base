@@ -427,9 +427,12 @@ def main() -> int:
         "altabi": selected_target["altabi"],
         **({"execution_inputs": execution_inputs} if execution_inputs else {}),
     })
+    # The worker's input acquisition (install-worker-tools.sh, worker-inputs.sh)
+    # is not part of any recipe: it only fetches inputs pinned elsewhere -- the
+    # worker-tools hash, commits, inputs/sha256 objects -- and fails unless they
+    # match, so changing it cannot change what is built.
     patch_files = [ROOT / "apply.sh", ROOT / "manifest.env", *sorted((ROOT / "patches").glob("*.patch"))]
     platform_recipe = recipe_digest([
-        ROOT / "scripts/runner/install-worker-tools.sh",
         ROOT / "scripts/runner/worker-common.sh",
             ROOT / "scripts/runner/stages/system.sh",
             ROOT / "scripts/partition_roots.py",
@@ -476,7 +479,6 @@ def main() -> int:
             "package_train": policy["package_train"],
             "recipe": recipe_digest([
                 ROOT / "scripts/render-worker.py",
-                ROOT / "scripts/runner/install-worker-tools.sh",
                 ROOT / "scripts/runner/worker-common.sh",
                 ROOT / "scripts/runner/stages/system.sh",
             ]),
@@ -606,7 +608,6 @@ def main() -> int:
         "signing_public_key": signing_public_key_sha256,
         "recipe": recipe_digest([
             ROOT / "scripts/render-worker.py",
-            ROOT / "scripts/runner/install-worker-tools.sh",
             ROOT / "scripts/runner/worker-common.sh",
             ROOT / "scripts/runner/stages/packages.sh",
             ROOT / "scripts/partition_roots.py",
@@ -640,7 +641,6 @@ def main() -> int:
         "runner_recipe": runner_recipe,
         "assembly_recipe": recipe_digest([
             ROOT / "scripts/render-worker.py",
-            ROOT / "scripts/runner/install-worker-tools.sh",
             ROOT / "scripts/runner/worker-common.sh",
             ROOT / "scripts/runner/assembly-common.sh",
         ]),
