@@ -86,7 +86,10 @@ class WorkerVersionValidationTests(unittest.TestCase):
         import re
         common = (ROOT / "scripts/runner/worker-common.sh").read_text(encoding="utf-8")
         clone = "clone_exact https://github.com/FreeSense-org/freesense-os-base.git"
-        body = common.split("configure_source() {", 1)[1].split("\nesac", 1)[0]
+        # configure_source acquires its checkouts through acquire_sources.
+        self.assertIn("acquire_sources || return 1", common.split("configure_source() {", 1)[1])
+        inputs = (ROOT / "scripts/runner/worker-inputs.sh").read_text(encoding="utf-8")
+        body = inputs.split("acquire_sources() {", 1)[1].split("\nesac", 1)[0]
         labels = [(m.start(), m.group(1)) for m in re.finditer(r"^ {4}(\w+)\)", body, re.M)]
         self.assertIn("system", [name for _, name in labels])
         branches = {}

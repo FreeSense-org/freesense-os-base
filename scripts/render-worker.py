@@ -46,6 +46,7 @@ def main() -> int:
         raise SystemExit(f"invalid stage: {stage}")
     parts = [
         ROOT / "scripts/runner/install-worker-tools.sh",
+        ROOT / "scripts/runner/worker-inputs.sh",
         args.common,
         ROOT / "scripts/runner/assembly-common.sh",
         args.stages / f"{stage}.sh",

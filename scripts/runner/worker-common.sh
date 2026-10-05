@@ -205,95 +205,8 @@ upload_immutable() {
     --retries 10 --low-level-retries 20 "$1" "$2"
 }
 
-clone_exact() {
-  url=$1 destination=$2 commit=$3
-  rm -rf "${destination}"
-  mkdir -p "${destination}"
-  git -C "${destination}" init -q
-  git -C "${destination}" remote add origin "${url}"
-  git -C "${destination}" fetch -q --depth=1 origin "${commit}"
-  git -C "${destination}" checkout -q --detach FETCH_HEAD
-  test "$(git -C "${destination}" rev-parse HEAD)" = "${commit}"
-}
-
-# The pin stores each FreeBSD src and ports commit once as a bare one-commit
-# repository whose main branch is that commit. Restored here, the builder clones
-# it over file:// instead of fetching the same commit from GitHub every build.
-#
-# sh has no locals and fetch_input assigns object and destination, so these
-# names must stay distinct from every helper this calls.
-restore_upstream() {
-  upstream_object=$1 upstream_dir=$2 upstream_commit=$3
-  upstream_tar="${upstream_dir}.tar"
-  case "${upstream_object}" in
-    inputs/sha256/*) : ;;
-    *) echo "upstream archive is not an immutable input" >&2; return 1 ;;
-  esac
-  phase "restore-$(basename "${upstream_dir}" .git)"
-  rm -rf "${upstream_dir}" "${upstream_tar}"
-  fetch_input "${upstream_object}" "${upstream_tar}"
-  tar -C "$(dirname "${upstream_dir}")" -xf "${upstream_tar}"
-  rm -f "${upstream_tar}"
-  test "$(git -C "${upstream_dir}" rev-parse refs/heads/main)" = "${upstream_commit}" || {
-    echo "upstream archive does not hold the pinned commit ${upstream_commit}" >&2
-    return 1
-  }
-  phase "restored-$(basename "${upstream_dir}" .git)"
-}
-
 configure_source() {
-  os_definition_dir=
-  phase clone-source
-  clone_exact https://github.com/FreeSense-org/freesense.git /root/freesense-src "${SOURCE_SHA}"
-  case "${STAGE}" in
-    system)
-      phase clone-system-ports
-      clone_exact https://github.com/FreeSense-org/freesense-system-ports.git \
-        /root/freesense-system-ports "${SYSTEM_SHA}"
-      phase clone-os-definition
-      clone_exact https://github.com/FreeSense-org/freesense-os-base.git \
-        /root/os-definition "${OS_BASE_SHA}"
-      os_definition_dir=/root/os-definition
-      ;;
-    packages)
-      phase clone-system-ports
-      clone_exact https://github.com/FreeSense-org/freesense-system-ports.git \
-        /root/freesense-system-ports "${SYSTEM_SHA}"
-      phase clone-optional-packages
-      clone_exact https://github.com/FreeSense-org/freesense-packages.git \
-        /root/freesense-packages "${PACKAGES_SHA}"
-      # The stage signs with config/channel-signing-public.pem and reads
-      # partition_roots.py, multiarch-shards.json and package_provenance.py from
-      # here. It is not a patch set: FreeBSD src is never built in this stage.
-      phase clone-os-definition
-      clone_exact https://github.com/FreeSense-org/freesense-os-base.git \
-        /root/os-definition "${OS_BASE_SHA}"
-      ;;
-    iso) : ;;
-  esac
-  phase configure-source
-  if [ "${STAGE}" = system ]; then
-    sed -i '' "s/^UPSTREAM_REF=.*/UPSTREAM_REF=\"${FREEBSD_SHA}\"/" \
-      /root/os-definition/manifest.env
-    if [ -n "${FREEBSD_SRC_OBJECT}" ]; then
-      restore_upstream "${FREEBSD_SRC_OBJECT}" /root/freebsd-src.git "${FREEBSD_SHA}"
-      sed -i '' 's|^UPSTREAM_URL=.*|UPSTREAM_URL="file:///root/freebsd-src.git"|' \
-        /root/os-definition/manifest.env
-    else
-      echo "No stored FreeBSD src archive; fetching ${FREEBSD_SHA} from GitHub."
-    fi
-  fi
-  ports_url=https://github.com/freebsd/freebsd-ports.git
-  case "${STAGE}" in
-    system|packages)
-      if [ -n "${PORTS_OBJECT}" ]; then
-        restore_upstream "${PORTS_OBJECT}" /root/freebsd-ports.git "${PORTS_SHA}"
-        ports_url=file:///root/freebsd-ports.git
-      else
-        echo "No stored ports archive; fetching ${PORTS_SHA} from GitHub."
-      fi
-      ;;
-  esac
+  acquire_sources || return 1
   cd /root/freesense-src
   cp build.conf.sample build.conf
 
@@ -905,36 +818,6 @@ EOF
   phase poudriere-jail-ready
 }
 
-fetch_input() {
-  object=$1 destination=$2 expected=${1##*/}
-  part="${destination}.part"
-  rm -f "${part}"
-  phase input-fetch
-  set +e
-  rclone copyto --error-on-no-transfer --retries 10 --low-level-retries 20 \
-    "R2:${R2_BUCKET}/${PREFIX}/${object}" "${part}"
-  status=$?
-  set -e
-  if [ "${status}" -ne 0 ]; then
-    rm -f "${part}"
-    echo "immutable input download failed with rclone status ${status}" >&2
-    return "${status}"
-  fi
-  if [ ! -s "${part}" ]; then
-    rm -f "${part}"
-    echo "immutable input download produced an empty file" >&2
-    return 1
-  fi
-  actual=$(sha256 -q "${part}")
-  if [ "${actual}" != "${expected}" ]; then
-    rm -f "${part}"
-    echo "immutable input checksum mismatch" >&2
-    return 1
-  fi
-  mv -f "${part}" "${destination}"
-  phase input-ready
-}
-
 verify_repository() (
   set -eu
   set -o pipefail
@@ -1022,26 +905,6 @@ verify_repository() (
     }
   done <"${work}/expected"
 )
-
-fetch_repository() {
-  kind=$1 id=$2 destination=$3
-  part="${destination}.part"
-  rm -rf "${part}" "${destination}"
-  mkdir -p "${part}"
-  phase repository-fetch
-  rclone copy --error-on-no-transfer --retries 10 --low-level-retries 20 \
-    "R2:${R2_BUCKET}/${PREFIX}/artifacts/${kind}/${id}/${PACKAGE_ARCH}" "${part}"
-  rclone copyto --error-on-no-transfer --retries 10 --low-level-retries 20 \
-    "R2:${R2_BUCKET}/${PREFIX}/artifacts/${kind}/${id}/complete.json" \
-    "${part}/complete.json"
-  jq -e --arg fingerprint "${id}" '.fingerprint == $fingerprint' \
-    "${part}/complete.json" >/dev/null
-  phase repository-verify
-  verify_repository "${part}"
-  phase repository-verified
-  mv "${part}" "${destination}"
-  phase repository-ready
-}
 
 create_source_archive() {
   phase source-archive
