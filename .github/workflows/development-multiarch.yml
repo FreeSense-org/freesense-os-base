@@ -112,7 +112,29 @@ jobs:
       arm64_system: ${{ steps.coordinate.outputs.arm64_system }}
       amd64_packages: ${{ steps.coordinate.outputs.amd64_packages }}
       arm64_packages: ${{ steps.coordinate.outputs.arm64_packages }}
+      image_host: ${{ steps.settings.outputs.image_host }}
+      publication_enabled: ${{ steps.settings.outputs.publication_enabled }}
     steps:
+      # Read the repository variables once, when the run starts. The image jobs
+      # start hours later; a variable changed meanwhile must not move one
+      # architecture's images to another host. Publication still re-checks its
+      # variable at publish time, so turning it off mid-run stops publishing,
+      # but turning it on mid-run cannot start it.
+      - id: settings
+        name: Fix this run's release host and publication setting
+        env:
+          IMAGE_HOST: ${{ vars.DEVELOPMENT_RELEASE_HOST || 'github-amd64' }}
+          PUBLICATION_ENABLED: ${{ vars.MULTIARCH_PUBLICATION_ENABLED == 'true' }}
+        run: |
+          case "${IMAGE_HOST}" in
+            github-amd64|github-arm64|github-hosted|dedicated) ;;
+            *) echo "invalid DEVELOPMENT_RELEASE_HOST: ${IMAGE_HOST}" >&2; exit 1 ;;
+          esac
+          echo "Release images on ${IMAGE_HOST}; publication enabled at start: ${PUBLICATION_ENABLED}"
+          {
+            echo "image_host=${IMAGE_HOST}"
+            echo "publication_enabled=${PUBLICATION_ENABLED}"
+          } >>"${GITHUB_OUTPUT}"
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
         with: {go-version-file: go.mod, cache: false}
@@ -279,7 +301,7 @@ jobs:
       # Image assembly compiles nothing, so it runs in parallel on hosted
       # runners and leaves the build-runner free. DEVELOPMENT_RELEASE_HOST=dedicated
       # moves it back.
-      image_host: ${{ vars.DEVELOPMENT_RELEASE_HOST || 'github-amd64' }}
+      image_host: ${{ needs.prepare.outputs.image_host }}
       suppress_publication: true
     secrets: inherit
 
@@ -297,20 +319,26 @@ jobs:
       # Image assembly compiles nothing, so it runs in parallel on hosted
       # runners and leaves the build-runner free. DEVELOPMENT_RELEASE_HOST=dedicated
       # moves it back.
-      image_host: ${{ vars.DEVELOPMENT_RELEASE_HOST || 'github-amd64' }}
+      image_host: ${{ needs.prepare.outputs.image_host }}
       suppress_publication: true
     secrets: inherit
 
   publish_amd64:
-    needs: [release_amd64, repository_amd64]
-    if: github.ref == 'refs/heads/main' && vars.MULTIARCH_PUBLICATION_ENABLED == 'true'
+    needs: [prepare, release_amd64, repository_amd64]
+    if: >-
+      github.ref == 'refs/heads/main' &&
+      needs.prepare.outputs.publication_enabled == 'true' &&
+      vars.MULTIARCH_PUBLICATION_ENABLED == 'true'
     uses: ./.github/workflows/publish-qualified-development.yml
     with: {architecture: amd64}
     secrets: inherit
 
   publish_arm64:
-    needs: [release_arm64, repository_arm64]
-    if: github.ref == 'refs/heads/main' && vars.MULTIARCH_PUBLICATION_ENABLED == 'true'
+    needs: [prepare, release_arm64, repository_arm64]
+    if: >-
+      github.ref == 'refs/heads/main' &&
+      needs.prepare.outputs.publication_enabled == 'true' &&
+      vars.MULTIARCH_PUBLICATION_ENABLED == 'true'
     uses: ./.github/workflows/publish-qualified-development.yml
     with: {architecture: arm64}
     secrets: inherit
