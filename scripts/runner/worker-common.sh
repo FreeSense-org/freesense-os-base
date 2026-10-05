@@ -1062,10 +1062,42 @@ publish_repository() {
   record_package_provenance "${directory}"
   phase repository-publish
   test -n "$(find "${directory}/All" -type f -name '*.pkg' -print -quit)"
-  find "${directory}" -type f ! -name complete.json | while IFS= read -r file; do
-    relative=${file#"${directory}/"}
-    upload_immutable "${file}" "${RESULT}/${PACKAGE_ARCH}/${relative}"
+  # Packages reused from the previous build are byte-identical to files that
+  # repository already holds in R2. Copy those server-side instead of uploading
+  # them again from the VM, and upload the rest in one parallel transfer
+  # rather than one rclone process per file. Both stay --immutable.
+  publish_upload=/tmp/publish-upload.txt
+  publish_same=/tmp/publish-same.txt
+  : >"${publish_upload}"
+  : >"${publish_same}"
+  previous_repository=/root/previous-freesense-repository
+  (cd "${directory}" && find . -type f ! -name complete.json | sed 's,^\./,,' | sort) | while IFS= read -r relative; do
+    if [ -n "${PREVIOUS_FREESENSE_REPOSITORY}" ] && [ -f "${previous_repository}/${relative}" ] && \
+      cmp -s "${directory}/${relative}" "${previous_repository}/${relative}"; then
+      printf '%s\n' "${relative}" >>"${publish_same}"
+    else
+      printf '%s\n' "${relative}" >>"${publish_upload}"
+    fi
   done
+  if [ -s "${publish_same}" ]; then
+    previous_kind=system
+    [ "${STAGE}" != packages ] || previous_kind="packages/${PACKAGE_TRAIN}"
+    if ! rclone copy --immutable --checksum --files-from-raw "${publish_same}" \
+      --transfers 16 --retries 10 --low-level-retries 20 \
+      "R2:${R2_BUCKET}/${PREFIX}/artifacts/${previous_kind}/${PREVIOUS_FREESENSE_REPOSITORY}/${PACKAGE_ARCH}" \
+      "${RESULT}/${PACKAGE_ARCH}"; then
+      echo "Server-side copy from the previous repository failed; uploading those files instead." >&2
+      cat "${publish_same}" >>"${publish_upload}"
+      : >"${publish_same}"
+    fi
+  fi
+  if [ -s "${publish_upload}" ]; then
+    rclone copy --immutable --checksum --files-from-raw "${publish_upload}" \
+      --transfers 8 --multi-thread-streams 0 --retries 10 --low-level-retries 20 \
+      "${directory}" "${RESULT}/${PACKAGE_ARCH}"
+  fi
+  echo "Repository published: $(wc -l <"${publish_upload}" | tr -d ' ') uploaded," \
+    "$(wc -l <"${publish_same}" | tr -d ' ') copied server-side from ${PREVIOUS_FREESENSE_REPOSITORY:-none}"
   jq -n --arg stage "${STAGE}" --arg fingerprint "${FINGERPRINT}" \
     --arg platform "${PLATFORM_ID}" --arg system "${SYSTEM_ID}" \
     --arg source "${SOURCE_SHA}" --arg system_ports "${SYSTEM_SHA}" \
