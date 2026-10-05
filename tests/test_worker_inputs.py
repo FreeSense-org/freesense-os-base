@@ -36,15 +36,28 @@ class WorkerInputsTests(unittest.TestCase):
         self.assertIsNone(BUILD_SHAPING.search(code), BUILD_SHAPING.search(code) and BUILD_SHAPING.search(code).group(0))
         defined = re.findall(r"^([a-z_]+)\(\) \{", source, re.M)
         self.assertEqual(defined, ["clone_exact", "restore_upstream", "fetch_input",
-                                   "fetch_repository", "acquire_sources"])
+                                   "fetch_repository", "acquire_sources",
+                                   "freebsd_src_file", "freebsd_ports_tree"])
         # Every acquisition verifies what arrived against its pin.
         for check in ('rev-parse HEAD)" = "${commit}"', "sha256 -q", "refs/heads/main)\" = \"${upstream_commit}\"",
                       "verify_repository"):
             self.assertIn(check, source)
 
+    def test_image_stages_take_freebsd_files_from_the_pinned_inputs(self):
+        stages = ROOT / "scripts/runner/stages"
+        for stage in ("iso.sh", "appliance.sh"):
+            text = (stages / stage).read_text(encoding="utf-8")
+            self.assertNotIn("raw.githubusercontent.com", text, stage)
+            self.assertIn("freebsd_src_file ", text, stage)
+        self.assertIn("freebsd_ports_tree /root/freebsd-ports", (stages / "appliance.sh").read_text(encoding="utf-8"))
+        release = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
+        self.assertEqual(release.count("freebsd_src_object: ${{ needs.iso-plan.outputs.freebsd_src_object }}"), 3)
+        self.assertEqual(release.count("ports_object: ${{ needs.iso-plan.outputs.ports_object }}"), 2)
+
     def test_the_moved_functions_are_defined_once(self):
         runner = [*sorted((ROOT / "scripts/runner").glob("*.sh")), *sorted((ROOT / "scripts/runner/stages").glob("*.sh"))]
-        for name in ("clone_exact", "restore_upstream", "fetch_input", "fetch_repository", "acquire_sources"):
+        for name in ("clone_exact", "restore_upstream", "fetch_input", "fetch_repository", "acquire_sources",
+                     "freebsd_src_file", "freebsd_ports_tree"):
             owners = [p.name for p in runner if re.search(rf"^{name}\(\) \{{", p.read_text(encoding="utf-8"), re.M)]
             self.assertEqual(owners, ["worker-inputs.sh"], name)
 

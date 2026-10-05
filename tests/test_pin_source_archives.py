@@ -207,6 +207,48 @@ class WorkerRestoreTests(unittest.TestCase):
             self.assertNotEqual(mutable.returncode, 0)
             self.assertIn("not an immutable input", mutable.stderr)
 
+    def test_image_helpers_read_files_and_trees_from_the_archive(self):
+        import hashlib
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            upstream = root / "upstream"
+            (upstream / "release/scripts").mkdir(parents=True)
+            git("init", "-q", "-b", "main", cwd=upstream)
+            (upstream / "release/scripts/tools.subr").write_text("pinned tools\n", encoding="utf-8")
+            git("add", "-A", cwd=upstream)
+            git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "pinned", cwd=upstream)
+            commit = git("rev-parse", "HEAD", cwd=upstream)
+            bare = root / "work" / "freebsd-src.git"
+            bare.parent.mkdir()
+            pin_source_archives.fetch_bare("freebsd/freebsd-src", commit, bare, upstream.as_uri())
+            tar = root / "work" / "src.tar"
+            pin_source_archives.write_tar(bare, tar)
+            stored = "inputs/sha256/" + hashlib.sha256(tar.read_bytes()).hexdigest()
+            # A ports archive's top directory is freebsd-ports.git, as pin_source_archives names it.
+            ports_bare = root / "work" / "freebsd-ports.git"
+            pin_source_archives.fetch_bare("freebsd/freebsd-ports", commit, ports_bare, upstream.as_uri())
+            ports_tar = root / "work" / "ports.tar"
+            pin_source_archives.write_tar(ports_bare, ports_tar)
+            ports_stored = "inputs/sha256/" + hashlib.sha256(ports_tar.read_bytes()).hexdigest()
+            (root / "vm").mkdir()
+            inputs = (ROOT / "scripts/runner/worker-inputs.sh").read_text(encoding="utf-8")
+            # The helpers use /root/freebsd-*.git; run them inside the temporary tree.
+            functions = "".join(self.function(inputs, name) for name in (
+                "clone_exact", "fetch_input", "restore_upstream", "freebsd_src_file", "freebsd_ports_tree"))
+            functions = functions.replace("file:///root/", f"{(root / 'vm').as_uri()}/").replace("/root/freebsd-", "vm/freebsd-")
+            script = ("set -eu\nphase() { :; }\nR2_BUCKET=bucket PREFIX=v1\n"
+                      "rclone() { for last; do :; done; case \"$last\" in *ports*) cp work/ports.tar \"$last\" ;; *) cp work/src.tar \"$last\" ;; esac; }\n"
+                      "sha256() { sha256sum \"$2\" | cut -d' ' -f1; }\n"
+                      f"FREEBSD_SRC_OBJECT='{stored}' FREEBSD_SHA='{commit}' PORTS_OBJECT='{ports_stored}' PORTS_SHA='{commit}'\n"
+                      + functions +
+                      "freebsd_src_file release/scripts/tools.subr out/release/scripts/tools.subr\n"
+                      "freebsd_ports_tree out/ports-tree\n")
+            result = subprocess.run(["sh", "-c", script], cwd=root, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual((root / "out/release/scripts/tools.subr").read_text(encoding="utf-8"), "pinned tools\n")
+            self.assertEqual((root / "out/ports-tree/release/scripts/tools.subr").read_text(encoding="utf-8"), "pinned tools\n")
+            self.assertEqual(git("rev-parse", "HEAD", cwd=root / "out/ports-tree"), commit)
+
     def test_builder_uses_the_restored_trees_only_when_pinned(self):
         common = (ROOT / "scripts/runner/worker-common.sh").read_text(encoding="utf-8")
         inputs = (ROOT / "scripts/runner/worker-inputs.sh").read_text(encoding="utf-8")

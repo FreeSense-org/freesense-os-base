@@ -245,6 +245,8 @@ jobs:
       image_sha256: ${{ steps.plan.outputs.image_sha256 }}
       worker_tools_sha256: ${{ steps.plan.outputs.worker_tools_sha256 }}
       jail_object: ${{ steps.plan.outputs.jail_object }}
+      freebsd_src_object: ${{ steps.plan.outputs.freebsd_src_object }}
+      ports_object: ${{ steps.plan.outputs.ports_object }}
       package_train: ${{ steps.plan.outputs.package_train }}
       public_base_url: ${{ steps.plan.outputs.public_base_url }}
       freebsd_pin_id: ${{ steps.plan.outputs.freebsd_pin_id }}
@@ -379,6 +381,7 @@ jobs:
       image_sha256: ${{ needs.iso-plan.outputs.image_sha256 }}
       worker_tools_sha256: ${{ needs.iso-plan.outputs.worker_tools_sha256 }}
       jail_object: ${{ needs.iso-plan.outputs.jail_object }}
+      freebsd_src_object: ${{ needs.iso-plan.outputs.freebsd_src_object }}
       freebsd_pin_id: ${{ needs.iso-plan.outputs.freebsd_pin_id }}
       product_version: ${{ needs.iso-plan.outputs.product_version }}
       package_train: ${{ needs.iso-plan.outputs.package_train }}
@@ -427,6 +430,8 @@ jobs:
       image_sha256: ${{ needs.iso-plan.outputs.image_sha256 }}
       worker_tools_sha256: ${{ needs.iso-plan.outputs.worker_tools_sha256 }}
       jail_object: ${{ needs.iso-plan.outputs.jail_object }}
+      freebsd_src_object: ${{ needs.iso-plan.outputs.freebsd_src_object }}
+      ports_object: ${{ needs.iso-plan.outputs.ports_object }}
       freebsd_pin_id: ${{ needs.iso-plan.outputs.freebsd_pin_id }}
       product_version: ${{ needs.iso-plan.outputs.product_version }}
       package_train: ${{ needs.iso-plan.outputs.package_train }}
@@ -482,6 +487,8 @@ jobs:
       image_sha256: ${{ needs.iso-plan.outputs.image_sha256 }}
       worker_tools_sha256: ${{ needs.iso-plan.outputs.worker_tools_sha256 }}
       jail_object: ${{ needs.iso-plan.outputs.jail_object }}
+      freebsd_src_object: ${{ needs.iso-plan.outputs.freebsd_src_object }}
+      ports_object: ${{ needs.iso-plan.outputs.ports_object }}
       freebsd_pin_id: ${{ needs.iso-plan.outputs.freebsd_pin_id }}
       product_version: ${{ needs.iso-plan.outputs.product_version }}
       package_train: ${{ needs.iso-plan.outputs.package_train }}
