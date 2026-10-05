@@ -51,6 +51,21 @@ class PackageProvenanceTests(unittest.TestCase):
             self.assertEqual(selected["accepted"], [])
             self.assertIn("provenance changed", selected["rejected"]["a"])
 
+    def test_the_commit_time_in_make_conf_does_not_change_provenance(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory); ports, config, policy = self._tree(root)
+            records = [{"name": "a", "origin": "devel/a", "version": "1", "options": {}, "dependencies": {}}]
+            build = lambda: package_provenance.build(records, ports=ports, overlays=[], make_config=config,
+                                                     architecture_policy=policy, abi="FreeBSD:16:amd64", osversion=1600001)
+            config.write_text("OPTIONS_SET=TLS\nSOURCE_DATE_EPOCH=1791117319\n.export SOURCE_DATE_EPOCH\n")
+            first = build()
+            config.write_text("OPTIONS_SET=TLS\nSOURCE_DATE_EPOCH=1791149440\n.export SOURCE_DATE_EPOCH\n")
+            self.assertEqual(package_provenance.select(first, build(), pin_unchanged=True)["accepted"], ["a"])
+            config.write_text("OPTIONS_SET=TLS LDAP\nSOURCE_DATE_EPOCH=1791149440\n.export SOURCE_DATE_EPOCH\n")
+            selected = package_provenance.select(first, build(), pin_unchanged=True)
+            self.assertEqual(selected["accepted"], [])
+            self.assertIn("make_configuration_sha256", selected["rejected"]["a"])
+
     def _tree(self, root):
         ports = root / "ports"
         (ports / "Mk").mkdir(parents=True); (ports / "Mk/bsd.port.mk").write_text("mk")
