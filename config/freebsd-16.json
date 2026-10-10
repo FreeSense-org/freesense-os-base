@@ -64,21 +64,21 @@
   },
   "schema_version": "freesense.freebsd-pin/v4",
   "source_archives": {
-    "2208b8828a2c4683ef0d87f4a8d2785324faefba": {
+    "082d07dd334990117edcaf6ed8b946ba120f74fe": {
       "format": "freesense.git-bare-shallow-tar/v1",
-      "object": "inputs/sha256/941eb2a7914bec9fcc6c3f0f767b4cf6d6e1988cbd93e9eae168a2c2145a43f8",
+      "object": "inputs/sha256/e5afefe281a1361d014d6704d3241f6acbbe7417f3e42cdebd4516f5cd4093ae",
       "ref": "refs/heads/main",
       "repository": "freebsd/freebsd-ports",
-      "sha256": "941eb2a7914bec9fcc6c3f0f767b4cf6d6e1988cbd93e9eae168a2c2145a43f8",
-      "size": 118466560
+      "sha256": "e5afefe281a1361d014d6704d3241f6acbbe7417f3e42cdebd4516f5cd4093ae",
+      "size": 117729280
     },
     "4af0312316c9ede1507ec0c36c3064c24df8b848": {
       "format": "freesense.git-bare-shallow-tar/v1",
-      "object": "inputs/sha256/ac17e1584d5690f5ab59cea0c6c2be43213acb5e018222fb87d13ac315df6fc4",
+      "object": "inputs/sha256/3347c46176ff9ebca5d013d9f2ff198dad1e68bf050d42f252c45602444b10da",
       "ref": "refs/heads/main",
       "repository": "freebsd/freebsd-ports",
-      "sha256": "ac17e1584d5690f5ab59cea0c6c2be43213acb5e018222fb87d13ac315df6fc4",
-      "size": 118394880
+      "sha256": "3347c46176ff9ebca5d013d9f2ff198dad1e68bf050d42f252c45602444b10da",
+      "size": 118415360
     },
     "6f0fb7b8291b96c92e3b5e4d0a2078302220cbf7": {
       "format": "freesense.git-bare-shallow-tar/v1",
@@ -492,8 +492,8 @@
         "size": 175151160
       },
       "mirror": {
-        "fingerprint": "cc15959c1851b451766ead8ac1517ea11a1a8d198968555e23343fc78ba36992",
-        "object": "inputs/sha256/d9d696e067abb0c80cda4047c153cac37137a0e8544046d634448767b7059df6",
+        "fingerprint": "40713e27cde94215945b22c114510319f1155b880f51080da1f6803cebc8d66a",
+        "object": "inputs/sha256/df09d40f5d34df660afcb38cbdba47abfd3740738baa7c23fc2b10c1a19fc598",
         "overlay_origins": [
           "devel/FreeSense-composer-deps",
           "devel/php-FreeSense-module",
@@ -532,6 +532,7 @@
           "security/FreeSense-pkg-openvpn-client-export",
           "security/FreeSense-pkg-suricata",
           "security/FreeSense-system",
+          "security/FreeSense-webui",
           "security/openvpn-client-export",
           "security/php-openssl_x509_crl",
           "security/phpseclib",
@@ -561,7 +562,7 @@
           "www/FreeSense-pkg-WebGateway-AV",
           "www/adguardhome-bin"
         ],
-        "ports_commit": "2208b8828a2c4683ef0d87f4a8d2785324faefba"
+        "ports_commit": "082d07dd334990117edcaf6ed8b946ba120f74fe"
       },
       "package_catalog": {
         "created": false,
@@ -901,8 +902,8 @@
         "size": 163399564
       },
       "mirror": {
-        "fingerprint": "1398befdec649bf7e78d479ab25fdbc3d1f852ee37c6dfa90eb42e8e2a4ddcf5",
-        "object": "inputs/sha256/0a9ec02603acc5ebc88aeea5248f4280f1324c737677d53c8502af2523d215eb",
+        "fingerprint": "4c2c378ec3294d73c44751414d906a9794971bc82e3267479abb2d31d7d550a9",
+        "object": "inputs/sha256/6d47b7f66e6c715be3f596c8b9ee067d1ff26eec099abfd0884a1587e1154312",
         "overlay_origins": [
           "devel/FreeSense-composer-deps",
           "devel/php-FreeSense-module",
@@ -941,6 +942,7 @@
           "security/FreeSense-pkg-openvpn-client-export",
           "security/FreeSense-pkg-suricata",
           "security/FreeSense-system",
+          "security/FreeSense-webui",
           "security/openvpn-client-export",
           "security/php-openssl_x509_crl",
           "security/phpseclib",
