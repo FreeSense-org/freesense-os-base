@@ -91,9 +91,8 @@ index ce6d03b7329..22f553234cf 100644
  	} else {
  		if (devvp != imp->im_devvp)
  			error = EINVAL;	/* needs translation */
-@@ -545,6 +553,7 @@ cd9660_unmount(struct mount *mp, int mntflags)
- 	g_vfs_close(isomp->im_cp);
- 	g_topology_unlock();
+@@ -545,5 +553,6 @@ cd9660_unmount(struct mount *mp, int mntflags)
+ 	g_vfs_close_unlocked(isomp->im_cp);
  	vrele(isomp->im_devvp);
 +	atomic_store_rel_ptr((uintptr_t *)&isomp->im_dev->si_mountpt, 0);
  	dev_rel(isomp->im_dev);
@@ -166,9 +165,8 @@ index c1627285a17..34a7ac91d4a 100644
  
  /*
   * Check the descriptor tag for both the correct id and correct checksum.
-@@ -532,6 +550,8 @@ udf_unmount(struct mount *mp, int mntflags)
- 	g_vfs_close(udfmp->im_cp);
- 	g_topology_unlock();
+@@ -532,5 +550,7 @@ udf_unmount(struct mount *mp, int mntflags)
+ 	g_vfs_close_unlocked(udfmp->im_cp);
  	vrele(udfmp->im_devvp);
 +
 +	atomic_store_rel_ptr((uintptr_t *)&udfmp->im_dev->si_mountpt, 0);
