@@ -28,6 +28,11 @@ mkdir -p /usr/local/etc/poudriere.d
 cat >>/usr/local/etc/poudriere.d/FreeSense_main-make.conf <<'EOF'
 IGNORE_OSVERSION=yes
 PKG_ENV+= IGNORE_OSVERSION=yes
+# net/libzmq4 (ntopng) builds net/norm for its optional NORM multicast
+# transport. FreeBSD 16 renamed IPPROTO_DIVERT to __IPPROTO_DIVERT, which
+# norm 1.5.9's bundled protolib still uses, so norm does not compile. ntopng
+# does not use NORM.
+net_libzmq4_UNSET_FORCE=NORM
 EOF
 if [ -n "${MIRROR_PLAN_OBJECT}" ]; then
   fetch_delta_mirror
