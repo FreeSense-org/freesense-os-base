@@ -117,6 +117,13 @@ func putQualifiedDocument(ctx context.Context, backend store.Backend, key string
 			if parseErr != nil {
 				return false, fmt.Errorf("verify existing qualified manifest: %w", parseErr)
 			}
+			next, nextErr := ParseSigned(data, publicKey)
+			if nextErr != nil {
+				return false, fmt.Errorf("verify new qualified manifest: %w", nextErr)
+			}
+			if err := keepStable(old, next); err != nil {
+				return false, fmt.Errorf("qualified publication of %q: %w", key, err)
+			}
 			channel, ok := old.Channels["devel"]
 			if !ok || channel.System == nil {
 				return false, errors.New("existing qualified manifest has no Development generation")

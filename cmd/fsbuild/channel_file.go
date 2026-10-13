@@ -17,6 +17,7 @@ func commandSignChannelFile(args []string) error {
 	architecture := flags.String("architecture", "", "product architecture")
 	packageArch := flags.String("package-arch", "", "pkg repository architecture")
 	outputPath := flags.String("output", "", "local signed manifest")
+	preserveStable := flags.String("preserve-stable", "", "live signed manifest whose Stable channel is carried over")
 	if err := parseFlags(flags, args); err != nil {
 		return err
 	}
@@ -44,15 +45,24 @@ func commandSignChannelFile(args []string) error {
 	if err := json.Unmarshal(raw, &payload); err != nil {
 		return fmt.Errorf("parse channel payload: %w", err)
 	}
-	if err := control.ValidateDevelopmentPair(payload, *architecture, *packageArch); err != nil {
-		return err
-	}
 	keyData, err := os.ReadFile(*privateKeyPath)
 	if err != nil {
 		return err
 	}
 	key, err := control.ParsePrivateKey(keyData)
 	if err != nil {
+		return err
+	}
+	if *preserveStable != "" {
+		existing, err := os.ReadFile(*preserveStable)
+		if err != nil {
+			return err
+		}
+		if payload, err = control.PreserveStable(payload, existing, &key.PublicKey); err != nil {
+			return err
+		}
+	}
+	if err := control.ValidateDevelopmentPair(payload, *architecture, *packageArch); err != nil {
 		return err
 	}
 	signed, err := control.MarshalSigned(payload, key)

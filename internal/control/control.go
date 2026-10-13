@@ -517,7 +517,18 @@ func ValidateDevelopmentPair(payload Payload, architecture, packageArch string) 
 	expectedABI := map[string]string{"amd64": "FreeBSD:16:amd64", "arm64": "FreeBSD:16:aarch64"}[architecture]
 	expectedAltABI := map[string]string{"amd64": "freebsd:16:x86:64", "arm64": "freebsd:16:aarch64:64"}[architecture]
 	channel, ok := payload.Channels["devel"]
-	if !ok || len(payload.Channels) != 1 || channel.Name != "devel" || channel.Description != "Development version" || channel.Default != true ||
+	// A Development manifest may carry the immutable Stable channel next to
+	// devel so a Development publication never removes it. Exactly one
+	// channel is the default.
+	stable, hasStable := payload.Channels["stable"]
+	wantChannels, develDefault := 1, true
+	if hasStable {
+		wantChannels, develDefault = 2, !stable.Default
+		if err := validateRetainedStable(stable, architecture, packageArch, expectedABI, expectedAltABI); err != nil {
+			return err
+		}
+	}
+	if !ok || len(payload.Channels) != wantChannels || channel.Name != "devel" || channel.Description != "Development version" || channel.Default != develDefault ||
 		channel.Architecture != architecture || channel.PackageArch != packageArch ||
 		(channel.Architecture == "amd64" && channel.PackageArch != "amd64") ||
 		(channel.Architecture == "arm64" && channel.PackageArch != "aarch64") ||
@@ -542,6 +553,76 @@ func ValidateDevelopmentPair(payload Payload, architecture, packageArch string) 
 		return errors.New("invalid Development component identity")
 	}
 	return validatePackageBinding(channel, channel.Packages)
+}
+
+// validateRetainedStable checks the Stable channel carried alongside devel.
+// It was sealed and verified by stable publication; here it only has to be a
+// complete, internally consistent pair for this architecture.
+func validateRetainedStable(channel Channel, architecture, packageArch, abi, altABI string) error {
+	invalid := errors.New("invalid retained Stable channel")
+	if channel.Name != "stable" || !releaseVersionPattern.MatchString(channel.Version) ||
+		!strings.HasPrefix(channel.Version, channel.PackageTrain+".") ||
+		channel.ABI != abi || channel.AltABI != altABI ||
+		(channel.Architecture != "" && channel.Architecture != architecture) ||
+		(channel.PackageArch != "" && channel.PackageArch != packageArch) ||
+		channel.System == nil || channel.Packages == nil || !channel.System.Verified || !channel.Packages.Verified ||
+		!fingerprintPattern.MatchString(channel.System.Fingerprint) ||
+		!fingerprintPattern.MatchString(channel.Packages.Fingerprint) ||
+		channel.Packages.SystemFingerprint != channel.System.Fingerprint ||
+		channel.System.FreeBSDPinID != channel.Packages.FreeBSDPinID {
+		return invalid
+	}
+	return validatePackageBinding(channel, channel.Packages)
+}
+
+// PreserveStable carries the Stable channel of an existing signed manifest into
+// next, so signing a new Development pair never removes a published release.
+// An existing manifest without a Stable channel leaves next unchanged; one that
+// fails verification is an error rather than something to ignore.
+func PreserveStable(next Payload, existing []byte, key *rsa.PublicKey) (Payload, error) {
+	old, err := ParseSigned(existing, key)
+	if err != nil {
+		return Payload{}, fmt.Errorf("verify existing manifest: %w", err)
+	}
+	stable, ok := old.Channels["stable"]
+	if !ok {
+		return next, nil
+	}
+	channels := make(map[string]Channel, len(next.Channels)+1)
+	for name, channel := range next.Channels {
+		channels[name] = channel
+	}
+	channels["stable"] = stable
+	if devel, ok := channels["devel"]; ok {
+		devel.Default = !stable.Default
+		channels["devel"] = devel
+	}
+	next.Channels = channels
+	return next, nil
+}
+
+// keepStable refuses a manifest replacement that would remove the published
+// Stable channel, rewrite its identity, or move it backwards.
+func keepStable(old, next Payload) error {
+	oldStable, ok := old.Channels["stable"]
+	if !ok {
+		return nil
+	}
+	newStable, ok := next.Channels["stable"]
+	if !ok {
+		return errors.New("publication would drop the Stable channel")
+	}
+	if oldStable.Version == newStable.Version {
+		if !componentIdentityEqual(oldStable.System, newStable.System) ||
+			!componentIdentityEqual(oldStable.Packages, newStable.Packages) {
+			return errors.New("an immutable stable version cannot be rewritten")
+		}
+		return nil
+	}
+	if !stableAdvances(oldStable.Version, newStable.Version) {
+		return errors.New("publication would move the Stable channel backwards")
+	}
+	return nil
 }
 
 func Promote(payload Payload, component string, now time.Time, soak time.Duration) (Payload, error) {

@@ -151,6 +151,7 @@ jobs:
           SIGNING_KEY: ${{ secrets.FREESENSE_PKG_SIGNING_KEY }}
         run: |
           key=$(mktemp); trap 'rm -f "$key"' EXIT; chmod 600 "$key"; printf '%s' "${SIGNING_KEY}" >"$key"
+          published_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
           packages_marker="${RUNNER_TEMP}/packages-complete.json"
           curl --fail --silent --show-error --location \
             "${{ needs.plan.outputs.public_base_url }}/artifacts/packages/${{ needs.plan.outputs.package_train }}/${{ needs.plan.outputs.packages }}/complete.json" \
@@ -161,7 +162,12 @@ jobs:
              .fingerprint == "${{ needs.plan.outputs.packages }}" and
              ($system | test("^[0-9a-f]{64}$"))) | $system' \
             "${packages_marker}")
-          "${RUNNER_TEMP}/fsbuild" channel seal-stable \
+          # amd64 devices read the legacy repos.manifest.json (Stable 1.0.x) or
+          # repos.amd64.manifest.json (1.1 and later): seal both identically.
+          for mode in legacy qualified; do
+          extra=()
+          if [ "${mode}" = qualified ]; then extra=(--qualified-manifest --architecture amd64 --package-arch amd64); fi
+          "${RUNNER_TEMP}/fsbuild" channel seal-stable "${extra[@]}" \
             --version "${{ needs.plan.outputs.release_version }}" \
             --system-fingerprint "${{ needs.plan.outputs.system }}" \
             --system-url "${{ needs.plan.outputs.public_base_url }}/artifacts/system/${{ needs.plan.outputs.system }}/amd64" \
@@ -174,7 +180,8 @@ jobs:
             --package-train "${{ needs.plan.outputs.package_train }}" \
             --abi "${{ needs.plan.outputs.abi }}" --altabi "${{ needs.plan.outputs.altabi }}" \
             --osversion "${{ needs.plan.outputs.osversion }}" \
-            --published-at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --private-key "$key"
+            --published-at "${published_at}" --private-key "$key"
+          done
 
   iso-plan:
     needs: [plan, seal]

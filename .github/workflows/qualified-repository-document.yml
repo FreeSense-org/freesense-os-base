@@ -42,8 +42,22 @@ jobs:
             --published-at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --output "${RUNNER_TEMP}/closure.json"
           jq -er .payload_base64 "${RUNNER_TEMP}/closure.json" | base64 --decode >"${RUNNER_TEMP}/payload.json"
           mkdir -p "${RUNNER_TEMP}/repository"
+          # A Development manifest replaces the live one, so it must carry the
+          # published Stable channel. 404 means no manifest exists yet; any
+          # other failure stops the job rather than signing without Stable.
+          live="${RUNNER_TEMP}/live-manifest.json"
+          status=$(curl --silent --location --retry 4 --retry-all-errors \
+            --write-out '%{http_code}' --output "${live}" \
+            "https://pkg.freesense.org/v1/repos.${package_arch}.manifest.json?run=${GITHUB_RUN_ID}")
+          preserve=()
+          case "${status}" in
+            200) preserve=(--preserve-stable "${live}") ;;
+            404) ;;
+            *) echo "live manifest returned HTTP ${status}" >&2; exit 1 ;;
+          esac
           "${RUNNER_TEMP}/fsbuild" channel sign-file --payload "${RUNNER_TEMP}/payload.json" \
             --architecture "${ARCH}" --package-arch "${package_arch}" --private-key "${key}" \
+            "${preserve[@]}" \
             --output "${RUNNER_TEMP}/repository/repos.${package_arch}.manifest.json"
       - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f
         with:
