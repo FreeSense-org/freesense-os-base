@@ -7,6 +7,7 @@ import (
 	"crypto/x509"
 	"encoding/pem"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -442,6 +443,44 @@ func TestStablePatchAdvancementIsForwardOnly(t *testing.T) {
 	}
 	if _, err := SealStable(payload, system, packages); err == nil {
 		t.Fatal("stable rollback was accepted")
+	}
+}
+
+func TestStableAdvancesAcrossTrainsButNeverBackwards(t *testing.T) {
+	now := time.Date(2026, 10, 13, 12, 0, 0, 0, time.UTC)
+	seal := func(payload Payload, version, train, systemFP, packagesFP string) (Payload, error) {
+		system := updateOptions("system", systemFP, "", 1, now)
+		packages := updateOptions("packages", packagesFP, systemFP, 2, now)
+		for _, options := range []*UpdateOptions{&system, &packages} {
+			options.Version, options.PackageTrain = version, train
+		}
+		system.URL = artifactURL("system", systemFP)
+		packages.URL = "https://pkg.freesense.org/v1/artifacts/packages/" + train + "/" + packagesFP + "/amd64"
+		return SealStable(payload, system, packages)
+	}
+	fp := func(c string) string { return strings.Repeat(c, 64) }
+	payload, err := seal(Payload{}, "1.0.7", "1.0", fp("a"), fp("b"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload, err = seal(payload, "1.1.0", "1.1", fp("c"), fp("d"))
+	if err != nil {
+		t.Fatalf("1.0.7 -> 1.1.0 was refused: %v", err)
+	}
+	if got := payload.Channels["stable"].Version; got != "1.1.0" {
+		t.Fatalf("stable = %q, want 1.1.0", got)
+	}
+	if got := payload.Channels["stable"].PackageTrain; got != "1.1" {
+		t.Fatalf("stable package train = %q, want 1.1", got)
+	}
+	payload, err = seal(payload, "1.1.1", "1.1", fp("e"), fp("f"))
+	if err != nil {
+		t.Fatalf("1.1.0 -> 1.1.1 was refused: %v", err)
+	}
+	for _, back := range []struct{ version, train string }{{"1.1.0", "1.1"}, {"1.0.8", "1.0"}, {"1.0.7", "1.0"}} {
+		if _, err := seal(payload, back.version, back.train, fp("9"), fp("8")); err == nil {
+			t.Fatalf("stable moved back to %s", back.version)
+		}
 	}
 }
 

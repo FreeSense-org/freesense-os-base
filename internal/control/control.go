@@ -172,8 +172,8 @@ func SealStable(payload Payload, system, packages UpdateOptions) (Payload, error
 		if existing.Version == desired.Version {
 			return Payload{}, errors.New("an immutable stable version cannot be rewritten")
 		}
-		if !stablePatchAdvances(existing.Version, desired.Version) {
-			return Payload{}, errors.New("stable release must advance to a newer patch in its configured train")
+		if !stableAdvances(existing.Version, desired.Version) {
+			return Payload{}, errors.New("stable release must advance to a newer version")
 		}
 	}
 	desired.Default = true
@@ -560,21 +560,28 @@ func channelMetadataMatches(channel Channel, options UpdateOptions) bool {
 		channel.Default
 }
 
-func stablePatchAdvances(current, next string) bool {
+// stableAdvances reports whether next is a strictly newer release than current.
+// A Stable pointer moves forward only, but it may cross into a newer train
+// (1.0.7 -> 1.1.0): installed systems upgrade one way and never go back.
+func stableAdvances(current, next string) bool {
 	currentMatch := releaseVersionPattern.FindStringSubmatch(current)
 	nextMatch := releaseVersionPattern.FindStringSubmatch(next)
-	if len(currentMatch) != 4 || len(nextMatch) != 4 ||
-		currentMatch[1] != nextMatch[1] || currentMatch[2] != nextMatch[2] {
+	if len(currentMatch) != 4 || len(nextMatch) != 4 {
 		return false
 	}
-	var currentPatch, nextPatch int
-	if _, err := fmt.Sscanf(currentMatch[3], "%d", &currentPatch); err != nil {
-		return false
+	for index := 1; index <= 3; index++ {
+		var currentPart, nextPart int
+		if _, err := fmt.Sscanf(currentMatch[index], "%d", &currentPart); err != nil {
+			return false
+		}
+		if _, err := fmt.Sscanf(nextMatch[index], "%d", &nextPart); err != nil {
+			return false
+		}
+		if nextPart != currentPart {
+			return nextPart > currentPart
+		}
 	}
-	if _, err := fmt.Sscanf(nextMatch[3], "%d", &nextPatch); err != nil {
-		return false
-	}
-	return nextPatch > currentPatch
+	return false
 }
 
 func componentIdentityMatches(component *Component, fingerprint, systemFingerprint, freeBSDPinID,
