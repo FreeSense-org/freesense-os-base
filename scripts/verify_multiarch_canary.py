@@ -146,9 +146,16 @@ def verify_release(arch: str, raw: bytes, system_plan: dict, package_plan: dict,
 
 
 def verify(plan: dict, documents: dict[str, bytes] | None, policy: dict, *, read=fetch_bytes, check_file=verify_file,
-           check_signature=verify_signature) -> dict:
+           check_signature=verify_signature, architectures=None) -> dict:
     # documents=None verifies System and Packages only: what devices receive
     # daily. Image release documents are verified when images are released.
+    # architectures narrows the repositories check to some of the planned
+    # architectures (a quick, amd64-only build); an image release always needs both.
+    architectures = tuple(ARCHES) if architectures is None else tuple(architectures)
+    if (not architectures or len(set(architectures)) != len(architectures)
+            or not set(architectures) <= set(ARCHES)
+            or (documents is not None and set(architectures) != set(ARCHES))):
+        raise ValueError("canary architectures must be a non-empty subset of the planned architectures")
     if (documents is not None and set(documents) != set(ARCHES)) or set(plan.get("targets", {})) != set(ARCHES):
         raise ValueError("canary requires both complete architecture results")
     if type(plan.get("generation")) is not int or plan["generation"] <= 0:
@@ -158,7 +165,7 @@ def verify(plan: dict, documents: dict[str, bytes] | None, policy: dict, *, read
               "publication_enabled": False, "architectures": {},
               "scope": "repositories" if documents is None else "release"}
     base = policy["public_base_url"]
-    for arch in ARCHES:
+    for arch in architectures:
         system_plan, package_plan = plan["targets"][arch]["system"], plan["targets"][arch]["packages"]
         markers, artifact_documents = {}, {}
         if documents is not None:
@@ -228,6 +235,8 @@ if __name__ == "__main__":
     parser.add_argument("--arm64", type=Path, help="arm64 image release document")
     parser.add_argument("--repositories-only", action="store_true",
                         help="verify System and Packages only, without image release documents")
+    parser.add_argument("--architectures", nargs="+", choices=sorted(ARCHES),
+                        help="with --repositories-only, verify only these architectures (quick build)")
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--jobs", type=Path, required=True)
     parser.add_argument("--run-id", type=int, required=True)
@@ -245,6 +254,8 @@ if __name__ == "__main__":
     if args.repositories_only == bool(args.amd64 or args.arm64):
         raise SystemExit("give both release documents, or --repositories-only and none")
     documents = None if args.repositories_only else {arch: getattr(args, arch).read_bytes() for arch in ARCHES}
-    result = verify(plan, documents, load_policy())
+    if args.architectures and not args.repositories_only:
+        raise SystemExit("--architectures needs --repositories-only")
+    result = verify(plan, documents, load_policy(), architectures=args.architectures)
     result["job_timings"] = timings
     args.output.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n")

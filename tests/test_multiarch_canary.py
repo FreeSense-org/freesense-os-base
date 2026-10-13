@@ -135,6 +135,29 @@ class CanaryTests(unittest.TestCase):
             self.assertEqual(target["artifact_documents"], {})
             self.assertEqual(target["reused_packages"], {"system": 1, "packages": 1})
 
+    def test_quick_build_verifies_amd64_alone(self):
+        self.documents = None
+        # arm64 was not built, so none of its objects exist.
+        for url in [url for url in self.objects if "arm64" in url or "aarch64" in url]:
+            del self.objects[url]
+        def check(url, expected_sha, expected_size, *, catalog_checksum=None):
+            body = self.objects[url]
+            if len(body) != expected_size or checksum(body) != expected_sha:
+                raise ValueError("immutable artifact byte verification failed")
+        result = canary.verify(self.plan, None, self.policy, read=self.objects.__getitem__, check_file=check,
+                               check_signature=lambda raw, key: json.loads(raw), architectures=("amd64",))
+        self.assertEqual(list(result["architectures"]), ["amd64"])
+        self.assertEqual(result["scope"], "repositories")
+
+    def test_architectures_must_be_a_planned_subset_and_images_need_both(self):
+        for bad in ((), ("amd64", "amd64"), ("riscv",)):
+            with self.subTest(bad=bad), self.assertRaisesRegex(ValueError, "non-empty subset"):
+                canary.verify(self.plan, None, self.policy, read=self.objects.__getitem__,
+                              architectures=bad)
+        with self.assertRaisesRegex(ValueError, "non-empty subset"):
+            canary.verify(self.plan, self.documents, self.policy, read=self.objects.__getitem__,
+                          architectures=("amd64",))
+
     def test_repositories_only_still_checks_the_components(self):
         self.documents = None
         marker_url = next(url for url in self.objects if url.endswith("/complete.json") and "/artifacts/system/" in url)

@@ -21,6 +21,10 @@ on:
         type: choice
         options: [auto, force, skip]
         default: auto
+      quick:
+        description: Quick build - build and publish amd64 only (no arm64, no images) so amd64 systems can update from the WebUI
+        type: boolean
+        default: false
   schedule:
     # 01:00 UTC = 03:00 CEST / 02:00 CET. Unchanged parts reuse their stored output.
     # Every run publishes System and Packages to devices; images and the
@@ -246,6 +250,9 @@ jobs:
 
   system_arm64:
     needs: prepare
+    # A quick build is amd64 only; the next full run resumes the same frozen
+    # cycle and builds arm64.
+    if: ${{ !inputs.quick }}
     uses: ./.github/workflows/system.yml
     with:
       target: arm64
@@ -267,6 +274,7 @@ jobs:
 
   packages_arm64:
     needs: [prepare, system_arm64]
+    if: ${{ !inputs.quick }}
     uses: ./.github/workflows/packages.yml
     with:
       target: arm64
@@ -287,6 +295,7 @@ jobs:
 
   repository_arm64:
     needs: [system_arm64, packages_arm64]
+    if: ${{ !inputs.quick }}
     uses: ./.github/workflows/qualified-repository-document.yml
     with:
       architecture: arm64
@@ -351,6 +360,7 @@ jobs:
   publish_repos_arm64:
     needs: [prepare, repository_arm64, verify_repositories]
     if: >-
+      !inputs.quick &&
       github.ref == 'refs/heads/main' &&
       needs.prepare.outputs.publication_enabled == 'true' &&
       vars.MULTIARCH_PUBLICATION_ENABLED == 'true'
@@ -375,7 +385,8 @@ jobs:
         run: gh run download "${GITHUB_RUN_ID}" --repo "${GITHUB_REPOSITORY}" --name multiarch-plan --dir "${RUNNER_TEMP}/plan"
       - id: decide
         name: Decide whether this run releases images
-        env: {MODE: "${{ inputs.images || 'auto' }}"}
+        # A quick build never releases images.
+        env: {MODE: "${{ inputs.quick && 'skip' || inputs.images || 'auto' }}"}
         run: >-
           python3 scripts/images_due.py --plan "${RUNNER_TEMP}/plan/multiarch-plan.json"
           --mode "${MODE}" --github-output "${GITHUB_OUTPUT}"
@@ -404,6 +415,9 @@ jobs:
 
   verify_repositories:
     needs: [repository_amd64, repository_arm64]
+    # !cancelled() because repository_arm64 is skipped in a quick build, which
+    # the default success() would treat as a failure of the whole job.
+    if: ${{ !cancelled() && needs.repository_amd64.result == 'success' && (inputs.quick || needs.repository_arm64.result == 'success') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     environment: channel-publisher
@@ -416,9 +430,12 @@ jobs:
           gh run download "${GITHUB_RUN_ID}" --repo "${GITHUB_REPOSITORY}" --name multiarch-plan --dir "${RUNNER_TEMP}/plan"
           gh api --paginate --slurp "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/jobs?filter=all&per_page=100" >"${RUNNER_TEMP}/jobs.json"
       - name: Verify both architecture closures and all reused package bytes
+        env: {QUICK: "${{ inputs.quick == true }}"}
         run: |
+          architectures=(amd64 arm64)
+          if [[ "${QUICK}" == true ]]; then architectures=(amd64); fi
           python3 scripts/verify_multiarch_canary.py --plan "${RUNNER_TEMP}/plan/multiarch-plan.json" \
-            --repositories-only \
+            --repositories-only --architectures "${architectures[@]}" \
             --jobs "${RUNNER_TEMP}/jobs.json" --run-id "${GITHUB_RUN_ID}" \
             --run-attempt "${GITHUB_RUN_ATTEMPT}" \
             --pair-reservation "${RUNNER_TEMP}/plan/pair-generation.json" \

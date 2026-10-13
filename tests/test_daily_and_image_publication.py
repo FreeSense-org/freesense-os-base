@@ -28,6 +28,22 @@ class DailyAndImagePublicationTests(unittest.TestCase):
             self.assertIn(f"with: {{architecture: {arch}, release: false}}", publish)
             self.assertNotIn("release_", publish.split("with:")[0])
 
+    def test_a_quick_build_publishes_amd64_alone_and_never_releases_images(self):
+        self.assertIn("quick:", MULTIARCH.split("schedule:")[0])
+        for name in ("system_arm64", "packages_arm64", "repository_arm64", "publish_repos_arm64"):
+            self.assertIn("!inputs.quick", job(MULTIARCH, name), name)
+        for name in ("system_amd64", "packages_amd64", "repository_amd64", "publish_repos_amd64"):
+            self.assertNotIn("inputs.quick", job(MULTIARCH, name), name)
+        verify = job(MULTIARCH, "verify_repositories")
+        # the skipped arm64 repository must not turn the job into a skip
+        self.assertIn("!cancelled()", verify)
+        self.assertIn("needs.repository_amd64.result == 'success'", verify)
+        self.assertIn("inputs.quick || needs.repository_arm64.result == 'success'", verify)
+        self.assertIn('--architectures "${architectures[@]}"', verify)
+        self.assertIn("architectures=(amd64)", verify)
+        # images are skipped outright, whatever the images input says
+        self.assertIn("inputs.quick && 'skip'", job(MULTIARCH, "images_due"))
+
     def test_images_run_only_when_due_and_survive_disabled_publication(self):
         due = job(MULTIARCH, "images_due")
         self.assertIn("scripts/images_due.py", due)
