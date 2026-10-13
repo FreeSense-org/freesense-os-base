@@ -145,6 +145,16 @@ EOF
 prepare_system_ports() {
   roots_mode=$1
   configure_poudriere
+  # security/FreeSense stamps these two into /etc/version.buildtime and
+  # /etc/version.lastcommit. Nothing set them, so they expanded to nothing and
+  # pkg installed one-byte files over the correct ones in base.txz (the
+  # dashboard then showed the current time as the build date). They go in the
+  # global make.conf because build.sh rewrites FreeSense_main-make.conf, and
+  # carry the values base.txz holds: the source commit time and the commit.
+  cat >>/usr/local/etc/poudriere.d/make.conf <<EOF
+FREESENSE_DATESTRING=${BUILTDATESTRING}
+FREESENSE_COMMITHASH=${SOURCE_SHA}
+EOF
   create_jail
   export REPO_KIND=system OVERLAY_DIR=/root/freesense-system-ports
   phase system-ports-tree
