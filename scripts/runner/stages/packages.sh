@@ -48,6 +48,13 @@ if [ -n "${MIRROR_PLAN_OBJECT}" ]; then
 else
   cp tools/conf/pfPorts/poudriere_packages tools/conf/pfPorts/poudriere_bulk
 fi
+if [ "${PACKAGE_ARCH}" = amd64 ]; then
+  # The sealed plan was computed with libzmq4's default NORM option, so it
+  # lists net/norm as a root of its own. With NORM off nothing needs norm, and
+  # building it only fails (see the override above).
+  awk '$0 != "net/norm"' tools/conf/pfPorts/poudriere_bulk >tools/conf/pfPorts/poudriere_bulk.next
+  mv tools/conf/pfPorts/poudriere_bulk.next tools/conf/pfPorts/poudriere_bulk
+fi
 policy=/root/freesense-packages/architecture-policy.json
 jq -e --arg arch "${PACKAGE_ARCH}" '
   .schema_version == "freesense.optional-package-architectures/v1" and
