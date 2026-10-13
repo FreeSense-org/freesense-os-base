@@ -1,0 +1,89 @@
+name: Propose a Stable refresh
+
+# The Stable train is frozen on RELENG_<major>_<minor> branches. Every day, after
+# the FreeBSD pin has had a chance to roll over, this checks whether that frozen
+# train has something to ship (new maintenance commits, or a newer FreeBSD pin)
+# and, if so, opens ONE pull request carrying the next patch lock.
+#
+# It is only a proposal. Merging it publishes nothing: a person reviews it,
+# merges it, then dispatches "Publish FreeSense Stable train" for that release.
+# A proposal nobody acts on closes itself after STALE_DAYS, and stays closed
+# until the proposal changes. Branches are never deleted here.
+
+on:
+  schedule:
+    - cron: "30 7 * * *"
+  workflow_dispatch:
+
+permissions: {contents: write, pull-requests: write, actions: write}
+concurrency: {group: stable-refresh, cancel-in-progress: false}
+
+env:
+  STALE_DAYS: "14"
+
+jobs:
+  propose:
+    if: github.repository == 'FreeSense-org/freesense-os-base' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with: {fetch-depth: 0}
+      - id: proposal
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python3 scripts/stable_refresh.py --write --body "${RUNNER_TEMP}/body.md" --github-output "${GITHUB_OUTPUT}"
+      - name: Close superseded and stale proposals
+        id: housekeeping
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DUE: ${{ steps.proposal.outputs.due }}
+          REASON: ${{ steps.proposal.outputs.reason }}
+          VERSION: ${{ steps.proposal.outputs.version }}
+        run: |
+          gh label create stable-refresh --description "Scheduled Stable refresh proposal" --color 0e8a16 2>/dev/null || true
+          branch=""
+          if [[ "${DUE}" == true ]]; then
+            digest=$(sha256sum "config/releases/${VERSION}.json" | cut -c1-10)
+            branch="stable-refresh/${VERSION}-${digest}"
+          fi
+          echo "branch=${branch}" >>"${GITHUB_OUTPUT}"
+          cutoff=$(date -u -d "${STALE_DAYS} days ago" +%Y-%m-%dT%H:%M:%SZ)
+          gh pr list --label stable-refresh --state open --json number,headRefName,createdAt \
+            --jq '.[] | "\(.number) \(.headRefName) \(.createdAt)"' |
+          while read -r number head created; do
+            if [[ "${DUE}" != true ]]; then
+              gh pr close "${number}" --comment "No longer needed: ${REASON}."
+            elif [[ "${head}" != "${branch}" ]]; then
+              gh pr close "${number}" --comment "Superseded: the frozen train or the FreeBSD pin changed. A fresh proposal replaces this one."
+            elif [[ "${created}" < "${cutoff}" ]]; then
+              gh pr close "${number}" --comment "No action within ${STALE_DAYS} days. This closes itself; it reopens as a new proposal only when the proposal changes (a new pin or maintenance commits)."
+            fi
+          done
+      - name: Open the proposal
+        if: steps.proposal.outputs.due == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BRANCH: ${{ steps.housekeeping.outputs.branch }}
+          VERSION: ${{ steps.proposal.outputs.version }}
+          PREVIOUS: ${{ steps.proposal.outputs.previous }}
+        run: |
+          # One proposal per distinct content: skip if it is already open, or was
+          # opened before and closed (merged, declined, or gone stale).
+          existing=$(gh pr list --head "${BRANCH}" --state all --json number --jq length)
+          if [[ "${existing}" != 0 ]]; then
+            echo "Proposal ${BRANCH} was already raised; leaving it as it is."
+            exit 0
+          fi
+          git config user.name "FreeSense release bot"
+          git config user.email "dev@freesense.org"
+          git checkout -b "${BRANCH}"
+          git add "config/releases/${VERSION}.json"
+          git commit -q -m "stable: propose ${VERSION} (refresh of ${PREVIOUS})" \
+            -m "Proposed by the scheduled Stable refresh. Merging this publishes nothing."
+          git push -q origin "${BRANCH}"
+          gh pr create --base main --head "${BRANCH}" --label stable-refresh \
+            --title "Stable ${VERSION} refresh proposal ($(date -u +%Y-%m-%d))" \
+            --body-file "${RUNNER_TEMP}/body.md"
+          # A pull request opened with the workflow token does not start CI, and
+          # main requires the "test" check, so start it on the proposal branch.
+          gh workflow run ci.yml --ref "${BRANCH}"
