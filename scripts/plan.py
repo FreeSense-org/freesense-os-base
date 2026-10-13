@@ -20,6 +20,7 @@ from datetime import datetime, timedelta, timezone
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from build_platform import image_profile, load_policy, manifest_name, pin_target, release_profiles, target
 from multiarch_pin import source_archive
+import release_lock
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -277,7 +278,11 @@ def main() -> int:
     parser.add_argument("--system-closure", type=Path)
     parser.add_argument("--resolved-inputs", type=Path, help="one coordinator-resolved source snapshot for both targets")
     parser.add_argument("--immutable-only", action="store_true", help="plan immutable artifacts without consulting mutable channel pointers")
+    parser.add_argument("--release-lock", metavar="VERSION",
+                        help="plan System/Optional for this sealed Stable release instead of the rolling Development line")
     args = parser.parse_args()
+    if args.release_lock and (args.kind not in {"system", "packages"} or args.resolved_inputs):
+        raise SystemExit("--release-lock plans only System and Optional builds, from the lock's own commits")
     resolved = {}
     if args.resolved_inputs:
         resolved = json.loads(args.resolved_inputs.read_text(encoding="utf-8"))
@@ -335,6 +340,11 @@ def main() -> int:
         raise SystemExit("--os-base-sha must be a full Git commit")
     lock = json.loads((ROOT / "config/freebsd-16.json").read_text())
     policy = load_policy(ROOT / "config/build-policy.json")
+    sealed = None
+    if args.release_lock:
+        sealed = release_lock.load(ROOT, policy, args.release_lock)
+        policy = release_lock.policy_for(policy, sealed)
+        resolved = release_lock.sources(sealed)
     selected_target = target(policy, args.target)
     if not selected_target["build_enabled"]:
         raise SystemExit(f"target {args.target} builds are disabled")
@@ -392,6 +402,17 @@ def main() -> int:
         raise SystemExit("FreeBSD lock is outside its active 14-day window")
     worker_tools_lock_sha256 = (
         worker_tools.get("sha256", "") if isinstance(worker_tools, dict) else ""
+    )
+    if sealed is not None:
+        release_lock.check_pin(
+            sealed, lock, osversion=pinned_osversion, jail_object=jail_seed["object"],
+            worker_image_sha256=worker_image["sha256"], worker_tools_sha256=worker_tools_lock_sha256,
+        )
+    # A sealed release is told apart from a Development build of the same
+    # sources by its version, which the rolling identities do not name.
+    release_identity = (
+        {"release": sealed["release"], "product_version": sealed["product_version"]}
+        if sealed is not None else {}
     )
     if args.kind == "system" and (
         not SHA256.fullmatch(worker_tools_lock_sha256)
@@ -469,6 +490,7 @@ def main() -> int:
             "recipe": platform_recipe,
             **({"execution_inputs": execution_inputs} if execution_inputs else {}),
             **({} if args.target == "amd64" else {"target": selected_target}),
+            **release_identity,
         })
         desired_system = fingerprint({
             "schema": 3,
@@ -482,6 +504,7 @@ def main() -> int:
                 ROOT / "scripts/runner/worker-common.sh",
                 ROOT / "scripts/runner/stages/system.sh",
             ]),
+            **release_identity,
         })
 
     selected_package_train = policy["package_train"]
@@ -796,7 +819,8 @@ def main() -> int:
         "cloud_virtual_size_gib": cloud_variants.get(selected_filesystem, {}).get("virtual_size_gib", 0),
         "cloud_ufs_virtual_size_gib": cloud_variants.get("ufs", {}).get("virtual_size_gib", 0),
         "cloud_zfs_virtual_size_gib": cloud_variants.get("zfs", {}).get("virtual_size_gib", 0),
-        "product_version": (f"{release_version}-RELEASE"
+        "product_version": (sealed["product_version"] if sealed is not None
+                            else f"{release_version}-RELEASE"
                             if args.kind in {"iso", "cloud", "appliance"} and channel_name == "stable"
                             else f"{release_version}-DEVELOPMENT"),
     }

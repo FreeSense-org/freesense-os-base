@@ -47,9 +47,14 @@ maps `devel` and `stable` to exact repository URLs. The appliance verifies that
 signature before changing its pkg configuration.
 
 `stable.yml` manually publishes an exact checked lock such as
-`config/releases/1.1.0.json` in the policy-configured Stable train. Each patch
-is immutable once published. The `stable` pointer may move only to a higher
-patch in that train and always moves as one verified System/Packages pair.
+`config/releases/1.1.0.json` in the policy-configured Stable train. System and
+Optional Packages are built by the same delta component farm as Development,
+planned from the lock (`scripts/stable_farm_plan.py`), which must match the
+active FreeBSD pin. The sealed pair is signed into the channel manifests and
+`release.yml` builds, boot-tests and publishes the images. Each release is
+immutable once published. The `stable` pointer only moves forward (to a higher
+version, including the first release of a newer train) and always moves as one
+verified System/Packages pair.
 
 `release.yml` verifies a complete repository pair and assembles one atomic
 release bundle: installer ISO plus amd64 UFS and ZFS QCOW2/raw GPT images.

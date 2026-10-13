@@ -1,0 +1,81 @@
+#!/usr/bin/env python3
+"""Sealed Stable release locks shared by the Stable planners."""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+import re
+
+SCHEMA = "freesense.release-lock/v1"
+SHA = re.compile(r"^[0-9a-f]{40}$")
+SHA256 = re.compile(r"^[0-9a-f]{64}$")
+RELEASE = re.compile(r"^([0-9]+)\.([0-9]+)\.([0-9]+)$")
+
+
+def load(root: Path, policy: dict, release: str) -> dict:
+    """Return the checked, sealed lock of one exact release of the Stable train."""
+    stable_train = policy.get("release", {}).get("stable_train")
+    match = RELEASE.fullmatch(release)
+    if match is None or f"{match.group(1)}.{match.group(2)}" != stable_train:
+        raise SystemExit(f"--release must be an exact {stable_train}.x version")
+    lock = json.loads((root / "config/releases" / f"{release}.json").read_text(encoding="utf-8"))
+    if lock.get("schema_version") != SCHEMA or not lock.get("sealed"):
+        raise SystemExit("release lock is not sealed")
+    if lock.get("release") != release or lock.get("product_version") != f"{release}-RELEASE":
+        raise SystemExit("release lock version does not match the requested release")
+    if lock.get("package_train") != stable_train:
+        raise SystemExit("release lock package train does not match Stable policy")
+    for key in ("source_sha", "system_ports_sha", "packages_sha", "freebsd_source_sha", "freebsd_ports_sha"):
+        if not SHA.fullmatch(lock.get(key, "")):
+            raise SystemExit(f"invalid release input {key}")
+    for key in ("worker_image_sha256", "worker_tools_sha256"):
+        if not SHA256.fullmatch(lock.get(key, "")):
+            raise SystemExit(f"invalid release input {key}")
+    if not re.fullmatch(r"inputs/sha256/[0-9a-f]{64}", lock.get("jail_object", "")):
+        raise SystemExit("invalid release input jail_object")
+    if not isinstance(lock.get("freebsd_osversion"), int):
+        raise SystemExit("release lock has no exact OSVERSION")
+    return lock
+
+
+def sources(lock: dict) -> dict:
+    """The coordinator-resolved source snapshot a sealed release builds from."""
+    return {
+        "source": lock["source_sha"],
+        "system_ports": lock["system_ports_sha"],
+        "packages": lock["packages_sha"],
+    }
+
+
+def policy_for(policy: dict, lock: dict) -> dict:
+    """Policy as the sealed release sees it: its own train and version."""
+    return {
+        **policy,
+        "package_train": lock["package_train"],
+        "release": {**policy["release"], "development_version": lock["release"]},
+    }
+
+
+def check_pin(lock: dict, pin: dict, *, osversion: int, jail_object: str,
+              worker_image_sha256: str, worker_tools_sha256: str) -> None:
+    """A sealed release builds on the active FreeBSD pin, so the two must agree.
+
+    The worker farm validates every plan against config/freebsd-16.json; a
+    release sealed against a different pin could never be built, and one built
+    anyway would not be the release the lock describes.
+    """
+    expected = {
+        "FreeBSD source": (lock["freebsd_source_sha"], pin["freebsd_source"]["commit"]),
+        "FreeBSD ports": (lock["freebsd_ports_sha"], pin["freebsd_ports"]["commit"]),
+        "OSVERSION": (lock["freebsd_osversion"], osversion),
+        "jail seed": (lock["jail_object"], jail_object),
+        "worker image": (lock["worker_image_sha256"], worker_image_sha256),
+        "worker tools": (lock["worker_tools_sha256"], worker_tools_sha256),
+    }
+    differing = [name for name, (sealed, active) in expected.items() if sealed != active]
+    if differing:
+        raise SystemExit(
+            "release lock differs from the active FreeBSD pin: " + ", ".join(differing)
+            + " (re-seal the release against the current pin)"
+        )

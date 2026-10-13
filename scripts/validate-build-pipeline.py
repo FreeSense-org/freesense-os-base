@@ -70,14 +70,22 @@ for value in ("build_host", "ubuntu-24.04", "Prepare disposable GitHub build hos
               "if: inputs.build_host != 'dedicated'", "BUILD_VCPUS", "BUILD_MEMORY_MIB",
               "freesense-hosted-", "freesense-kvm-host"):
     require(value in reusable, f"reusable runner routing is missing {value!r}")
-for name in ("component-farm.yml", "release.yml", "stable.yml"):
+for name in ("component-farm.yml", "release.yml"):
     require("uses: ./.github/workflows/runner-build.yml" in read(f".github/workflows/{name}"),
             f"{name} bypasses the reusable KVM executor")
+# Stable builds nothing itself: System and Optional run on the delta farm and
+# the images on release.yml, both of which go through the reusable executor.
+for value in ("uses: ./.github/workflows/component-farm.yml", "uses: ./.github/workflows/release.yml"):
+    require(value in read(".github/workflows/stable.yml"),
+            f"stable.yml bypasses the reusable build workflows: {value!r}")
+require("uses: ./.github/workflows/runner-build.yml" not in read(".github/workflows/stable.yml"),
+        "stable.yml must not call the retired single-job build path")
 for name in ("component-farm.yml", "release.yml"):
     require("build_host:" in read(f".github/workflows/{name}"),
             f"Development workflow {name} does not select a build host")
-require("build_host:" not in read(".github/workflows/stable.yml"),
-        "Stable must retain the reusable runner's dedicated-host default")
+require("options: [dedicated, github-amd64]" in read(".github/workflows/stable.yml") and
+        "default: dedicated" in read(".github/workflows/stable.yml"),
+        "Stable must default to the dedicated build host")
 require("schedule:" in multiarch_workflow,
         "the daily multiarch cycle is not scheduled")
 # The System and Optional workflows are farm components now. A standalone
@@ -161,8 +169,8 @@ for value in ("--packages-built-against-system", "packages-complete.json",
               ".inputs.built_against_system // .inputs.system"):
     require(value in stable_workflow,
             f"stable package reuse provenance is missing {value!r}")
-for value in ("queue_development", "needs: publish-download",
-              "gh workflow run system.yml", "actions: write"):
+for value in ("queue_development", "needs: release",
+              "gh workflow run development-multiarch.yml", "actions: write"):
     require(value in stable_workflow,
             f"stable-to-development ordered handoff is missing {value!r}")
 release_workflow = read(".github/workflows/release.yml")
@@ -193,10 +201,6 @@ for value in (
 require("needs.iso.result == 'success'" in release_workflow and
         "needs.cloud-ufs.result == 'success' && needs.cloud-zfs.result == 'success'" in release_workflow,
         "release publication must wait for installer and both cloud checks")
-for value in ("needs: [plan, iso-plan, iso]",
-              "needs: [plan, iso-plan, cloud-ufs]"):
-    require(value in stable_workflow,
-            f"Stable KVM jobs are not serialized by {value!r}")
 require('expected_system = values["built_against_system"]' in read("scripts/channel.py"),
         "rebound optional packages are not verified against their build System")
 for value in ("sync-downloads", "scripts/migrate_downloads.py",
@@ -205,16 +209,12 @@ for value in ("sync-downloads", "scripts/migrate_downloads.py",
               "/v1/releases/${{ needs.iso-plan.outputs.channel }}.json"):
     require(value in release_workflow,
             f"independent download publication is missing {value!r}")
-require("/v1/releases/stable.json" in stable_workflow,
-        "stable publication does not write its independent download document")
+require("channel: stable" in stable_workflow and "operation: bundle" in stable_workflow,
+        "stable publication does not publish its images and release document through release.yml")
 for value in ("--system-ports", "--packages", "GITHUB_TOKEN",
               'needs.iso-plan.outputs.os_base_sha'):
     require(value in release_workflow,
             f"development release changelog provenance is missing {value!r}")
-for value in ("--system-ports", "--packages", "GITHUB_TOKEN",
-              'needs.plan.outputs.os_base_sha'):
-    require(value in stable_workflow,
-            f"stable release changelog provenance is missing {value!r}")
 release_publisher = read("scripts/publish_download.py")
 for value in ("github_compare", "build_release_notes", '"release_notes": release_notes',
               "system_package_inventory"):
