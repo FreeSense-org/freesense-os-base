@@ -38,7 +38,7 @@ DOWNLOAD_BASE_URL = "https://downloads.freesense.org/v1"
 
 def marker(channel="stable", generation=2, fingerprint=FINGERPRINT,
            packages=PACKAGES_FINGERPRINT, legacy=False):
-    version = "1.0.0" if channel == "stable" else "1.1.0"
+    version = "1.1.0" if channel == "stable" else "1.2.0"
     file = (f"FreeSense-{version}-amd64.iso" if channel == "stable"
             else f"FreeSense-{version}-g{generation}-amd64.iso")
     value = {
@@ -62,7 +62,7 @@ def cloud_marker(channel="stable", generation=2, filesystem="ufs",
     fingerprint = fingerprint or (
         CLOUD_FINGERPRINT if filesystem == "ufs" else ZFS_CLOUD_FINGERPRINT
     )
-    version = "1.0.0" if channel == "stable" else "1.1.0"
+    version = "1.1.0" if channel == "stable" else "1.2.0"
     prefix = f"FreeSense-{version}" if channel == "stable" else f"FreeSense-{version}-g{generation}"
     virtual_size = (16 if filesystem == "ufs" else 32) * 1024**3
     return {
@@ -86,7 +86,7 @@ def cloud_marker(channel="stable", generation=2, filesystem="ufs",
 
 
 def release(channel="stable", generation=2, fingerprint=BUNDLE_FINGERPRINT, legacy=False):
-    version = "1.0.0" if channel == "stable" else "1.1.0"
+    version = "1.1.0" if channel == "stable" else "1.2.0"
     item = marker(channel, generation, fingerprint)
     artifact = f"{BASE_URL}/artifacts/iso/{FINGERPRINT}"
     if not legacy:
@@ -158,7 +158,7 @@ def release(channel="stable", generation=2, fingerprint=BUNDLE_FINGERPRINT, lega
 
 
 def publisher_argv(output: Path, channel="stable", generation=2, fingerprint=FINGERPRINT):
-    version = "1.0.0" if channel == "stable" else "1.1.0"
+    version = "1.1.0" if channel == "stable" else "1.2.0"
     return [
         "publish_download.py", "--channel", channel, "--version", version,
         "--fingerprint", fingerprint, "--system", SYSTEM,
@@ -186,14 +186,14 @@ class PublishDownloadTests(unittest.TestCase):
             "firmware": ["uefi"], "capabilities": {"cloud_init": False},
             "boot_inputs": {}, "artifact_fingerprint": installer["build_fingerprint"],
             "hardware_verification": "verified",
-            "file": "FreeSense-1.1.0-g2-arm64-installer.img.xz",
+            "file": "FreeSense-1.2.0-g2-arm64-installer.img.xz",
         })
         installer["url"] = publish.public_artifact_url(
             value, "devel", installer["file"], DOWNLOAD_BASE_URL
         )
         appliances = []
         for profile, digit in (("arm64-rpi4b", "7"), ("arm64-rpi5-d0", "8")):
-            file = f"FreeSense-1.1.0-g2-{profile}.img.xz"
+            file = f"FreeSense-1.2.0-g2-{profile}.img.xz"
             appliances.append({
                 "kind": "appliance", "platform": profile,
                 "target_models": [profile], "filesystem": "ufs", "format": "img",
@@ -220,10 +220,10 @@ class PublishDownloadTests(unittest.TestCase):
         installer = value["artifacts"][0]
         installer.update({
             "format": "img", "compression": "xz",
-            "file": "FreeSense-1.0.0-arm64-installer.img.xz",
+            "file": "FreeSense-1.1.0-arm64-installer.img.xz",
         })
         installer["url"] = (
-            f"{DOWNLOAD_BASE_URL}/releases/stable/1.0.0/{installer['file']}"
+            f"{DOWNLOAD_BASE_URL}/releases/stable/1.1.0/{installer['file']}"
         )
         value["artifacts"] = [installer]
         publish.validate_download(value, "stable", BASE_URL, DOWNLOAD_BASE_URL)
@@ -239,7 +239,7 @@ class PublishDownloadTests(unittest.TestCase):
             arm_marker = marker(channel="devel")
             arm_marker.update({
                 "schema_version": "freesense.installer/v1",
-                "file": "FreeSense-1.1.0-g2-arm64-installer.img.xz",
+                "file": "FreeSense-1.2.0-g2-arm64-installer.img.xz",
             })
             responses = iter((arm_marker, None))
             with mock.patch.object(sys, "argv", argv), mock.patch.object(
@@ -290,7 +290,7 @@ class PublishDownloadTests(unittest.TestCase):
         self.assertEqual(value["package_arch"], "amd64")
         self.assertEqual(value["platform"], "generic-amd64")
         self.assertEqual(value["channel"], "stable")
-        self.assertEqual(value["version"], "1.0.0")
+        self.assertEqual(value["version"], "1.1.0")
         self.assertEqual(len(value["artifacts"]), 5)
         self.assertEqual(
             {(item["filesystem"], item["format"]) for item in value["artifacts"]
@@ -299,8 +299,8 @@ class PublishDownloadTests(unittest.TestCase):
         )
         self.assertEqual(
             value["artifacts"][0]["url"],
-            "https://downloads.freesense.org/v1/releases/stable/1.0.0/"
-            "FreeSense-1.0.0-amd64.iso",
+            "https://downloads.freesense.org/v1/releases/stable/1.1.0/"
+            "FreeSense-1.1.0-amd64.iso",
         )
         self.assertNotIn("channels", value)
         self.assertEqual(

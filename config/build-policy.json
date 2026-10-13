@@ -1,10 +1,10 @@
 {
   "schema_version": "freesense.build-policy/v4",
-  "package_train": "1.1",
+  "package_train": "1.2",
   "release": {
-    "stable_train": "1.0",
-    "development_train": "1.1",
-    "development_version": "1.1.0",
+    "stable_train": "1.1",
+    "development_train": "1.2",
+    "development_version": "1.2.0",
     "stable_lifecycle": "supported",
     "development_lifecycle": "experimental",
     "allow_stable_to_development": true,

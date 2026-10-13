@@ -64,7 +64,7 @@ def signed_envelope(
 ):
     artifact_path = f"{component}/{FINGERPRINT}"
     if component == "packages":
-        artifact_path = f"packages/1.1/{FINGERPRINT}"
+        artifact_path = f"packages/1.2/{FINGERPRINT}"
     selected = {
         "fingerprint": FINGERPRINT,
         "url": f"https://pkg.freesense.org/v1/artifacts/{artifact_path}/amd64",
@@ -82,7 +82,7 @@ def signed_envelope(
             "fingerprint": PACKAGES_FINGERPRINT,
             "system_fingerprint": FINGERPRINT,
             "url": (
-                "https://pkg.freesense.org/v1/artifacts/packages/1.1/"
+                "https://pkg.freesense.org/v1/artifacts/packages/1.2/"
                 f"{PACKAGES_FINGERPRINT}/amd64"
             ),
             "generation": 8,
@@ -105,7 +105,7 @@ def signed_envelope(
             "devel": {
                 "name": "devel",
                 "description": "Development version",
-                "package_train": "1.1",
+                "package_train": "1.2",
                 "abi": "FreeBSD:16:amd64",
                 "altabi": "freebsd:16:x86:64",
                 "default": True,
@@ -130,7 +130,7 @@ def completion_marker(component: str = "system", *, system_fingerprint: str = FI
         "system_ports": "2" * 40,
         "freebsd": "3" * 40,
         "ports": "4" * 40,
-        "package_train": "1.1",
+        "package_train": "1.2",
         "os_definition": "5" * 40,
         "worker_image": "c" * 64,
         "worker_tools": "f" * 64,
@@ -192,8 +192,8 @@ def system_closure(*, channel_name: str = "devel", target_arch: str = "amd64"):
         "fingerprint": "a" * 64,
         "channel": channel_name,
         "generation": 7,
-        "package_train": "1.1",
-        "release_version": "1.1.0",
+        "package_train": "1.2",
+        "release_version": "1.2.0",
         "payload_sha256": hashlib.sha256(payload).hexdigest(),
         "payload_base64": base64.b64encode(payload).decode(),
         "signature_base64": base64.b64encode(b"test-signature").decode(),
@@ -683,7 +683,7 @@ class PlannerChannelTests(unittest.TestCase):
         closure_dict = system_closure()
         self.assertEqual(values["image_sha256"], closure_dict["artifact_image_sha256"])
         self.assertEqual(values["worker_tools_sha256"], closure_dict["artifact_worker_tools_sha256"])
-        self.assertEqual(values["release_version"], "1.1.0")
+        self.assertEqual(values["release_version"], "1.2.0")
 
     def test_iso_identity_changes_with_the_optional_package_pair(self):
         fingerprints = []

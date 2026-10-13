@@ -33,8 +33,9 @@ jobs:
           curl --fail --location --silent --show-error --retry 8 --retry-all-errors \
             "https://pkg.freesense.org/v1/artifacts/system/${SYSTEM}/complete.json" \
             --output "${RUNNER_TEMP}/system.json"
+          package_train=$(jq -er .package_train config/build-policy.json)
           curl --fail --location --silent --show-error --retry 8 --retry-all-errors \
-            "https://pkg.freesense.org/v1/artifacts/packages/1.1/${PACKAGES}/complete.json" \
+            "https://pkg.freesense.org/v1/artifacts/packages/${package_train}/${PACKAGES}/complete.json" \
             --output "${RUNNER_TEMP}/packages.json"
           python3 scripts/staged_system_closure.py --target "${ARCH}" \
             --marker "${RUNNER_TEMP}/system.json" --packages-marker "${RUNNER_TEMP}/packages.json" \
