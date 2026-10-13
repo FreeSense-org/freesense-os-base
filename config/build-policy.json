@@ -19,6 +19,10 @@
     "amd64": ["generic-amd64"],
     "arm64": ["generic-arm64-uefi", "arm64-rpi4b", "arm64-rpi5-d0"]
   },
+  "stable_release_profile_sets": {
+    "amd64": ["generic-amd64"],
+    "arm64": ["generic-arm64-uefi"]
+  },
   "targets": {
     "amd64": {
       "architecture": "amd64",

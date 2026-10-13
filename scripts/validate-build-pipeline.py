@@ -169,7 +169,7 @@ for value in ("--packages-built-against-system", "packages-complete.json",
               ".inputs.built_against_system // .inputs.system"):
     require(value in stable_workflow,
             f"stable package reuse provenance is missing {value!r}")
-for value in ("queue_development", "needs: release",
+for value in ("queue_development", "needs: [release, release-arm64]",
               "gh workflow run development-multiarch.yml", "actions: write"):
     require(value in stable_workflow,
             f"stable-to-development ordered handoff is missing {value!r}")

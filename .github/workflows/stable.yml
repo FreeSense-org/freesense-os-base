@@ -5,6 +5,11 @@ name: Publish FreeSense Stable train
 # Development, from the lock's commits and the FreeBSD pin it was sealed
 # against; the sealed pair is then signed into the channel manifests, and
 # release.yml builds, boot-tests and publishes the images.
+#
+# A lock that carries an arm64 block ships arm64 as well. The two architectures
+# are independent chains that share only the plan: an arm64 failure never holds
+# back amd64, and a failed chain is re-run on its own. arm64 ships the generic
+# installer only (no Raspberry Pi appliance images, which are Development-only).
 
 on:
   workflow_dispatch:
@@ -23,6 +28,10 @@ on:
         type: choice
         options: [dedicated, github-amd64]
         default: dedicated
+      arm64:
+        description: Also publish arm64 when the lock ships it
+        type: boolean
+        default: true
 
 permissions: {actions: write, contents: read, id-token: write}
 concurrency: {group: release-control, cancel-in-progress: false}
@@ -47,15 +56,30 @@ jobs:
       altabi: ${{ steps.plan.outputs.altabi }}
       osversion: ${{ steps.plan.outputs.osversion }}
       public_base_url: ${{ steps.plan.outputs.public_base_url }}
+      has_arm64: ${{ steps.plan.outputs.has_arm64 }}
+      arm64_system: ${{ steps.plan.outputs.arm64_system }}
+      arm64_packages: ${{ steps.plan.outputs.arm64_packages }}
+      arm64_system_plan: ${{ steps.plan.outputs.arm64_system_plan }}
+      arm64_packages_plan: ${{ steps.plan.outputs.arm64_packages_plan }}
+      arm64_build_host: ${{ steps.plan.outputs.arm64_build_host }}
+      arm64_freebsd_pin_id: ${{ steps.plan.outputs.arm64_freebsd_pin_id }}
+      arm64_package_arch: ${{ steps.plan.outputs.arm64_package_arch }}
+      arm64_abi: ${{ steps.plan.outputs.arm64_abi }}
+      arm64_altabi: ${{ steps.plan.outputs.arm64_altabi }}
+      arm64_osversion: ${{ steps.plan.outputs.arm64_osversion }}
+      arm64_system_generation: ${{ steps.arm64-system-generation.outputs.generation }}
+      arm64_packages_generation: ${{ steps.arm64-packages-generation.outputs.generation }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with: {go-version-file: go.mod, cache: false}
       - id: plan
-        run: >-
-          python3 scripts/stable_farm_plan.py --os-base-sha "${GITHUB_SHA}"
-          --release "${{ inputs.release }}" --build-host "${{ inputs.build_host }}"
-          --github-output "${GITHUB_OUTPUT}"
+        run: |
+          args=()
+          if [[ "${{ inputs.arm64 }}" != true ]]; then args+=(--only-amd64); fi
+          python3 scripts/stable_farm_plan.py --os-base-sha "${GITHUB_SHA}" \
+            --release "${{ inputs.release }}" --build-host "${{ inputs.build_host }}" \
+            --github-output "${GITHUB_OUTPUT}" "${args[@]}"
       - run: go build -trimpath -o "${RUNNER_TEMP}/fsbuild" ./cmd/fsbuild
       - name: Acquire generation coordinator
         env:
@@ -82,7 +106,22 @@ jobs:
           "${RUNNER_TEMP}/fsbuild" state reserve-generation --fingerprint "${{ steps.plan.outputs.packages }}" \
             --proposed "${GITHUB_RUN_NUMBER}" --output "${RUNNER_TEMP}/generation.json"
           echo "generation=$(jq -r .generation "${RUNNER_TEMP}/generation.json")" >>"${GITHUB_OUTPUT}"
+      - id: arm64-system-generation
+        if: steps.plan.outputs.has_arm64 == 'true'
+        env: {R2_BUCKET: "${{ vars.R2_BUILD_BUCKET }}", FSBUILD_STORE_PREFIX: v1}
+        run: |
+          "${RUNNER_TEMP}/fsbuild" state reserve-generation --fingerprint "${{ steps.plan.outputs.arm64_system }}" \
+            --proposed "${GITHUB_RUN_NUMBER}" --output "${RUNNER_TEMP}/generation.json"
+          echo "generation=$(jq -r .generation "${RUNNER_TEMP}/generation.json")" >>"${GITHUB_OUTPUT}"
+      - id: arm64-packages-generation
+        if: steps.plan.outputs.has_arm64 == 'true'
+        env: {R2_BUCKET: "${{ vars.R2_BUILD_BUCKET }}", FSBUILD_STORE_PREFIX: v1}
+        run: |
+          "${RUNNER_TEMP}/fsbuild" state reserve-generation --fingerprint "${{ steps.plan.outputs.arm64_packages }}" \
+            --proposed "${GITHUB_RUN_NUMBER}" --output "${RUNNER_TEMP}/generation.json"
+          echo "generation=$(jq -r .generation "${RUNNER_TEMP}/generation.json")" >>"${GITHUB_OUTPUT}"
 
+  # ---- amd64 ---------------------------------------------------------------
   system:
     needs: plan
     uses: ./.github/workflows/component-farm.yml
@@ -178,9 +217,104 @@ jobs:
       image_host: ${{ vars.DEVELOPMENT_RELEASE_HOST || 'github-amd64' }}
     secrets: inherit
 
+  # ---- arm64 (independent of the amd64 chain above) -----------------------
+  system-arm64:
+    needs: plan
+    if: needs.plan.outputs.has_arm64 == 'true'
+    uses: ./.github/workflows/component-farm.yml
+    with:
+      stage: system
+      plan: ${{ needs.plan.outputs.arm64_system_plan }}
+      pair_generation: ${{ github.run_number }}
+    secrets: inherit
+
+  packages-arm64:
+    needs: [plan, system-arm64]
+    if: needs.plan.outputs.has_arm64 == 'true'
+    uses: ./.github/workflows/component-farm.yml
+    with:
+      stage: packages
+      plan: ${{ needs.plan.outputs.arm64_packages_plan }}
+      pair_generation: ${{ github.run_number }}
+    secrets: inherit
+
+  seal-arm64:
+    needs: [plan, system-arm64, packages-arm64]
+    if: needs.plan.outputs.has_arm64 == 'true'
+    runs-on: ubuntu-24.04
+    environment: channel-publisher
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with: {go-version-file: go.mod, cache: false}
+      - run: go build -trimpath -o "${RUNNER_TEMP}/fsbuild" ./cmd/fsbuild
+      - name: Acquire channel writer
+        env:
+          R2_CREDENTIAL_BROKER_URL: ${{ vars.R2_CREDENTIAL_BROKER_URL }}
+          R2_CREDENTIAL_BROKER_AUDIENCE: ${{ vars.R2_CREDENTIAL_BROKER_AUDIENCE }}
+          R2_BUCKET: ${{ vars.R2_BUILD_BUCKET }}
+          R2_ENDPOINT: ${{ vars.R2_ENDPOINT }}
+        run: >-
+          "${RUNNER_TEMP}/fsbuild" credentials acquire --broker-url "${R2_CREDENTIAL_BROKER_URL}"
+          --audience "${R2_CREDENTIAL_BROKER_AUDIENCE}" --role channel-writer
+          --expected-bucket "${R2_BUCKET}" --expected-prefix v1 --expected-endpoint "${R2_ENDPOINT}"
+          --github-env "${GITHUB_ENV}"
+      - name: Publish immutable stable patch (arm64)
+        env:
+          R2_BUCKET: ${{ vars.R2_BUILD_BUCKET }}
+          FSBUILD_STORE_PREFIX: v1
+          SIGNING_KEY: ${{ secrets.FREESENSE_PKG_SIGNING_KEY }}
+        run: |
+          key=$(mktemp); trap 'rm -f "$key"' EXIT; chmod 600 "$key"; printf '%s' "${SIGNING_KEY}" >"$key"
+          published_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          packages_marker="${RUNNER_TEMP}/packages-complete.json"
+          curl --fail --silent --show-error --location \
+            "${{ needs.plan.outputs.public_base_url }}/artifacts/packages/${{ needs.plan.outputs.package_train }}/${{ needs.plan.outputs.arm64_packages }}/complete.json" \
+            --output "${packages_marker}"
+          packages_built_against=$(jq -er \
+            '(.inputs.built_against_system // .inputs.system) as $system |
+             select(.schema_version == "freesense.artifact/v1" and .stage == "packages" and
+             .fingerprint == "${{ needs.plan.outputs.arm64_packages }}" and
+             ($system | test("^[0-9a-f]{64}$"))) | $system' \
+            "${packages_marker}")
+          # arm64 has no legacy manifest: devices read repos.aarch64.manifest.json.
+          "${RUNNER_TEMP}/fsbuild" channel seal-stable \
+            --qualified-manifest --architecture arm64 --package-arch aarch64 \
+            --version "${{ needs.plan.outputs.release_version }}" \
+            --system-fingerprint "${{ needs.plan.outputs.arm64_system }}" \
+            --system-url "${{ needs.plan.outputs.public_base_url }}/artifacts/system/${{ needs.plan.outputs.arm64_system }}/aarch64" \
+            --system-generation "${{ needs.plan.outputs.arm64_system_generation }}" \
+            --packages-fingerprint "${{ needs.plan.outputs.arm64_packages }}" \
+            --packages-url "${{ needs.plan.outputs.public_base_url }}/artifacts/packages/${{ needs.plan.outputs.package_train }}/${{ needs.plan.outputs.arm64_packages }}/aarch64" \
+            --packages-generation "${{ needs.plan.outputs.arm64_packages_generation }}" \
+            --packages-built-against-system "${packages_built_against}" \
+            --freebsd-pin-id "${{ needs.plan.outputs.arm64_freebsd_pin_id }}" \
+            --package-train "${{ needs.plan.outputs.package_train }}" \
+            --abi "${{ needs.plan.outputs.arm64_abi }}" --altabi "${{ needs.plan.outputs.arm64_altabi }}" \
+            --osversion "${{ needs.plan.outputs.arm64_osversion }}" \
+            --published-at "${published_at}" --private-key "$key"
+
+  # The generic arm64 installer only; Release publishes stable.arm64.json.
+  release-arm64:
+    needs: [plan, seal-arm64]
+    if: needs.plan.outputs.has_arm64 == 'true'
+    uses: ./.github/workflows/release.yml
+    with:
+      operation: bundle
+      channel: stable
+      target: arm64
+      system_fingerprint: ${{ needs.plan.outputs.arm64_system }}
+      packages_fingerprint: ${{ needs.plan.outputs.arm64_packages }}
+      pair_generation: ${{ github.run_number }}
+      build_host: ${{ needs.plan.outputs.arm64_build_host }}
+      image_host: ${{ vars.DEVELOPMENT_RELEASE_HOST || 'github-amd64' }}
+    secrets: inherit
+
   queue-development:
-    needs: release
-    if: inputs.queue_development
+    needs: [release, release-arm64]
+    if: >-
+      always() && inputs.queue_development && needs.release.result == 'success' &&
+      (needs.release-arm64.result == 'success' || needs.release-arm64.result == 'skipped')
     runs-on: ubuntu-24.04
     permissions: {actions: write, contents: read}
     steps:

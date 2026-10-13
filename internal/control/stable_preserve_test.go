@@ -164,3 +164,45 @@ func TestDevelopmentPublicationNeverDropsOrRegressesStable(t *testing.T) {
 		t.Fatalf("a newer Stable alongside a newer pair: %v %v", updated, err)
 	}
 }
+
+func TestStableArm64SealsIntoTheAarch64ManifestAndValidates(t *testing.T) {
+	key, _ := rsa.GenerateKey(rand.Reader, 2048)
+	now := time.Date(2026, 10, 14, 12, 0, 0, 0, time.UTC)
+	live, _ := qualifiedFixture(t, key, "arm64", 10)
+	payload, err := ParseSigned(live, &key.PublicKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	systemFingerprint, packagesFingerprint := strings.Repeat("d", 64), strings.Repeat("e", 64)
+	arm64 := func(options *UpdateOptions) {
+		options.Version, options.PackageTrain = "1.1.1", "1.1"
+		options.ABI, options.AltABI = "FreeBSD:16:aarch64", "freebsd:16:aarch64:64"
+		options.Architecture, options.PackageArch, options.DeclareArchitecture = "arm64", "aarch64", true
+		options.FreeBSDPinID = strings.Repeat("f", 64)
+	}
+	system := updateOptions("system", systemFingerprint, "", 6, now)
+	system.URL = "https://pkg.freesense.org/v1/artifacts/system/" + systemFingerprint + "/aarch64"
+	packages := updateOptions("packages", packagesFingerprint, systemFingerprint, 6, now)
+	packages.URL = "https://pkg.freesense.org/v1/artifacts/packages/1.1/" + packagesFingerprint + "/aarch64"
+	arm64(&system)
+	arm64(&packages)
+
+	sealed, err := SealStable(payload, system, packages)
+	if err != nil {
+		t.Fatalf("sealing Stable arm64: %v", err)
+	}
+	stable := sealed.Channels["stable"]
+	if stable.Version != "1.1.1" || stable.Architecture != "arm64" || stable.PackageArch != "aarch64" {
+		t.Fatalf("stable channel = %+v", stable)
+	}
+	if sealed.Channels["devel"].System == nil || sealed.Channels["devel"].Version != "1.1.0" {
+		t.Fatal("sealing Stable disturbed the Development channel")
+	}
+	if err := ValidateDevelopmentPair(sealed, "arm64", "aarch64"); err != nil {
+		t.Fatalf("sealed aarch64 manifest does not validate: %v", err)
+	}
+	// An amd64 manifest never accepts the arm64 Stable pair.
+	if err := ValidateDevelopmentPair(sealed, "amd64", "amd64"); err == nil {
+		t.Fatal("arm64 Stable accepted as an amd64 manifest")
+	}
+}

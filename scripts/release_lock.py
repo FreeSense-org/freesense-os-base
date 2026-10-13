@@ -36,7 +36,19 @@ def load(root: Path, policy: dict, release: str) -> dict:
         raise SystemExit("invalid release input jail_object")
     if not isinstance(lock.get("freebsd_osversion"), int):
         raise SystemExit("release lock has no exact OSVERSION")
+    # arm64 is optional. Its System is built on the same worker (the dedicated
+    # host runs it under qemu-user), so the lock only adds its own jail seed.
+    arm64 = lock.get("arm64")
+    if arm64 is not None and (
+            not isinstance(arm64, dict) or set(arm64) != {"jail_object"}
+            or not re.fullmatch(r"inputs/sha256/[0-9a-f]{64}", arm64.get("jail_object", ""))):
+        raise SystemExit("invalid release input arm64")
     return lock
+
+
+def targets(lock: dict) -> list[str]:
+    """The architectures a sealed release ships, amd64 first."""
+    return ["amd64", "arm64"] if "arm64" in lock else ["amd64"]
 
 
 def sources(lock: dict) -> dict:
@@ -58,18 +70,21 @@ def policy_for(policy: dict, lock: dict) -> dict:
 
 
 def check_pin(lock: dict, pin: dict, *, osversion: int, jail_object: str,
-              worker_image_sha256: str, worker_tools_sha256: str) -> None:
+              worker_image_sha256: str, worker_tools_sha256: str, target: str = "amd64") -> None:
     """A sealed release builds on the active FreeBSD pin, so the two must agree.
 
     The worker farm validates every plan against config/freebsd-16.json; a
     release sealed against a different pin could never be built, and one built
     anyway would not be the release the lock describes.
     """
+    if target not in targets(lock):
+        raise SystemExit(f"release lock does not ship {target}")
+    sealed_jail = lock["jail_object"] if target == "amd64" else lock["arm64"]["jail_object"]
     expected = {
         "FreeBSD source": (lock["freebsd_source_sha"], pin["freebsd_source"]["commit"]),
         "FreeBSD ports": (lock["freebsd_ports_sha"], pin["freebsd_ports"]["commit"]),
         "OSVERSION": (lock["freebsd_osversion"], osversion),
-        "jail seed": (lock["jail_object"], jail_object),
+        "jail seed": (sealed_jail, jail_object),
         "worker image": (lock["worker_image_sha256"], worker_image_sha256),
         "worker tools": (lock["worker_tools_sha256"], worker_tools_sha256),
     }

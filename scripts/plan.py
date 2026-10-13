@@ -407,6 +407,7 @@ def main() -> int:
         release_lock.check_pin(
             sealed, lock, osversion=pinned_osversion, jail_object=jail_seed["object"],
             worker_image_sha256=worker_image["sha256"], worker_tools_sha256=worker_tools_lock_sha256,
+            target=args.target,
         )
     # A sealed release is told apart from a Development build of the same
     # sources by its version, which the rolling identities do not name.
@@ -704,7 +705,7 @@ def main() -> int:
         raise SystemExit(f"image profile {selected_profile['name']} does not support cloud images")
     cloud = cloud_ids.get(selected_filesystem, "")
     appliance_profiles = [
-        profile for profile in release_profiles(policy, args.target)
+        profile for profile in release_profiles(policy, args.target, channel_name)
         if profile.get("kind") == "appliance"
     ]
     appliance_recipe = recipe_digest([ROOT / "scripts/runner/stages/appliance.sh"])

@@ -283,7 +283,10 @@ jobs:
           SELECTED_CHANNEL: ${{ inputs.operation == 'retry-stable-bundle' && 'stable' || (github.event_name != 'workflow_run' && inputs.channel || 'devel') }}
         run: |
           target="${{ github.event_name != 'workflow_run' && inputs.target || needs.release_gate.outputs.target }}"
-          if [[ ("${target}" == arm64 || "${{ inputs.suppress_publication }}" == true) && "${{ github.event_name }}" != workflow_run ]]; then
+          if [[ "${SELECTED_CHANNEL}" == stable && "${{ inputs.suppress_publication }}" == true ]]; then
+            echo "Stable cannot suppress publication" >&2; exit 1
+          fi
+          if [[ "${SELECTED_CHANNEL}" != stable && ("${target}" == arm64 || "${{ inputs.suppress_publication }}" == true) && "${{ github.event_name }}" != workflow_run ]]; then
             [[ "${SELECTED_CHANNEL}" == devel ]] || {
               echo "ARM64 is Development-only until a separate Stable promotion" >&2; exit 1;
             }
@@ -413,7 +416,7 @@ jobs:
 
   appliance-rpi4b:
     needs: iso-plan
-    if: always() && needs.iso-plan.result == 'success' && needs.iso-plan.outputs.target == 'arm64'
+    if: always() && needs.iso-plan.result == 'success' && needs.iso-plan.outputs.target == 'arm64' && needs.iso-plan.outputs.appliance_rpi4b_fingerprint != ''
     uses: ./.github/workflows/runner-build.yml
     with:
       stage: appliance
@@ -470,7 +473,7 @@ jobs:
 
   appliance-rpi5-d0:
     needs: iso-plan
-    if: always() && needs.iso-plan.result == 'success' && needs.iso-plan.outputs.target == 'arm64'
+    if: always() && needs.iso-plan.result == 'success' && needs.iso-plan.outputs.target == 'arm64' && needs.iso-plan.outputs.appliance_rpi5_d0_fingerprint != ''
     uses: ./.github/workflows/runner-build.yml
     with:
       stage: appliance
@@ -632,7 +635,7 @@ jobs:
     if: >-
       always() && needs.iso-plan.result == 'success' && needs.iso.result == 'success' &&
       needs.iso-plan.outputs.publish_enabled == 'true' &&
-      (needs.iso-plan.outputs.target != 'arm64' ||
+      (needs.iso-plan.outputs.appliance_rpi4b_fingerprint == '' ||
        (needs.appliance-rpi4b.result == 'success' && needs.appliance-rpi5-d0.result == 'success' &&
         needs.iso-plan.outputs.publication_ready == 'true')) &&
       (needs.iso-plan.outputs.cloud_enabled != 'true' ||

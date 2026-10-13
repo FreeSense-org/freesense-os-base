@@ -63,13 +63,17 @@ def load_policy(path: Path | None = None) -> dict[str, Any]:
     })
     if set(profile_sets) != set(targets):
         raise SystemExit("build policy release profile sets do not match targets")
-    for target_name, names in profile_sets.items():
-        if (not isinstance(names, list) or not names or len(names) != len(set(names))
-                or any(name not in profiles or profiles[name]["target"] != target_name
-                       for name in names)):
-            raise SystemExit(f"release profile set for {target_name} is invalid")
-        if names[0] != policy["default_image_profiles"].get(target_name):
-            raise SystemExit(f"release profile set for {target_name} must start with its default profile")
+    stable_sets = policy.get("stable_release_profile_sets")
+    if stable_sets is not None and set(stable_sets) != set(targets):
+        raise SystemExit("build policy stable profile sets do not match targets")
+    for label, sets in (("release", profile_sets), ("stable release", stable_sets or {})):
+        for target_name, names in sets.items():
+            if (not isinstance(names, list) or not names or len(names) != len(set(names))
+                    or any(name not in profiles or profiles[name]["target"] != target_name
+                           for name in names)):
+                raise SystemExit(f"{label} profile set for {target_name} is invalid")
+            if names[0] != policy["default_image_profiles"].get(target_name):
+                raise SystemExit(f"{label} profile set for {target_name} must start with its default profile")
     return policy
 
 
@@ -168,10 +172,16 @@ def image_profile(policy: dict[str, Any], name: str | None, target_name: str) ->
     return value
 
 
-def release_profiles(policy: dict[str, Any], target_name: str) -> list[dict[str, Any]]:
-    names = policy.get("release_profile_sets", {}).get(
-        target_name, [policy["default_image_profiles"].get(target_name)]
-    )
+def release_profiles(policy: dict[str, Any], target_name: str, channel: str = "devel") -> list[dict[str, Any]]:
+    """The image profiles one release of a channel ships for a target.
+
+    Stable ships only the profiles in stable_release_profile_sets (no Raspberry
+    Pi appliance images); Development ships the full release_profile_sets.
+    """
+    sets = policy.get("release_profile_sets", {})
+    if channel == "stable" and "stable_release_profile_sets" in policy:
+        sets = policy["stable_release_profile_sets"]
+    names = sets.get(target_name, [policy["default_image_profiles"].get(target_name)])
     return [image_profile(policy, name, target_name) for name in names]
 
 

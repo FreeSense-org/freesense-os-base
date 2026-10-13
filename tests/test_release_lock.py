@@ -81,6 +81,33 @@ class ReleaseLockTests(unittest.TestCase):
             with self.subTest(name), self.assertRaises(SystemExit):
                 self.load(document, release)
 
+    def test_an_arm64_block_adds_the_architecture_and_nothing_else(self):
+        jail = "inputs/sha256/" + "9" * 64
+        lock = self.load(lock_document(arm64={"jail_object": jail}))
+        self.assertEqual(release_lock.targets(lock), ["amd64", "arm64"])
+        self.assertEqual(release_lock.targets(self.load(lock_document())), ["amd64"])
+        for name, arm64 in (("extra key", {"jail_object": jail, "worker_image_sha256": "7" * 64}),
+                            ("bad jail", {"jail_object": "inputs/sha256/short"}),
+                            ("empty", {}), ("not an object", "x")):
+            with self.subTest(name), self.assertRaises(SystemExit):
+                self.load(lock_document(arm64=arm64))
+
+    def test_arm64_is_checked_against_its_own_jail_seed(self):
+        jail = "inputs/sha256/" + "9" * 64
+        lock = lock_document(arm64={"jail_object": jail})
+        pin = {"freebsd_source": {"commit": "4" * 40}, "freebsd_ports": {"commit": "5" * 40}}
+        shared = dict(osversion=1600027, worker_image_sha256="7" * 64, worker_tools_sha256="8" * 64)
+        release_lock.check_pin(lock, pin, jail_object=jail, target="arm64", **shared)
+        release_lock.check_pin(lock, pin, jail_object="inputs/sha256/" + "6" * 64, target="amd64", **shared)
+        with self.assertRaises(SystemExit) as raised:
+            release_lock.check_pin(lock, pin, jail_object="inputs/sha256/" + "6" * 64, target="arm64", **shared)
+        self.assertIn("jail seed", str(raised.exception))
+        with self.assertRaises(SystemExit):
+            release_lock.check_pin(lock, pin, jail_object=jail, target="amd64", **shared)
+        with self.assertRaises(SystemExit) as raised:
+            release_lock.check_pin(lock_document(), pin, jail_object=jail, target="arm64", **shared)
+        self.assertIn("does not ship arm64", str(raised.exception))
+
     def test_the_lock_must_agree_with_the_active_pin(self):
         lock = lock_document()
         pin = {"freebsd_source": {"commit": "4" * 40}, "freebsd_ports": {"commit": "5" * 40}}
@@ -191,23 +218,67 @@ class SealedReleasePlanTests(unittest.TestCase):
                 plan.main()
 
 
+def fake_target(prefix: str, package_arch: str) -> dict:
+    system = {k: "x" for k in ("system", "platform", "freebsd_pin_id", "source_sha", "system_sha", "os_base_sha",
+                               "freebsd_sha", "ports_sha", "image_sha256", "worker_tools_sha256", "jail_object",
+                               "package_train", "product_version", "abi", "altabi", "osversion",
+                               "public_base_url", "build_host")}
+    system["package_arch"] = package_arch
+    return {"system": system, "packages": {"packages": "y", "packages_sha": "z"}}
+
+
+WORKFLOW = ROOT / ".github/workflows/stable.yml"
+
+
 class StableWorkflowContractTests(unittest.TestCase):
+    def produced(self, *architectures: str) -> set[str]:
+        targets = {name: fake_target(name, "aarch64" if name == "arm64" else "amd64") for name in architectures}
+        return set(stable_farm_plan.outputs({"lock": {"release": "1.1.1"}, "targets": targets}))
+
     def test_every_plan_output_the_workflow_reads_is_produced(self):
-        system = {k: "x" for k in ("system", "platform", "freebsd_pin_id", "source_sha", "system_sha", "os_base_sha",
-                                   "freebsd_sha", "ports_sha", "image_sha256", "worker_tools_sha256", "jail_object",
-                                   "package_train", "product_version", "abi", "altabi", "osversion",
-                                   "public_base_url", "build_host")}
-        packages = {"packages": "y", "packages_sha": "z"}
-        produced = set(stable_farm_plan.outputs({"lock": {"release": "1.1.0"}, "system": system, "packages": packages}))
-        workflow = (ROOT / ".github/workflows/stable.yml").read_text(encoding="utf-8")
+        workflow = WORKFLOW.read_text(encoding="utf-8")
         planned = {name for name in re.findall(r"steps\.plan\.outputs\.(\w+)", workflow)}
         self.assertTrue(planned)
-        self.assertEqual(planned - produced, set())
+        self.assertEqual(planned - self.produced("amd64", "arm64"), set())
+
+    def test_an_amd64_only_plan_still_feeds_the_amd64_chain(self):
+        produced = self.produced("amd64")
+        self.assertIn("has_arm64", produced)
+        self.assertFalse({name for name in produced if name.startswith("arm64_")})
+
+    def test_the_two_architectures_are_independent_chains(self):
+        import yaml_lite
+        jobs = yaml_lite.jobs(WORKFLOW.read_text(encoding="utf-8"))
+        amd64 = {"system", "packages", "seal", "release"}
+        arm64 = {"system-arm64", "packages-arm64", "seal-arm64", "release-arm64"}
+        for name in amd64:
+            self.assertFalse(set(jobs[name]) & arm64, f"{name} waits for an arm64 job")
+        for name in arm64:
+            self.assertFalse(set(jobs[name]) & amd64, f"{name} waits for an amd64 job")
+        self.assertEqual(set(jobs["queue-development"]), {"release", "release-arm64"})
 
     def test_stable_never_calls_the_retired_single_job_build(self):
-        workflow = (ROOT / ".github/workflows/stable.yml").read_text(encoding="utf-8")
+        workflow = WORKFLOW.read_text(encoding="utf-8")
         self.assertNotIn("runner-build.yml", workflow)
         self.assertIn("farm_layout", (ROOT / ".github/workflows/component-farm.yml").read_text(encoding="utf-8"))
+
+    def test_arm64_is_sealed_into_its_own_manifest_with_aarch64_urls(self):
+        workflow = WORKFLOW.read_text(encoding="utf-8")
+        arm64 = workflow[workflow.index("seal-arm64:"):workflow.index("release-arm64:")]
+        self.assertIn("--qualified-manifest --architecture arm64 --package-arch aarch64", arm64)
+        self.assertNotIn("/amd64", arm64)
+        self.assertEqual(arm64.count("/aarch64"), 2)
+
+
+class StableProfileTests(unittest.TestCase):
+    def test_stable_ships_no_appliance_images_and_development_keeps_them(self):
+        import build_platform
+        policy = build_platform.load_policy()
+        names = lambda channel, arch: [p["name"] for p in build_platform.release_profiles(policy, arch, channel)]
+        self.assertEqual(names("stable", "amd64"), ["generic-amd64"])
+        self.assertEqual(names("stable", "arm64"), ["generic-arm64-uefi"])
+        self.assertEqual(names("devel", "arm64"), ["generic-arm64-uefi", "arm64-rpi4b", "arm64-rpi5-d0"])
+        self.assertEqual(names("devel", "amd64"), ["generic-amd64"])
 
 
 if __name__ == "__main__":
