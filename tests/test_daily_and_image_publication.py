@@ -41,6 +41,11 @@ class DailyAndImagePublicationTests(unittest.TestCase):
         self.assertIn("inputs.quick || needs.repository_arm64.result == 'success'", verify)
         self.assertIn('--architectures "${architectures[@]}"', verify)
         self.assertIn("architectures=(amd64)", verify)
+        # success() counts verify_repositories' skipped ancestor repository_arm64
+        publish = job(MULTIARCH, "publish_repos_amd64")
+        self.assertIn("!cancelled()", publish)
+        self.assertIn("needs.repository_amd64.result == 'success'", publish)
+        self.assertIn("needs.verify_repositories.result == 'success'", publish)
         # images are skipped outright, whatever the images input says
         self.assertIn("inputs.quick && 'skip'", job(MULTIARCH, "images_due"))
 

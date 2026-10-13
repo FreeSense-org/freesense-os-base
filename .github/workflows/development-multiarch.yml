@@ -348,10 +348,15 @@ jobs:
   # Devices get the verified pair every day, without waiting for images.
   publish_repos_amd64:
     needs: [prepare, repository_amd64, verify_repositories]
+    # !cancelled() because success() also counts verify_repositories' skipped
+    # ancestor repository_arm64 in a quick build, which would skip this job.
     if: >-
+      ${{ !cancelled() &&
+      needs.repository_amd64.result == 'success' &&
+      needs.verify_repositories.result == 'success' &&
       github.ref == 'refs/heads/main' &&
       needs.prepare.outputs.publication_enabled == 'true' &&
-      vars.MULTIARCH_PUBLICATION_ENABLED == 'true'
+      vars.MULTIARCH_PUBLICATION_ENABLED == 'true' }}
     uses: ./.github/workflows/publish-qualified-development.yml
     with: {architecture: amd64, release: false}
     secrets: inherit
