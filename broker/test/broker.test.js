@@ -834,6 +834,63 @@ describe("stable patch workflow identity", () => {
   });
 });
 
+describe("stable release through its reusable workflows", () => {
+  const stable = (role, jobWorkflow, overrides = {}) => claimsFor(role, {
+    workflow_ref: protocol.workflows.stable,
+    job_workflow_ref: jobWorkflow,
+    event_name: "workflow_dispatch",
+    ...overrides,
+  });
+
+  it("lets the component farm and Release reserve generations for a Stable dispatch", async () => {
+    for (const workflow of [protocol.workflows.componentFarm, protocol.workflows.release]) {
+      assert.equal((await request("coordinator", stable("coordinator", workflow))).status, 200);
+    }
+  });
+
+  it("lets Release publish the Stable images and release documents", async () => {
+    for (const role of ["channel-writer", "download-writer"]) {
+      assert.equal((await request(role, stable(role, protocol.workflows.release))).status, 200);
+    }
+  });
+
+  it("gives the component farm no channel or download access", async () => {
+    for (const role of ["channel-writer", "download-writer"]) {
+      assert.equal((await request(role, stable(role, protocol.workflows.componentFarm))).status, 403);
+    }
+  });
+
+  it("reaches nothing else through a Stable dispatch", async () => {
+    for (const workflow of [protocol.workflows.system, protocol.workflows.packages, protocol.workflows.runnerBuild]) {
+      assert.equal((await request("coordinator", stable("coordinator", workflow))).status, 403);
+      assert.equal((await request("channel-writer", stable("channel-writer", workflow))).status, 403);
+      assert.equal((await request("download-writer", stable("download-writer", workflow))).status, 403);
+    }
+    assert.equal((await request("mirror-writer", stable("mirror-writer", protocol.workflows.release))).status, 403);
+    assert.equal((await request("pin-writer", stable("pin-writer", protocol.workflows.release))).status, 403);
+  });
+
+  it("requires a manual dispatch of the exact workflow revision", async () => {
+    for (const role of ["coordinator", "channel-writer", "download-writer"]) {
+      const claims = stable(role, protocol.workflows.release);
+      for (const event_name of ["schedule", "workflow_run", "pull_request", "push"]) {
+        assert.equal((await request(role, { ...claims, event_name })).status, 403, `${role} ${event_name}`);
+      }
+      assert.equal((await request(role, { ...claims, job_workflow_sha: "c".repeat(40) })).status, 403);
+      assert.equal((await request(role, { ...claims, ref: "refs/heads/other" })).status, 403);
+    }
+  });
+
+  it("does not extend Stable's nested access to the Development orchestrator", async () => {
+    for (const role of ["channel-writer", "download-writer"]) {
+      assert.equal((await request(role, claimsFor(role, {
+        workflow_ref: protocol.workflows.multiarch, job_workflow_ref: protocol.workflows.release,
+        event_name: "workflow_dispatch",
+      }))).status, 403);
+    }
+  });
+});
+
 describe("identity boundaries", () => {
   const rejected = [
     ["wrong repository id", { repository_id: "9" }],

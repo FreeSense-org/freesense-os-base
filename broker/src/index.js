@@ -597,6 +597,20 @@ function arm64ReusableWorkflow(claims, workflows) {
   );
 }
 
+// A manually dispatched Stable release on protected main may use the reusable
+// workflows it is built from (the component farm, and Release for images and
+// publication). Nothing else is reachable through it, and a Development
+// orchestrator gets none of this.
+function stableReusableWorkflow(claims, workflows) {
+  return (
+    claims.workflow_ref === STABLE_WORKFLOW &&
+    claims.event_name === "workflow_dispatch" &&
+    workflows.includes(claims.job_workflow_ref) &&
+    SHA_PATTERN.test(claims.job_workflow_sha ?? "") &&
+    claims.job_workflow_sha === claims.workflow_sha
+  );
+}
+
 function coordinatorWorkflow(claims) {
   return (
     (claims.workflow_ref === MULTIARCH_WORKFLOW &&
@@ -607,7 +621,8 @@ function coordinatorWorkflow(claims) {
     entryWorkflow(claims) ||
     directWorkflow(claims, RELEASE_WORKFLOW, ["workflow_run"]) ||
     qualifiedArchitectureWorkflow(claims) ||
-    arm64ReusableWorkflow(claims, [SYSTEM_WORKFLOW, PACKAGES_WORKFLOW, RELEASE_WORKFLOW])
+    arm64ReusableWorkflow(claims, [SYSTEM_WORKFLOW, PACKAGES_WORKFLOW, RELEASE_WORKFLOW]) ||
+    stableReusableWorkflow(claims, [COMPONENT_FARM_WORKFLOW, RELEASE_WORKFLOW])
   );
 }
 
@@ -627,7 +642,8 @@ function channelWorkflow(claims) {
     directWorkflow(claims, RELEASE_WORKFLOW, ["workflow_run"]) ||
     directWorkflow(claims, MULTIARCH_PUBLISH_WORKFLOW, ["workflow_run"]) ||
     qualifiedArchitectureWorkflow(claims) ||
-    arm64ReusableWorkflow(claims, [SYSTEM_WORKFLOW, PACKAGES_WORKFLOW, RELEASE_WORKFLOW])
+    arm64ReusableWorkflow(claims, [SYSTEM_WORKFLOW, PACKAGES_WORKFLOW, RELEASE_WORKFLOW]) ||
+    stableReusableWorkflow(claims, [RELEASE_WORKFLOW])
   );
 }
 
@@ -640,7 +656,8 @@ function downloadWorkflow(claims) {
     directWorkflow(claims, STABLE_WORKFLOW, ["workflow_dispatch"]) ||
     directWorkflow(claims, MULTIARCH_PUBLISH_WORKFLOW, ["workflow_run"]) ||
     qualifiedArchitectureWorkflow(claims) ||
-    arm64ReusableWorkflow(claims, [RELEASE_WORKFLOW])
+    arm64ReusableWorkflow(claims, [RELEASE_WORKFLOW]) ||
+    stableReusableWorkflow(claims, [RELEASE_WORKFLOW])
   );
 }
 
