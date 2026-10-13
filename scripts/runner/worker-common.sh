@@ -1392,13 +1392,18 @@ prepare_merged_binary_seed() {
 # A previous repository that cannot be used (a different pin, or no recorded
 # provenance) must never fail the build: it is only a shortcut. Say so and
 # build without it.
-load_previous_freesense_seed_if_usable() {
+load_previous_freesense_seed_if_usable() (
   load_previous_freesense_seed || {
     echo "previous FreeSense repository unusable as a seed; building without it" >&2
     rm -rf /root/previous-freesense-seed
   }
-}
+)
 
+# Both seed functions run in a subshell. merge_package assigns package,
+# destination, inventory and duplicate_policy as globals, and the stage
+# scripts keep their own inventory in one of them: running these in the caller's
+# shell once repointed it, so the Optional seed silently lost the mirror's
+# packages (including pkg) and Poudriere refused to start.
 # Add the previous FreeSense repository's unchanged packages (see
 # load_previous_freesense_seed) to a seed under construction. Poudriere then
 # rebuilds only what actually changed, and what depends on it, instead of
@@ -1410,7 +1415,7 @@ load_previous_freesense_seed_if_usable() {
 #   $1  repository directory being composed (packages go in $1/All)
 #   $2  its package inventory, as merge_package keeps it
 #   $3  further repository whose package names take precedence (optional)
-merge_previous_seed() {
+merge_previous_seed() (
   seed_destination=$1 seed_inventory_file=$2 authoritative=${3:-}
   jq -r '(.packages[].name), (.delta_packages[])' /root/mirror-plan.json | tr -d '\r' \
     | LC_ALL=C sort -u >/tmp/previous-seed-sanctioned
@@ -1442,12 +1447,12 @@ merge_previous_seed() {
     reused=$((reused + 1))
   done
   echo "FreeSense seed: ${reused} unchanged package(s) reused from the previous repository ${PREVIOUS_FREESENSE_REPOSITORY:-none}"
-}
+)
 
 # The frozen mirror plus the previous FreeSense repository's unchanged packages.
 #   $1  repository to compose into (default /root/mirror-previous-seed)
 #   $2  further repository whose package names take precedence (optional)
-prepare_mirror_seed() {
+prepare_mirror_seed() (
   mirror_seed=${1:-/root/mirror-previous-seed}
   load_previous_freesense_seed_if_usable
   rm -rf "${mirror_seed}"
@@ -1459,7 +1464,7 @@ prepare_mirror_seed() {
     merge_package "${mirror_package}" "${mirror_seed}/All" "${mirror_seed_inventory}" identical
   done
   merge_previous_seed "${mirror_seed}" "${mirror_seed_inventory}" "${2:-}"
-}
+)
 
 # The seed is a pin-time product. Runtime has no upstream repository URL and
 # Poudriere remains responsible for rebuilding incompatible or missing bytes.

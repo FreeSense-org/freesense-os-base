@@ -20,8 +20,11 @@ def shell() -> str | None:
 
 
 def function(text: str, name: str) -> str:
-    start = text.index(f"{name}() {{")
-    return text[start:text.index("\n}\n", start) + 3]
+    start = text.index(f"{name}() ")
+    # a function body closes with a lone brace, or a lone parenthesis when it
+    # runs in a subshell
+    end = min(index for index in (text.find("\n}\n", start), text.find("\n)\n", start)) if index != -1)
+    return text[start:end + 3]
 
 
 class MirrorPreviousSeedTests(unittest.TestCase):
@@ -61,7 +64,9 @@ sha256() {{ sha256sum "$2" | cut -d ' ' -f 1; }}
 pkg() {{ head -n 1 "$3" | cut -d '|' -f 1; }}
 load_previous_freesense_seed_if_usable() {{ :; }}
 {body}
+inventory=caller-inventory destination=caller-destination package=caller-package duplicate_policy=caller-policy
 prepare_mirror_seed {root.as_posix()}/root/seed {root.as_posix()}/root/system
+echo "caller:$inventory:$destination:$package:$duplicate_policy"
 """
             result = subprocess.run([shell(), "-c", script], cwd=root, capture_output=True, text=True)
             seeded = {file.name for file in (root / "root/seed/All").iterdir()} if (root / "root/seed/All").exists() else set()
@@ -72,6 +77,9 @@ prepare_mirror_seed {root.as_posix()}/root/seed {root.as_posix()}/root/system
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(seeded, {"mirrored-1.0.pkg", "overlap-1.0.pkg", "unchanged-1.0.pkg"})
         self.assertIn("1 unchanged package(s) reused", result.stdout)
+        # merge_package assigns these globals; the stage scripts keep their own
+        # inventory in one, so seeding must not leak into the caller's shell
+        self.assertIn("caller:caller-inventory:caller-destination:caller-package:caller-policy", result.stdout)
         self.assertIn("Previous package no longer in the sealed plan, not reused: retired", result.stdout)
         self.assertIn("Seed already supplies overlap; previous copy not reused", result.stdout)
         self.assertIn("Package supplied elsewhere, previous copy not reused: from-system", result.stdout)
