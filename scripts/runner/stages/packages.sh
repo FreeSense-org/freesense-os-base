@@ -82,7 +82,11 @@ rm -f "${inventory}.rebuild"
 # seed otherwise. System's packages win any overlap, which is what
 # `identical` enforces.
 if [ -n "${MIRROR_PLAN_OBJECT}" ]; then
-  lower=/root/mirror-repo
+  # The mirror plus the previous Optional repository's unchanged packages, so a
+  # change to one port rebuilds that port and its dependents, not every port.
+  # System's own packages take precedence over a previous Optional copy.
+  prepare_mirror_seed /root/mirror-previous-seed /root/system-repo
+  lower=/root/mirror-previous-seed
 else
   prepare_merged_binary_seed
   lower=/root/merged-binary-seed

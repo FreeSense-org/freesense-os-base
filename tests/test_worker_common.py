@@ -298,7 +298,7 @@ class WorkerVersionValidationTests(unittest.TestCase):
         prepare = system[system.index("prepare_system_ports() {"):]
         prepare = prepare[:prepare.index(chr(10) + "}" + chr(10))]
         for guarded in ("fetch_delta_mirror", "write_delta_bulk system",
-                        "seed_poudriere_repository /root/mirror-repo"):
+                        "prepare_mirror_seed", "seed_poudriere_repository /root/mirror-previous-seed"):
             with self.subTest(guarded=guarded):
                 self.assertIn(guarded, prepare)
         # the legacy root list and the legacy seed both survive
@@ -379,7 +379,10 @@ class WorkerVersionValidationTests(unittest.TestCase):
             with self.subTest(stage=stage):
                 self.assertIn("fetch_delta_mirror", text)
                 self.assertIn(f"write_delta_bulk {component}", text)
-                self.assertIn("/root/mirror-repo", text)
+                # the mirror is the lower layer, with the previous FreeSense
+                # repository's unchanged packages on top of it
+                self.assertIn("prepare_mirror_seed", text)
+                self.assertIn("/root/mirror-previous-seed", text)
                 # and the escape check runs wherever the stage builds
                 self.assertIn("verify_delta_build", text)
         packages = (stages / "packages.sh").read_text(encoding="utf-8")

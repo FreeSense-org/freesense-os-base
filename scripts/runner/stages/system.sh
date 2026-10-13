@@ -184,7 +184,8 @@ prepare_system_ports() {
     # has no shard output, so it seeds the mirror here.
     if [ "${roots_mode}" != full ] || [ "${SYSTEM_PART}" = full ]; then
       phase system-mirror-seed
-      seed_poudriere_repository /root/mirror-repo
+      prepare_mirror_seed
+      seed_poudriere_repository /root/mirror-previous-seed
       phase system-mirror-seed-ready
     fi
   elif [ -n "${BINARY_SEED_OBJECT}" ]; then
