@@ -31,7 +31,8 @@ class MirrorPreviousSeedTests(unittest.TestCase):
 
     def compose(self, system_names=()):
         common = (ROOT / "scripts/runner/worker-common.sh").read_text(encoding="utf-8")
-        body = function(common, "merge_package") + function(common, "prepare_mirror_seed")
+        body = (function(common, "merge_package") + function(common, "merge_previous_seed")
+                + function(common, "prepare_mirror_seed"))
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             # Keep the function bodies verbatim; only the absolute roots move.
@@ -58,7 +59,7 @@ class MirrorPreviousSeedTests(unittest.TestCase):
 package_metadata() {{ head -n 1 "$1"; }}
 sha256() {{ sha256sum "$2" | cut -d ' ' -f 1; }}
 pkg() {{ head -n 1 "$3" | cut -d '|' -f 1; }}
-load_previous_freesense_seed() {{ :; }}
+load_previous_freesense_seed_if_usable() {{ :; }}
 {body}
 prepare_mirror_seed {root.as_posix()}/root/seed {root.as_posix()}/root/system
 """
@@ -72,7 +73,7 @@ prepare_mirror_seed {root.as_posix()}/root/seed {root.as_posix()}/root/system
         self.assertEqual(seeded, {"mirrored-1.0.pkg", "overlap-1.0.pkg", "unchanged-1.0.pkg"})
         self.assertIn("1 unchanged package(s) reused", result.stdout)
         self.assertIn("Previous package no longer in the sealed plan, not reused: retired", result.stdout)
-        self.assertIn("Mirror supplies overlap; previous copy not reused", result.stdout)
+        self.assertIn("Seed already supplies overlap; previous copy not reused", result.stdout)
         self.assertIn("Package supplied elsewhere, previous copy not reused: from-system", result.stdout)
 
     def test_without_an_authoritative_repository_the_plan_still_filters(self) -> None:
@@ -101,8 +102,18 @@ class WiringTests(unittest.TestCase):
     def test_an_unusable_previous_repository_falls_back_to_a_full_build(self) -> None:
         common = self.read("scripts/runner/worker-common.sh")
         prepare = function(common, "prepare_mirror_seed")
-        self.assertIn("load_previous_freesense_seed || {", prepare)
-        self.assertIn("building without it", prepare)
+        self.assertIn("load_previous_freesense_seed_if_usable", prepare)
+        usable = function(common, "load_previous_freesense_seed_if_usable")
+        self.assertIn("load_previous_freesense_seed || {", usable)
+        self.assertIn("building without it", usable)
+
+    def test_the_finalize_build_fills_the_gaps_from_the_previous_repository(self) -> None:
+        system = self.read("scripts/runner/stages/system.sh")
+        finalize = system[system.index("  finalize)"):system.index("  full)")]
+        merged = finalize.index("phase system-mirror-merged")
+        self.assertLess(merged, finalize.index("load_previous_freesense_seed_if_usable"))
+        self.assertLess(finalize.index("merge_previous_seed"), finalize.index("seed_poudriere_repository"))
+        self.assertIn('merge_previous_seed "${shard_seed}" "${shard_inventory}"', finalize)
 
 
 if __name__ == "__main__":

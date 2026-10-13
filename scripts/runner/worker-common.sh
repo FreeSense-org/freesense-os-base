@@ -1389,21 +1389,67 @@ prepare_merged_binary_seed() {
   done
 }
 
-# The frozen mirror plus the previous FreeSense repository's packages whose
-# port, patches, options, dependencies and build configuration are unchanged.
-# Poudriere then rebuilds only what actually changed (and what depends on it)
-# instead of compiling every source-built port again whenever the stage's
-# fingerprint moves. Anything the mirror, or the optional second argument's
-# repository, already supplies wins, and a previous package the sealed plan no
-# longer sanctions is left out, so neither can turn into a verification error.
-#   $1  repository to compose into (default /root/mirror-previous-seed)
-#   $2  further repository whose package names take precedence (optional)
-prepare_mirror_seed() {
-  mirror_seed=${1:-/root/mirror-previous-seed} authoritative=${2:-}
+# A previous repository that cannot be used (a different pin, or no recorded
+# provenance) must never fail the build: it is only a shortcut. Say so and
+# build without it.
+load_previous_freesense_seed_if_usable() {
   load_previous_freesense_seed || {
     echo "previous FreeSense repository unusable as a seed; building without it" >&2
     rm -rf /root/previous-freesense-seed
   }
+}
+
+# Add the previous FreeSense repository's unchanged packages (see
+# load_previous_freesense_seed) to a seed under construction. Poudriere then
+# rebuilds only what actually changed, and what depends on it, instead of
+# compiling every source-built port again whenever a stage's fingerprint moves.
+# Whatever the seed already holds, or the optional repository named by the
+# third argument supplies, wins, and a previous package the sealed plan no
+# longer sanctions is left out, so none of them can turn into a verification
+# error.
+#   $1  repository directory being composed (packages go in $1/All)
+#   $2  its package inventory, as merge_package keeps it
+#   $3  further repository whose package names take precedence (optional)
+merge_previous_seed() {
+  seed_destination=$1 seed_inventory_file=$2 authoritative=${3:-}
+  jq -r '(.packages[].name), (.delta_packages[])' /root/mirror-plan.json | tr -d '\r' \
+    | LC_ALL=C sort -u >/tmp/previous-seed-sanctioned
+  : >/tmp/previous-seed-authoritative
+  if [ -n "${authoritative}" ]; then
+    for authoritative_package in "${authoritative}"/All/*.pkg; do
+      [ -f "${authoritative_package}" ] || continue
+      pkg query -F "${authoritative_package}" '%n'
+    done | LC_ALL=C sort -u >/tmp/previous-seed-authoritative
+  fi
+  reused=0
+  for previous_package in /root/previous-freesense-seed/All/*.pkg; do
+    [ -f "${previous_package}" ] || continue
+    previous_name=$(pkg query -F "${previous_package}" '%n')
+    grep -Fqx -- "${previous_name}" /tmp/previous-seed-sanctioned || {
+      echo "Previous package no longer in the sealed plan, not reused: ${previous_name}"
+      continue
+    }
+    grep -Fqx -- "${previous_name}" /tmp/previous-seed-authoritative && {
+      echo "Package supplied elsewhere, previous copy not reused: ${previous_name}"
+      continue
+    }
+    if awk -F '|' -v name="${previous_name}" '$1 == name { found=1 } END { exit !found }' \
+        "${seed_inventory_file}"; then
+      echo "Seed already supplies ${previous_name}; previous copy not reused"
+      continue
+    fi
+    merge_package "${previous_package}" "${seed_destination}/All" "${seed_inventory_file}" identical
+    reused=$((reused + 1))
+  done
+  echo "FreeSense seed: ${reused} unchanged package(s) reused from the previous repository ${PREVIOUS_FREESENSE_REPOSITORY:-none}"
+}
+
+# The frozen mirror plus the previous FreeSense repository's unchanged packages.
+#   $1  repository to compose into (default /root/mirror-previous-seed)
+#   $2  further repository whose package names take precedence (optional)
+prepare_mirror_seed() {
+  mirror_seed=${1:-/root/mirror-previous-seed}
+  load_previous_freesense_seed_if_usable
   rm -rf "${mirror_seed}"
   mkdir -p "${mirror_seed}/All"
   mirror_seed_inventory=/tmp/mirror-previous-seed-inventory
@@ -1412,36 +1458,7 @@ prepare_mirror_seed() {
     [ -f "${mirror_package}" ] || continue
     merge_package "${mirror_package}" "${mirror_seed}/All" "${mirror_seed_inventory}" identical
   done
-  jq -r '(.packages[].name), (.delta_packages[])' /root/mirror-plan.json | tr -d '\r' \
-    | LC_ALL=C sort -u >/tmp/mirror-previous-seed-sanctioned
-  if [ -n "${authoritative}" ]; then
-    for authoritative_package in "${authoritative}"/All/*.pkg; do
-      [ -f "${authoritative_package}" ] || continue
-      pkg query -F "${authoritative_package}" '%n'
-    done | LC_ALL=C sort -u >/tmp/mirror-previous-seed-authoritative
-  else
-    : >/tmp/mirror-previous-seed-authoritative
-  fi
-  reused=0
-  for previous_package in /root/previous-freesense-seed/All/*.pkg; do
-    [ -f "${previous_package}" ] || continue
-    previous_name=$(pkg query -F "${previous_package}" '%n')
-    grep -Fqx -- "${previous_name}" /tmp/mirror-previous-seed-sanctioned || {
-      echo "Previous package no longer in the sealed plan, not reused: ${previous_name}"
-      continue
-    }
-    grep -Fqx -- "${previous_name}" /tmp/mirror-previous-seed-authoritative && {
-      echo "Package supplied elsewhere, previous copy not reused: ${previous_name}"
-      continue
-    }
-    if awk -F '|' -v name="${previous_name}" '$1 == name { found=1 } END { exit !found }'         "${mirror_seed_inventory}"; then
-      echo "Mirror supplies ${previous_name}; previous copy not reused"
-      continue
-    fi
-    merge_package "${previous_package}" "${mirror_seed}/All" "${mirror_seed_inventory}" identical
-    reused=$((reused + 1))
-  done
-  echo "FreeSense seed: ${reused} unchanged package(s) reused from the previous repository ${PREVIOUS_FREESENSE_REPOSITORY:-none}"
+  merge_previous_seed "${mirror_seed}" "${mirror_seed_inventory}" "${2:-}"
 }
 
 # The seed is a pin-time product. Runtime has no upstream repository URL and

@@ -315,6 +315,11 @@ case "${SYSTEM_PART}" in
           "${seed_duplicate_policy}"
       done
       phase system-mirror-merged
+      # What neither the shards nor the mirror supplied: the previous
+      # repository's unchanged packages, so the final build compiles only what
+      # actually changed.
+      load_previous_freesense_seed_if_usable
+      merge_previous_seed "${shard_seed}" "${shard_inventory}"
     fi
     phase system-shard-seed
     seed_poudriere_repository "${shard_seed}"
