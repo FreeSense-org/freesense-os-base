@@ -388,7 +388,8 @@ class PublishDownloadTests(unittest.TestCase):
         notes = publish.build_release_notes(
             existing,
             {
-                "source": SHA, "system_ports": SHA, "packages": "2" * 40,
+                "source": SHA, "system_ports": SHA,
+                "packages": existing["provenance"]["packages"],
                 "ports": SHA, "os_definition": SHA, "freebsd": SHA,
                 "fingerprint": BUNDLE_FINGERPRINT,
             },
@@ -457,6 +458,35 @@ class PublishDownloadTests(unittest.TestCase):
         )
         self.assertEqual(inventory["openssl"]["version"], "3.5.2")
         self.assertEqual(inventory["pkg"]["origin"], "ports-mgmt/pkg")
+
+    def test_optional_packages_commits_and_lock_notes_are_listed(self):
+        existing = release(fingerprint="e" * 64)
+        existing["provenance"]["packages"] = "1" * 40
+        notes = [{"type": "ui", "title": "Channel label", "scope": "Release"}]
+        with mock.patch.object(
+            publish, "github_compare",
+            return_value=[{"type": "fix", "title": "Threat Shield: fix settings save"}],
+        ) as compare:
+            changes = publish.build_changes(existing, {
+                **existing["provenance"], "packages": SHA, "fingerprint": BUNDLE_FINGERPRINT,
+            }, notes)
+        compare.assert_called_once_with("FreeSense-org/freesense-packages", "1" * 40, SHA)
+        self.assertEqual(changes, [
+            {"type": "ui", "title": "Channel label", "scope": "Release"},
+            {"type": "fix", "title": "Threat Shield: fix settings save", "scope": "Optional packages"},
+        ])
+        self.assertTrue(publish.valid_changes(changes))
+
+    def test_lock_notes_come_only_from_a_stable_lock(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "config/releases").mkdir(parents=True)
+            (root / "config/releases/1.1.3.json").write_text(json.dumps(
+                {"notes": [{"type": "build", "title": "arm64 joins Stable"}]}), encoding="utf-8")
+            self.assertEqual(publish.lock_notes("stable", "1.1.3", root),
+                             [{"type": "build", "title": "arm64 joins Stable", "scope": "Release"}])
+            self.assertEqual(publish.lock_notes("devel", "1.1.3", root), [])
+            self.assertEqual(publish.lock_notes("stable", "1.1.4", root), [])
 
     def test_build_classified_product_commits_are_filtered(self):
         existing = release("devel", generation=7, fingerprint="e" * 64)

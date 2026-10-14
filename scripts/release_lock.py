@@ -11,6 +11,7 @@ SCHEMA = "freesense.release-lock/v1"
 SHA = re.compile(r"^[0-9a-f]{40}$")
 SHA256 = re.compile(r"^[0-9a-f]{64}$")
 RELEASE = re.compile(r"^([0-9]+)\.([0-9]+)\.([0-9]+)$")
+NOTE_TYPES = {"security", "fix", "feature", "ui", "package", "documentation", "build", "other"}
 
 
 def load(root: Path, policy: dict, release: str) -> dict:
@@ -43,6 +44,17 @@ def load(root: Path, policy: dict, release: str) -> dict:
             not isinstance(arm64, dict) or set(arm64) != {"jail_object"}
             or not re.fullmatch(r"inputs/sha256/[0-9a-f]{64}", arm64.get("jail_object", ""))):
         raise SystemExit("invalid release input arm64")
+    # Optional hand-written release notes for changes no product repository
+    # records (build or publication work in os-base). The publisher lists them
+    # first in the release's change list, under the scope "Release".
+    notes = lock.get("notes", [])
+    if (not isinstance(notes, list) or len(notes) > 10
+            or any(not isinstance(note, dict) or set(note) != {"type", "title"}
+                   or note["type"] not in NOTE_TYPES
+                   or not isinstance(note["title"], str)
+                   or not 0 < len(note["title"]) <= 180
+                   for note in notes)):
+        raise SystemExit("invalid release notes: up to 10 {type, title} entries")
     return lock
 
 

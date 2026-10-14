@@ -62,6 +62,15 @@ class ReleaseLockTests(unittest.TestCase):
         policy = release_lock.policy_for({"package_train": "1.2", "release": {"development_version": "1.2.0"}}, lock)
         self.assertEqual((policy["package_train"], policy["release"]["development_version"]), ("1.1", "1.1.0"))
 
+    def test_hand_written_notes_are_optional_and_checked(self):
+        notes = [{"type": "ui", "title": "The update channel is labelled by its release line"}]
+        self.assertEqual(self.load(lock_document(notes=notes))["notes"], notes)
+        for bad in ([{"type": "ui"}], [{"type": "nonsense", "title": "x"}],
+                    [{"type": "fix", "title": ""}], [{"type": "fix", "title": "x", "scope": "y"}],
+                    "text", [{"type": "fix", "title": "x"}] * 11):
+            with self.subTest(notes=bad), self.assertRaisesRegex(SystemExit, "invalid release notes"):
+                self.load(lock_document(notes=bad))
+
     def test_policy_override_does_not_mutate_the_rolling_policy(self):
         rolling = {"package_train": "1.2", "release": {"development_version": "1.2.0"}}
         release_lock.policy_for(rolling, lock_document())

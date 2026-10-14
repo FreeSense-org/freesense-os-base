@@ -38,7 +38,9 @@ CHANGE_TYPES = {
 CHANGE_REPOSITORIES = (
     ("source", "FreeSense-org/freesense", "System"),
     ("system_ports", "FreeSense-org/freesense-system-ports", "System packages"),
+    ("packages", "FreeSense-org/freesense-packages", "Optional packages"),
 )
+RELEASE_NOTES_SCOPE = "Release"
 
 
 def version_tuple(value: str) -> tuple[int, int, int]:
@@ -133,17 +135,35 @@ def github_compare(repository: str, before: str, after: str) -> list[dict[str, s
     return changes
 
 
-def build_changes(existing: dict | None, provenance: dict[str, str]) -> list[dict[str, str]]:
-    if existing is None:
+def lock_notes(channel: str, version: str, root: Path | None = None) -> list[dict[str, str]]:
+    """Hand-written notes a sealed Stable lock carries for changes no product
+    repository records (build, publication or platform work in os-base)."""
+    if channel != "stable":
         return []
+    root = root or Path(__file__).resolve().parents[1]
+    path = root / "config/releases" / f"{version}.json"
+    if not path.is_file():
+        return []
+    notes = json.loads(path.read_text(encoding="utf-8")).get("notes", [])
+    if not isinstance(notes, list):
+        raise SystemExit("release lock notes must be a list")
+    return [{"type": note["type"], "title": note["title"], "scope": RELEASE_NOTES_SCOPE}
+            for note in notes]
+
+
+def build_changes(existing: dict | None, provenance: dict[str, str],
+                  notes: list[dict[str, str]] | None = None) -> list[dict[str, str]]:
+    notes = list(notes or [])
+    if existing is None:
+        return notes[:50]
     if (existing.get("fingerprint") == provenance.get("fingerprint")
             and isinstance(existing.get("changes"), list)):
         return existing["changes"]
     previous = existing.get("provenance", {})
     if not isinstance(previous, dict):
-        return []
-    changes = []
-    seen = set()
+        return notes[:50]
+    changes = notes
+    seen = {(note["title"], note["scope"]) for note in notes}
     for field, repository, scope in CHANGE_REPOSITORIES:
         before = previous.get(field, "")
         after = provenance.get(field, "")
@@ -241,7 +261,8 @@ def package_changes(existing: dict | None, system: str, base_url: str, package_a
 
 def build_release_notes(existing: dict | None, provenance: dict[str, str],
                         system: str, base_url: str,
-                        package_arch: str = "amd64") -> dict:
+                        package_arch: str = "amd64",
+                        notes: list[dict[str, str]] | None = None) -> dict:
     if (existing is not None
             and existing.get("bundle_fingerprint") == provenance.get("fingerprint")
             and valid_release_notes(existing.get("release_notes"))):
@@ -252,7 +273,7 @@ def build_release_notes(existing: dict | None, provenance: dict[str, str],
     return {
         "schema_version": RELEASE_NOTES_SCHEMA,
         "baseline_release_id": existing.get("release_id") if isinstance(existing, dict) else None,
-        "freesense": build_changes(existing, provenance),
+        "freesense": build_changes(existing, provenance, notes),
         "platform": {
             "freebsd": {
                 "changed": from_freebsd is not None and from_freebsd != provenance["freebsd"],
@@ -678,7 +699,7 @@ def main() -> int:
     }
     release_notes = build_release_notes(
         existing, provenance, args.system, args.base_url,
-        selected_target["package_arch"],
+        selected_target["package_arch"], lock_notes(args.channel, args.version),
     )
     release = {
         "schema_version": DOWNLOAD_SCHEMA,

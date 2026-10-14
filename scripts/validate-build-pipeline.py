@@ -220,10 +220,12 @@ for value in ("github_compare", "build_release_notes", '"release_notes": release
               "system_package_inventory"):
     require(value in release_publisher,
             f"canonical release changelog generation is missing {value!r}")
-for value in ('("packages", "FreeSense-org/freesense-packages"',
-              '("os_definition", "FreeSense-org/freesense-os-base"'):
-    require(value not in release_publisher,
-            f"appliance release notes still include internal repository {value!r}")
+# Optional Packages are part of what a release delivers and are listed; build
+# and publication work in os-base is described by hand in the release lock.
+require('("packages", "FreeSense-org/freesense-packages", "Optional packages")' in release_publisher,
+        "release notes do not list Optional Packages changes")
+require('("os_definition", "FreeSense-org/freesense-os-base"' not in release_publisher,
+        "appliance release notes still include the internal os-base repository")
 require("s3://${R2_BUCKET}/v1/releases.json" not in release_workflow + stable_workflow,
         "release workflows still overwrite the combined legacy download index")
 broker_source = read("broker/src/index.js")
