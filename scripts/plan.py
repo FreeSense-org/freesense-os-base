@@ -212,7 +212,7 @@ def validate_target_bootstrap(
         raise SystemExit("FreeBSD target inputs are outside the bounded bootstrap window")
 
 
-def current_component_record(manifest_url: str, component: str) -> dict:
+def current_component_record(manifest_url: str, component: str, channel: str = "devel") -> dict:
     try:
         request = urllib.request.Request(
             manifest_url,
@@ -249,7 +249,7 @@ def current_component_record(manifest_url: str, component: str) -> dict:
             "freesense.channels/v1", "freesense.channels/v2", "freesense.channels/v3"
         }:
             raise ValueError("unsupported signed channel payload")
-        selected = payload.get("channels", {}).get("devel", {}).get(component)
+        selected = payload.get("channels", {}).get(channel, {}).get(component)
         if selected is None:
             return {}
         if not isinstance(selected, dict):

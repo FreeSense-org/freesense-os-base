@@ -43,20 +43,32 @@ def run_plan(kind: str, release: str, os_base_sha: str, build_host: str, archite
     return json.loads(subprocess.check_output(command, text=True))
 
 
+# Seed from the last Stable build first: it shares the pin and is the newest
+# repository of the line. Development only qualifies when it was built on the
+# same pin (its host can differ, and with it the pin id), and it lags behind.
+SEED_CHANNELS = ("stable", "devel")
+
+
+def stable_seed(manifest: str, component: str, planned: dict) -> str:
+    for channel in SEED_CHANNELS:
+        seed = previous_seed(current_component_record(manifest, component, channel), planned)
+        if seed:
+            return seed
+    return ""
+
+
 def resolve_target(policy: dict, release: str, os_base_sha: str, build_host: str, architecture: str) -> dict:
     manifest = policy["public_base_url"] + "/" + manifest_name(target(policy, architecture), legacy=False)
     system = run_plan("system", release, os_base_sha, build_host, architecture)
     # A System or Optional build seeds its unchanged packages from the
-    # published repository of the same FreeBSD pin, as Development does.
-    system["previous_freesense_repository"] = previous_seed(
-        current_component_record(manifest, "system"), system)
+    # published repository of the same FreeBSD pin.
+    system["previous_freesense_repository"] = stable_seed(manifest, "system", system)
     with tempfile.TemporaryDirectory() as directory:
         closure = Path(directory, "system.json")
         closure.write_text(json.dumps(planning_closure(system)), encoding="utf-8")
         packages = run_plan("packages", release, os_base_sha, build_host, architecture,
                             "--system-closure", str(closure))
-    packages["previous_freesense_repository"] = previous_seed(
-        current_component_record(manifest, "packages"), packages)
+    packages["previous_freesense_repository"] = stable_seed(manifest, "packages", packages)
     return {"system": system, "packages": packages}
 
 
