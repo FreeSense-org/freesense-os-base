@@ -446,6 +446,50 @@ func TestStablePatchAdvancementIsForwardOnly(t *testing.T) {
 	}
 }
 
+func TestStableLabelNamesTheReleaseLine(t *testing.T) {
+	now := time.Date(2026, 10, 14, 12, 0, 0, 0, time.UTC)
+	system := updateOptions("system", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "", 1, now)
+	packages := updateOptions("packages", "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", system.Fingerprint, 2, now)
+	for _, options := range []*UpdateOptions{&system, &packages} {
+		options.Version = "1.1.2"
+		options.PackageTrain = "1.1"
+	}
+	packages.URL = "https://pkg.freesense.org/v1/artifacts/packages/1.1/" + packages.Fingerprint + "/amd64"
+	payload, err := SealStable(Payload{}, system, packages)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := payload.Channels["stable"].Description; got != "FreeSense 1.1 Stable" {
+		t.Fatalf("stable label = %q, want the release line", got)
+	}
+
+	// A release sealed with the old per-version label stays rerunnable.
+	old := payload.Channels["stable"]
+	old.Description = "FreeSense 1.1.2 stable"
+	payload.Channels["stable"] = old
+	rerun, err := SealStable(payload, system, packages)
+	if err != nil {
+		t.Fatalf("rerun of a release sealed with the old label failed: %v", err)
+	}
+	if got := rerun.Channels["stable"].Description; got != "FreeSense 1.1.2 stable" {
+		t.Fatalf("rerun rewrote the signed label to %q", got)
+	}
+
+	// The next patch release carries the new label.
+	nextSystem, nextPackages := system, packages
+	nextSystem.Version, nextPackages.Version = "1.1.3", "1.1.3"
+	nextSystem.Fingerprint = "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+	nextSystem.URL = artifactURL("system", nextSystem.Fingerprint)
+	nextPackages.SystemFingerprint = nextSystem.Fingerprint
+	next, err := SealStable(rerun, nextSystem, nextPackages)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := next.Channels["stable"].Description; got != "FreeSense 1.1 Stable" {
+		t.Fatalf("next patch label = %q", got)
+	}
+}
+
 func TestStableAdvancesAcrossTrainsButNeverBackwards(t *testing.T) {
 	now := time.Date(2026, 10, 13, 12, 0, 0, 0, time.UTC)
 	seal := func(payload Payload, version, train, systemFP, packagesFP string) (Payload, error) {

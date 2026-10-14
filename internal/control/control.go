@@ -154,13 +154,20 @@ func SealStable(payload Payload, system, packages UpdateOptions) (Payload, error
 	}
 	desired := working.Channels["devel"]
 	desired.Name = "stable"
-	desired.Description = "FreeSense " + system.Version + " stable"
+	// The label names the release line ("FreeSense 1.1 Stable"); the exact
+	// version is shown next to it by the WebUI.
+	desired.Description = "FreeSense " + desired.PackageTrain + " Stable"
 
 	if payload.Channels == nil {
 		payload.Channels = map[string]Channel{}
 	}
 	if existing, ok := payload.Channels["stable"]; ok {
 		desired.Default = existing.Default
+		// A rerun of an already sealed version keeps the label it was signed
+		// with, so the label change never turns a rerun into a rewrite.
+		if existing.Version == desired.Version {
+			desired.Description = existing.Description
+		}
 		if existing.Version == desired.Version && existing.Name == desired.Name && existing.Description == desired.Description &&
 			existing.PackageTrain == desired.PackageTrain && existing.ABI == desired.ABI &&
 			existing.AltABI == desired.AltABI && existing.Default == desired.Default &&

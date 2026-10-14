@@ -45,7 +45,7 @@ func signFileFixture(t *testing.T, key *rsa.PrivateKey) (directory, payloadPath,
 	}
 	stableHash := strings.Repeat("d", 64)
 	stable = control.Channel{
-		Name: "stable", Description: "FreeSense 1.1.0 stable", Version: "1.1.0", PackageTrain: "1.1",
+		Name: "stable", Description: "FreeSense 1.1 Stable", Version: "1.1.0", PackageTrain: "1.1",
 		ABI: "FreeBSD:16:amd64", AltABI: "freebsd:16:x86:64", Architecture: "amd64", PackageArch: "amd64",
 		System: &control.Component{Fingerprint: stableHash, FreeBSDPinID: pin, OSVersion: 1600027, Generation: 4, PublishedAt: when, Verified: true,
 			URL: "https://pkg.freesense.org/v1/artifacts/system/" + stableHash + "/amd64"},
