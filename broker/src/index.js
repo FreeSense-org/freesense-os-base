@@ -83,10 +83,13 @@ const ROLE_DEFINITIONS = Object.freeze({
       return [`${R2_PREFIX}/state/development-cycle.json`];
     },
   },
+  // CopyObject: a build copies the packages it reuses from the previous
+  // repository server-side; without it R2 answered 403 for every one and the
+  // worker uploaded them all again from the build VM.
   "artifact-writer": {
     environments: ["build"],
     workflow: "artifact",
-    actions: ["GetObject", "HeadObject", "ListObjectsV2", "PutObject"],
+    actions: ["CopyObject", "GetObject", "HeadObject", "ListObjectsV2", "PutObject"],
     ttlSeconds: 345 * 60,
     paths() {
       return [

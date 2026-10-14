@@ -417,7 +417,7 @@ describe("least-privilege role policies", () => {
       20700,
       ["v1/inputs/sha256/", "v1/artifacts/"],
       [],
-      ["GetObject", "HeadObject", "ListObjectsV2", "PutObject"],
+      ["CopyObject", "GetObject", "HeadObject", "ListObjectsV2", "PutObject"],
     ],
     [
       "pin-writer",
