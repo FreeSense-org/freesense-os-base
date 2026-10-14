@@ -1,0 +1,49 @@
+{
+  "schema_version": "freesense.release-lock/v1",
+  "release": "1.1.5",
+  "product_version": "1.1.5-RELEASE",
+  "package_train": "1.1",
+  "sealed": true,
+  "source_sha": "dd73c4617ee19f8b702fb690b45b6bf72ec71357",
+  "system_ports_sha": "489b477284b6517cce5d13de8d4042f59d8792b5",
+  "packages_sha": "2990b33c342859b111c5bd6f97a98e8ae2d77bf2",
+  "freebsd_source_sha": "a52c50b4b7c2652954ef1bd34710a4b1fc8ef391",
+  "freebsd_ports_sha": "2e67f384802ff04abd34e706fb098e4cd999e7e6",
+  "freebsd_osversion": 1600027,
+  "jail_object": "inputs/sha256/72913dcbc8c6ad668dde07a2c5ef9ff5dbc8e1b8bc25ce4e4469d6ad7ea8928b",
+  "worker_image_sha256": "f5fb1d5095d05a170a32ad7fc2682a0667a2da08aa87154c59fcc6e8656dd73d",
+  "worker_tools_sha256": "34e05bdf6a9c66de9c88edad18bdd73510e5f891fe83215968eb95bb547dc9c0",
+  "arm64": {
+    "jail_object": "inputs/sha256/7f1d799a71ad4f6c3ca21c7b3ad80cd96aef7bffde610ac3891d42daa8cece19"
+  },
+  "notes": [
+    {
+      "type": "fix",
+      "title": "Updates and package changes work again on Stable 1.1.1 and later (the updater lost the selected update channel)"
+    },
+    {
+      "type": "fix",
+      "title": "Systems on 1.1.1 to 1.1.4 need a one-time console command before this update; see the 1.1.5 release notes"
+    },
+    {
+      "type": "package",
+      "title": "Threat Shield 1.1.0: GeoIP country blocking and DNS redirection rules are now loaded into the firewall (known issue of 1.1.0)"
+    },
+    {
+      "type": "package",
+      "title": "Threat Shield 1.1.0: protection levels, allowlist with one-click Unblock, IP threat lists, DNS-over-TLS and DNS-over-HTTPS blocking, pause and schedules"
+    },
+    {
+      "type": "package",
+      "title": "Threat Shield 1.1.0: inbound protection with DNSBL reputation checks and flood limits for exposed services"
+    },
+    {
+      "type": "package",
+      "title": "Threat Shield 1.1.0: live threat map with a full-screen view in three styles and a dashboard widget"
+    },
+    {
+      "type": "package",
+      "title": "Threat Shield 1.1.0: health checks with one-click fixes and a one-switch setup"
+    }
+  ]
+}
