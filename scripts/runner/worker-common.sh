@@ -1201,6 +1201,10 @@ old, current, output = map(__import__('pathlib').Path, sys.argv[1:])
 output.write_text(json.dumps(select(json.loads(old.read_text()), json.loads(current.read_text()),
                                     pin_unchanged=True), sort_keys=True, separators=(",", ":")) + "\n")
 PY
+  # Say why packages are not reused; without it a seed that rejects every
+  # package looks the same in the log as one that was never offered.
+  jq -r '"FreeSense seed: \(.accepted | length) accepted, \(.rejected | length) rejected by provenance",
+    (.rejected | to_entries | .[:15][] | "  not reused: \(.key) (\(.value))")' /tmp/previous-selection.json
   rm -rf /root/previous-freesense-seed
   mkdir -p /root/previous-freesense-seed/All
   jq -r '.accepted[]' /tmp/previous-selection.json | while IFS= read -r accepted_name; do

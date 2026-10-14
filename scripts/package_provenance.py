@@ -38,7 +38,11 @@ def file_digest(path: Path) -> str:
 # packages carry reproducible timestamps. It changes with every commit but only
 # sets file times, so it is not part of what a package is built from. Keeping it
 # in the digest made every package look changed on every freesense commit.
-SOURCE_DATE_EPOCH_LINE = re.compile(r"^\s*(SOURCE_DATE_EPOCH\s*[?:!]?=.*|\.export\s+SOURCE_DATE_EPOCH\s*)$")
+# FREESENSE_PKG_SET_VERSION is the release version (1.1.4-RELEASE, then
+# 1.1.5-RELEASE) and no port reads it; keeping it made every package of every
+# Stable release look changed, so a Stable build never reused one.
+SOURCE_DATE_EPOCH_LINE = re.compile(
+    r"^\s*(SOURCE_DATE_EPOCH\s*[?:!]?=.*|\.export\s+SOURCE_DATE_EPOCH\s*|FREESENSE_PKG_SET_VERSION\s*[?:!]?=.*)$")
 
 
 def make_config_digest(path: Path) -> str:

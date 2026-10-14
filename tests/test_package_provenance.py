@@ -66,6 +66,21 @@ class PackageProvenanceTests(unittest.TestCase):
             self.assertEqual(selected["accepted"], [])
             self.assertIn("make_configuration_sha256", selected["rejected"]["a"])
 
+    def test_the_release_version_in_make_conf_does_not_change_provenance(self):
+        # The regression: FREESENSE_PKG_SET_VERSION=<release> moved with every
+        # Stable release, so no Stable build ever reused a package.
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory); ports, config, policy = self._tree(root)
+            records = [{"name": "a", "origin": "devel/a", "version": "1", "options": {}, "dependencies": {}}]
+            build = lambda: package_provenance.build(records, ports=ports, overlays=[], make_config=config,
+                                                     architecture_policy=policy, abi="FreeBSD:16:amd64", osversion=1600001)
+            config.write_text("OPTIONS_SET=TLS\nFREESENSE_PKG_SET_VERSION=\t1.1.4-RELEASE\nFREESENSE_PACKAGE_TRAIN=\t1.1\n")
+            first = build()
+            config.write_text("OPTIONS_SET=TLS\nFREESENSE_PKG_SET_VERSION=\t1.1.5-RELEASE\nFREESENSE_PACKAGE_TRAIN=\t1.1\n")
+            self.assertEqual(package_provenance.select(first, build(), pin_unchanged=True)["accepted"], ["a"])
+            config.write_text("OPTIONS_SET=TLS\nFREESENSE_PKG_SET_VERSION=\t1.1.5-RELEASE\nFREESENSE_PACKAGE_TRAIN=\t1.2\n")
+            self.assertEqual(package_provenance.select(first, build(), pin_unchanged=True)["accepted"], [])
+
     def _tree(self, root):
         ports = root / "ports"
         (ports / "Mk").mkdir(parents=True); (ports / "Mk/bsd.port.mk").write_text("mk")
