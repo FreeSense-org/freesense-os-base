@@ -1127,6 +1127,9 @@ publish_repository() {
 
 record_package_provenance() {
   provenance_repository=$1
+  # Optional: also write the provenance digested the old way (see
+  # package_provenance.py LEGACY_IGNORED_LINE) for the previous-repository seed.
+  provenance_legacy_output=${2:-}
   provenance_inventory=/tmp/package-provenance-inventory.jsonl
   : >"${provenance_inventory}"
   for provenance_package in "${provenance_repository}"/All/*.pkg; do
@@ -1156,6 +1159,8 @@ record_package_provenance() {
   core_inputs_sha256=$(printf '%s\n' "${SOURCE_SHA}" "${FREEBSD_SHA}" "${SYSTEM_SHA}" \
     "${OS_BASE_SHA}" "${KERNEL}" "${PACKAGE_ARCH}" | sha256 -q)
   python_bin=$(command -v python3 || command -v python3.11)
+  provenance_legacy_args=""
+  [ -z "${provenance_legacy_output}" ] || provenance_legacy_args="--legacy-output ${provenance_legacy_output}"
   # shellcheck disable=SC2086
   "${python_bin}" /root/os-definition/scripts/package_provenance.py \
     --inventory /tmp/package-provenance-inventory.json \
@@ -1163,7 +1168,7 @@ record_package_provenance() {
     --make-config /usr/local/etc/poudriere.d/FreeSense_main-make.conf \
     --architecture-policy "${provenance_policy}" --abi "${ABI}" --osversion "${OSVERSION}" \
     --product FreeSense --core-inputs-sha256 "${core_inputs_sha256}" \
-    --output "${provenance_repository}/package-provenance.json"
+    --output "${provenance_repository}/package-provenance.json" ${provenance_legacy_args}
 }
 
 load_previous_freesense_seed() {
@@ -1190,16 +1195,18 @@ load_previous_freesense_seed() {
     [ -f "${previous_package}" ] || continue
     ln -s "${previous_package}" /tmp/current-package-provenance-repository/All/
   done
-  record_package_provenance /tmp/current-package-provenance-repository
+  record_package_provenance /tmp/current-package-provenance-repository /tmp/current-package-provenance-legacy.json
   python_bin=$(command -v python3 || command -v python3.11)
   "${python_bin}" - /tmp/previous-package-provenance.json \
-    /tmp/current-package-provenance-repository/package-provenance.json /tmp/previous-selection.json <<'PY'
+    /tmp/current-package-provenance-repository/package-provenance.json /tmp/previous-selection.json \
+    /tmp/current-package-provenance-legacy.json <<'PY'
 import json, sys
 sys.path.insert(0, "/root/os-definition/scripts")
 from package_provenance import select
-old, current, output = map(__import__('pathlib').Path, sys.argv[1:])
+old, current, output, legacy = map(__import__('pathlib').Path, sys.argv[1:])
 output.write_text(json.dumps(select(json.loads(old.read_text()), json.loads(current.read_text()),
-                                    pin_unchanged=True), sort_keys=True, separators=(",", ":")) + "\n")
+                                    pin_unchanged=True, legacy=json.loads(legacy.read_text())),
+                             sort_keys=True, separators=(",", ":")) + "\n")
 PY
   # Say why packages are not reused; without it a seed that rejects every
   # package looks the same in the log as one that was never offered.

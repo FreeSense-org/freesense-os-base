@@ -81,6 +81,43 @@ class PackageProvenanceTests(unittest.TestCase):
             config.write_text("OPTIONS_SET=TLS\nFREESENSE_PKG_SET_VERSION=\t1.1.5-RELEASE\nFREESENSE_PACKAGE_TRAIN=\t1.2\n")
             self.assertEqual(package_provenance.select(first, build(), pin_unchanged=True)["accepted"], [])
 
+    def test_the_product_version_line_does_not_change_provenance(self):
+        # The second regression: the builder also appends PRODUCT_VERSION=<release>
+        # to the ports make.conf, so Stable 1.1.5 and the 1.1.7 candidate still
+        # rejected every package ("make_configuration_sha256").
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory); ports, config, policy = self._tree(root)
+            records = [{"name": "a", "origin": "devel/a", "version": "1", "options": {}, "dependencies": {}}]
+            build = lambda: package_provenance.build(records, ports=ports, overlays=[], make_config=config,
+                                                     architecture_policy=policy, abi="FreeBSD:16:amd64", osversion=1600001)
+            config.write_text("OPTIONS_SET=TLS\nPRODUCT_NAME=FreeSense\nPRODUCT_VERSION=1.1.5-RELEASE\n")
+            first = build()
+            config.write_text("OPTIONS_SET=TLS\nPRODUCT_NAME=FreeSense\nPRODUCT_VERSION=1.1.7-RELEASE\n")
+            self.assertEqual(package_provenance.select(first, build(), pin_unchanged=True)["accepted"], ["a"])
+            config.write_text("OPTIONS_SET=TLS\nPRODUCT_NAME=Other\nPRODUCT_VERSION=1.1.7-RELEASE\n")
+            self.assertEqual(package_provenance.select(first, build(), pin_unchanged=True)["accepted"], [])
+
+    def test_records_digested_the_old_way_are_still_reused(self):
+        # Repositories built before PRODUCT_VERSION was ignored carry old-style
+        # digests. With the same make.conf (a Development or Testing rebuild)
+        # they must still be reused, or the change would force a full rebuild.
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory); ports, config, policy = self._tree(root)
+            records = [{"name": "a", "origin": "devel/a", "version": "1", "options": {}, "dependencies": {}}]
+            build = lambda legacy: package_provenance.build(
+                records, ports=ports, overlays=[], make_config=config, architecture_policy=policy,
+                abi="FreeBSD:16:amd64", osversion=1600001, legacy_make_config=legacy)
+            config.write_text("OPTIONS_SET=TLS\nPRODUCT_VERSION=1.2.0-DEVELOPMENT\n")
+            recorded = build(True)
+            self.assertEqual(package_provenance.select(recorded, build(False), pin_unchanged=True)["accepted"], [])
+            selected = package_provenance.select(recorded, build(False), pin_unchanged=True, legacy=build(True))
+            self.assertEqual(selected["accepted"], ["a"])
+            # A real change is still a change in both digests.
+            (ports / "devel/a/Makefile").write_text("changed")
+            selected = package_provenance.select(recorded, build(False), pin_unchanged=True, legacy=build(True))
+            self.assertEqual(selected["accepted"], [])
+            self.assertIn("provenance changed", selected["rejected"]["a"])
+
     def _tree(self, root):
         ports = root / "ports"
         (ports / "Mk").mkdir(parents=True); (ports / "Mk/bsd.port.mk").write_text("mk")

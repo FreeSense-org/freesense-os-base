@@ -38,18 +38,28 @@ def file_digest(path: Path) -> str:
 # packages carry reproducible timestamps. It changes with every commit but only
 # sets file times, so it is not part of what a package is built from. Keeping it
 # in the digest made every package look changed on every freesense commit.
-# FREESENSE_PKG_SET_VERSION is the release version (1.1.4-RELEASE, then
-# 1.1.5-RELEASE) and no port reads it; keeping it made every package of every
-# Stable release look changed, so a Stable build never reused one.
+# FREESENSE_PKG_SET_VERSION and PRODUCT_VERSION are the release version
+# (1.1.4-RELEASE, then 1.1.5-RELEASE). Keeping either made every package of
+# every Stable release look changed, so a Stable build never reused one. The
+# ports that take their version from it (DISTVERSION=${PRODUCT_VERSION}) get the
+# version stamped into their Makefile by the builder, and Poudriere rebuilds a
+# package whose version differs from its port, so they still rebuild.
 SOURCE_DATE_EPOCH_LINE = re.compile(
+    r"^\s*(SOURCE_DATE_EPOCH\s*[?:!]?=.*|\.export\s+SOURCE_DATE_EPOCH\s*|FREESENSE_PKG_SET_VERSION\s*[?:!]?=.*"
+    r"|PRODUCT_VERSION\s*[?:!]?=.*)$")
+# The filter before PRODUCT_VERSION was dropped too. Repositories built until
+# then carry digests made this way; the previous-repository seed accepts either,
+# so the change does not force one full rebuild of every line.
+LEGACY_IGNORED_LINE = re.compile(
     r"^\s*(SOURCE_DATE_EPOCH\s*[?:!]?=.*|\.export\s+SOURCE_DATE_EPOCH\s*|FREESENSE_PKG_SET_VERSION\s*[?:!]?=.*)$")
 
 
-def make_config_digest(path: Path) -> str:
+def make_config_digest(path: Path, *, legacy: bool = False) -> str:
     if not path.is_file():
         return file_digest(path)
+    ignored = LEGACY_IGNORED_LINE if legacy else SOURCE_DATE_EPOCH_LINE
     lines = path.read_bytes().decode("utf-8", "surrogateescape").splitlines(keepends=True)
-    kept = "".join(line for line in lines if not SOURCE_DATE_EPOCH_LINE.match(line.rstrip("\r\n")))
+    kept = "".join(line for line in lines if not ignored.match(line.rstrip("\r\n")))
     return hashlib.sha256(kept.encode("utf-8", "surrogateescape")).hexdigest()
 
 
@@ -68,9 +78,10 @@ def core_package(name: str, origin: str, product: str) -> bool:
 
 def build(records: list[dict], *, ports: Path, overlays: list[Path], make_config: Path,
           architecture_policy: Path, abi: str, osversion: int,
-          product: str = "", core_inputs_sha256: str = "") -> dict:
+          product: str = "", core_inputs_sha256: str = "", legacy_make_config: bool = False) -> dict:
     mk_hash = tree_digest(ports / "Mk")
-    config_hash, policy_hash = make_config_digest(make_config), file_digest(architecture_policy)
+    config_hash = make_config_digest(make_config, legacy=legacy_make_config)
+    policy_hash = file_digest(architecture_policy)
     base = {}
     for record in records:
         name, origin = record.get("name"), record.get("origin")
@@ -133,14 +144,23 @@ def build(records: list[dict], *, ports: Path, overlays: list[Path], make_config
             "osversion": osversion, "packages": output}
 
 
-def select(previous: dict, current: dict, *, pin_unchanged: bool) -> dict:
-    if previous.get("schema_version") != "freesense.repository-package-provenance/v1" or current.get("schema_version") != previous.get("schema_version"):
-        raise ValueError("invalid repository provenance")
+def select(previous: dict, current: dict, *, pin_unchanged: bool, legacy: dict | None = None) -> dict:
+    """Packages of the previous repository that may be reused.
+
+    legacy is the current provenance digested the old way (legacy_make_config);
+    a package whose recorded provenance matches either is accepted.
+    """
+    for document in (previous, current, legacy or current):
+        if document.get("schema_version") != "freesense.repository-package-provenance/v1":
+            raise ValueError("invalid repository provenance")
     old = {item["name"]: item["provenance"] for item in previous.get("packages", [])}
+    old_style = {item["name"]: item["provenance"] for item in (legacy or {}).get("packages", [])}
     accepted, rejected = [], {}
     for item in current.get("packages", []):
         name, now = item["name"], item["provenance"]
         ok, reason = reusable(old.get(name, {}), now, pin_unchanged=pin_unchanged)
+        if not ok and name in old_style:
+            ok = reusable(old.get(name, {}), old_style[name], pin_unchanged=pin_unchanged)[0]
         if ok: accepted.append(name)
         else: rejected[name] = reason
     return {"schema_version": "freesense.previous-repository-selection/v1",
@@ -158,6 +178,8 @@ def main() -> None:
     parser.add_argument("--product", default="", help="product name whose template-built core packages have no port")
     parser.add_argument("--core-inputs-sha256", default="", help="digest of the source, kernel and overlay a core package is cut from")
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--legacy-output", type=Path,
+                        help="also write the provenance digested the old way, for the previous-repository seed")
     parser.add_argument("--previous-provenance", type=Path)
     parser.add_argument("--selection-output", type=Path)
     args = parser.parse_args()
@@ -166,6 +188,12 @@ def main() -> None:
                    abi=args.abi, osversion=args.osversion, product=args.product,
                    core_inputs_sha256=args.core_inputs_sha256)
     args.output.write_text(json.dumps(result, sort_keys=True, separators=(",", ":")) + "\n")
+    if args.legacy_output:
+        legacy = build(json.loads(args.inventory.read_text()), ports=args.ports, overlays=args.overlay,
+                       make_config=args.make_config, architecture_policy=args.architecture_policy,
+                       abi=args.abi, osversion=args.osversion, product=args.product,
+                       core_inputs_sha256=args.core_inputs_sha256, legacy_make_config=True)
+        args.legacy_output.write_text(json.dumps(legacy, sort_keys=True, separators=(",", ":")) + "\n")
     if args.previous_provenance:
         if not args.selection_output: raise SystemExit("--selection-output is required with previous provenance")
         chosen = select(json.loads(args.previous_provenance.read_text()), result, pin_unchanged=True)
