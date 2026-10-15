@@ -1,0 +1,19 @@
+{
+  "schema_version": "freesense.release-lock/v1",
+  "release": "1.1.6",
+  "product_version": "1.1.6-RELEASE",
+  "package_train": "1.1",
+  "sealed": true,
+  "source_sha": "e1db248fe8e90d45e18f233966e97fbc89d093f4",
+  "system_ports_sha": "c672f5ffbceb2ff0d9ef70cb2ab92e68a6d42f09",
+  "packages_sha": "2990b33c342859b111c5bd6f97a98e8ae2d77bf2",
+  "freebsd_source_sha": "a52c50b4b7c2652954ef1bd34710a4b1fc8ef391",
+  "freebsd_ports_sha": "2e67f384802ff04abd34e706fb098e4cd999e7e6",
+  "freebsd_osversion": 1600027,
+  "jail_object": "inputs/sha256/72913dcbc8c6ad668dde07a2c5ef9ff5dbc8e1b8bc25ce4e4469d6ad7ea8928b",
+  "worker_image_sha256": "f5fb1d5095d05a170a32ad7fc2682a0667a2da08aa87154c59fcc6e8656dd73d",
+  "worker_tools_sha256": "34e05bdf6a9c66de9c88edad18bdd73510e5f891fe83215968eb95bb547dc9c0",
+  "arm64": {
+    "jail_object": "inputs/sha256/7f1d799a71ad4f6c3ca21c7b3ad80cd96aef7bffde610ac3891d42daa8cece19"
+  }
+}
