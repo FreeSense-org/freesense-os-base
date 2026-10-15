@@ -6,6 +6,12 @@
       "date": "2026-10-14",
       "reason": "Publication was cancelled after the seal: no ISO was published, and like 1.1.1 to 1.1.3 it could not update (the updater lost the selected channel).",
       "superseded_by": "1.1.5"
+    },
+    {
+      "release": "1.1.6",
+      "date": "2026-10-15",
+      "reason": "Withdrawn before release: never sealed or published. The candidate was cancelled so the security fixes merged after the lock ship in the same release.",
+      "superseded_by": "1.1.7"
     }
   ]
 }
