@@ -236,12 +236,7 @@ phase iso-assemble
 phase iso-ready
 image=$(find tmp -type f -name "*.${INSTALLER_FORMAT}" -print -quit)
 test -n "${image}" && test -s "${image}"
-release_version=${PRODUCT_VERSION%%-*}
-if [ "${CHANNEL}" = stable ]; then
-  prefix="FreeSense-${release_version}"
-else
-  prefix="FreeSense-${release_version}-g${GENERATION}"
-fi
+prefix=$(release_file_prefix)
 if [ "${INSTALLER_FORMAT}" = img ]; then
   name="${prefix}-${ARCHITECTURE}-installer.img.xz"
   xz -T0 -9 -c "${image}" >"/root/${name}"

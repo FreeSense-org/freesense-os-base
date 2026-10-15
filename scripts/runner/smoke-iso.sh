@@ -116,8 +116,8 @@ jq -e --arg fingerprint "$fingerprint" --arg system "$system" --arg packages "$p
   (.architecture // "amd64") == $architecture and
   (.file | type == "string" and
     (if $architecture == "arm64" then
-       test("^FreeSense-[0-9]+[.][0-9]+[.][0-9]+(-g[0-9]+)?-arm64-installer[.]img[.]xz$")
-     else test("^FreeSense-[0-9]+[.][0-9]+[.][0-9]+(-g[0-9]+)?-amd64[.]iso$") end))
+       test("^FreeSense-[0-9]+[.][0-9]+[.][0-9]+(-g[0-9]+|-dev[.][0-9]{8}[.][0-9]+)?-arm64-installer[.]img[.]xz$")
+     else test("^FreeSense-[0-9]+[.][0-9]+[.][0-9]+(-g[0-9]+|-dev[.][0-9]{8}[.][0-9]+)?-amd64[.]iso$") end))
 ' "$marker" >/dev/null || { echo "published ISO completion marker is invalid" >&2; exit 1; }
 
 filename=$(jq -r .file "$marker")

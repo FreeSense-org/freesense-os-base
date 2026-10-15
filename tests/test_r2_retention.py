@@ -1372,5 +1372,17 @@ class RetentionPlanTests(unittest.TestCase):
             )
 
 
+
+class DevelopmentDownloadIdTests(unittest.TestCase):
+    def test_dated_and_legacy_development_downloads_are_grouped_by_generation(self):
+        for key, release, generation in (
+                ("v1/releases/devel/1.2.0-dev.20261015.412/FreeSense-1.2.0-dev.20261015.412-amd64.iso",
+                 "1.2.0-dev.20261015.412", "412"),
+                ("v1/releases/devel/1.2.0-g411/FreeSense-1.2.0-g411-amd64.iso", "1.2.0-g411", "411")):
+            match = retention.DEVEL_DOWNLOAD.match(key)
+            self.assertIsNotNone(match, key)
+            self.assertEqual((match["release"], match["generation"]), (release, generation))
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -319,12 +319,9 @@ trap - EXIT INT TERM
 phase cloud-convert
 qemu-img convert -f raw -O qcow2 -o compat=1.1,lazy_refcounts=on \
   "${raw}" "${qcow}"
-raw_name="FreeSense-${release_version}-${ARCHITECTURE}-${CLOUD_FILESYSTEM}.raw.xz"
-qcow_name="FreeSense-${release_version}-${ARCHITECTURE}-${CLOUD_FILESYSTEM}.qcow2.xz"
-if [ "${CHANNEL}" != stable ]; then
-  raw_name="FreeSense-${release_version}-g${GENERATION}-${ARCHITECTURE}-${CLOUD_FILESYSTEM}.raw.xz"
-  qcow_name="FreeSense-${release_version}-g${GENERATION}-${ARCHITECTURE}-${CLOUD_FILESYSTEM}.qcow2.xz"
-fi
+prefix=$(release_file_prefix)
+raw_name="${prefix}-${ARCHITECTURE}-${CLOUD_FILESYSTEM}.raw.xz"
+qcow_name="${prefix}-${ARCHITECTURE}-${CLOUD_FILESYSTEM}.qcow2.xz"
 xz -T0 -9 -c "${raw}" >/root/"${raw_name}"
 xz -T0 -9 -c "${qcow}" >/root/"${qcow_name}"
 raw_sha=$(sha256 -q /root/"${raw_name}")

@@ -262,8 +262,7 @@ umount /mnt/appliance-root
 mdconfig -d -u "${md#md}"
 trap - EXIT INT TERM
 
-release_version=${PRODUCT_VERSION%%-*}
-name="FreeSense-${release_version}-g${GENERATION}-${IMAGE_PROFILE}.img.xz"
+name="$(release_file_prefix)-${IMAGE_PROFILE}.img.xz"
 xz -T0 -9 -c "${raw}" >"/root/${name}"
 image_sha=$(sha256 -q "/root/${name}")
 image_size=$(stat -f %z "/root/${name}")

@@ -52,7 +52,8 @@ MIRROR_KEY = re.compile(
 PLAN_INPUT = re.compile(r"^inputs/sha256/[0-9a-f]{64}$")
 PORTS_COMMIT = re.compile(r"^[0-9a-f]{40}$")
 DEVEL_DOWNLOAD = re.compile(
-    r"^v1/releases/devel/(?P<release>[0-9]+\.[0-9]+\.[0-9]+-g(?P<generation>[1-9][0-9]*))/"
+    r"^v1/releases/devel/(?P<release>[0-9]+\.[0-9]+\.[0-9]+"
+    r"(?:-g|-dev\.[0-9]{8}\.)(?P<generation>[1-9][0-9]*))/"
 )
 DOCUMENT_KEYS = {
     "v1/repos.manifest.json",
@@ -950,7 +951,7 @@ def plan_retention(
             fail("Development release document is invalid")
         release_id = devel_release.get("release_id")
         if not isinstance(release_id, str) or not re.fullmatch(
-            r"[0-9]+\.[0-9]+\.[0-9]+-g[1-9][0-9]*", release_id
+            r"[0-9]+\.[0-9]+\.[0-9]+(?:-g|-dev\.[0-9]{8}\.)[1-9][0-9]*", release_id
         ):
             fail("Development release document has an invalid release ID")
         architecture = devel_release.get("architecture", "amd64")

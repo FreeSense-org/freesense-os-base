@@ -172,6 +172,30 @@ def publisher_argv(output: Path, channel="stable", generation=2, fingerprint=FIN
     ]
 
 
+class DevelopmentIdentityTests(unittest.TestCase):
+    def test_dated_development_id_comes_from_the_installer_file(self):
+        self.assertEqual(
+            publish.development_identity("1.2.0", 412, "FreeSense-1.2.0-dev.20261015.412-amd64.iso"),
+            "1.2.0-dev.20261015.412")
+
+    def test_legacy_file_names_keep_the_generation_id(self):
+        self.assertEqual(publish.development_identity("1.2.0", 412, "FreeSense-1.2.0-g412-amd64.iso"),
+                         "1.2.0-g412")
+        # a dated name of another generation is not this release
+        self.assertEqual(
+            publish.development_identity("1.2.0", 412, "FreeSense-1.2.0-dev.20261015.411-amd64.iso"),
+            "1.2.0-g412")
+
+    def test_documents_keep_either_identity(self):
+        dated = {"version": "1.2.0", "generation": 7, "release_id": "1.2.0-dev.20261015.7"}
+        self.assertEqual(publish.release_identity(dated, "devel"), "1.2.0-dev.20261015.7")
+        legacy = {"version": "1.2.0", "generation": 7, "release_id": "1.2.0-g7"}
+        self.assertEqual(publish.release_identity(legacy, "devel"), "1.2.0-g7")
+        wrong = {"version": "1.2.0", "generation": 7, "release_id": "1.2.0-dev.20261015.8"}
+        self.assertEqual(publish.release_identity(wrong, "devel"), "1.2.0-g7")
+        self.assertEqual(publish.release_identity({"version": "1.1.5", "generation": 3}, "stable"), "1.1.5")
+
+
 class PublishDownloadTests(unittest.TestCase):
     def test_v4_accepts_ordered_installer_and_board_appliances(self):
         value = release(channel="devel")

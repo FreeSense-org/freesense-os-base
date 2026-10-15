@@ -12,6 +12,17 @@ prepare_release_inputs() {
   fi
 }
 
+# Image file names start with the release ID (docs/release-policy.md):
+# Stable "FreeSense-1.1.5", Development "FreeSense-1.2.0-dev.20261015.412"
+# (UTC date of the source commit, then the build generation).
+release_file_prefix() {
+  if [ "${CHANNEL}" = stable ]; then
+    printf 'FreeSense-%s\n' "${PRODUCT_VERSION%%-*}"
+  else
+    printf 'FreeSense-%s-dev.%s.%s\n' "${PRODUCT_VERSION%%-*}" "${DATESTRING%%-*}" "${GENERATION}"
+  fi
+}
+
 verify_release_channel() {
   phase channel-fetch
   printf '%s' "${CHANNEL_PAYLOAD_B64}" | openssl base64 -d -A >/tmp/channel-payload.json

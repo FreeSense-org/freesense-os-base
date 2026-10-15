@@ -348,9 +348,21 @@ def valid_release_notes(notes) -> bool:
             and packages["truncated"] == (total_count > total_visible))
 
 
+def development_identity(version: str, generation: int, file: str = "") -> str:
+    """A Development release ID: 1.2.0-dev.YYYYMMDD.G, read from the image file
+    name the worker wrote (docs/release-policy.md), or the legacy 1.2.0-gG."""
+    match = re.match(rf"FreeSense-({re.escape(version)}-dev\.[0-9]{{8}}\.{generation})-", file)
+    return match.group(1) if match else f"{version}-g{generation}"
+
+
 def release_identity(release, channel: str) -> str:
-    return (release["version"] if channel == "stable"
-            else f"{release['version']}-g{release['generation']}")
+    if channel == "stable":
+        return release["version"]
+    stored = release.get("release_id", "")
+    if isinstance(stored, str) and re.fullmatch(
+            rf"{re.escape(release['version'])}-dev\.[0-9]{{8}}\.{release['generation']}", stored):
+        return stored
+    return f"{release['version']}-g{release['generation']}"
 
 
 def public_iso_url(release, channel: str, download_base_url: str) -> str:
@@ -685,9 +697,10 @@ def main() -> int:
                 return 0
             raise SystemExit("an immutable development generation cannot be rewritten")
 
-    release_id = args.version if args.channel == "stable" else f"{args.version}-g{args.generation}"
+    release_id = (args.version if args.channel == "stable"
+                  else development_identity(args.version, args.generation, marker["file"]))
     display_name = (f"FreeSense {args.version} Stable" if args.channel == "stable"
-                    else f"FreeSense {args.version} Development — Generation {args.generation}")
+                    else f"FreeSense {release_id} Development")
     provenance = {
         "source": args.source,
         "system_ports": args.system_ports,
