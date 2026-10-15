@@ -8,9 +8,15 @@ name: Testing nightly
 # This only dispatches stable.yml with stage=testing, which plans, builds and
 # publishes; unchanged inputs reuse their stored builds, so a quiet night is
 # quick. Enabled by the repository variable TESTING_CHANNEL_ENABLED=true.
+# The nightly builds amd64 only; a manual run can add arm64.
 
 on:
   workflow_dispatch:
+    inputs:
+      arm64:
+        description: Also build and publish arm64
+        type: boolean
+        default: false
   schedule:
     # 12:00 UTC, well clear of the 01:00 Development cycle it queues behind.
     - cron: '0 12 * * *'
@@ -25,4 +31,6 @@ jobs:
       - name: Build and publish the Testing nightly
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh workflow run stable.yml --repo "${GITHUB_REPOSITORY}" --ref main -f stage=testing
+          # false on the schedule (no inputs), so the nightly stays amd64 only.
+          ARM64: ${{ inputs.arm64 == true }}
+        run: gh workflow run stable.yml --repo "${GITHUB_REPOSITORY}" --ref main -f stage=testing -f testing_arm64="${ARM64}"

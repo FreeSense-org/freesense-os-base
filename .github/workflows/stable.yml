@@ -17,7 +17,7 @@ name: Publish FreeSense Stable train
 #   train's RELENG branches as a Development build of the next patch (e.g.
 #   1.1.6-DEVELOPMENT), published to the "testing" channel for test systems.
 #   testing.yml dispatches it nightly; it needs no lock and no approval, and it
-#   never touches Stable.
+#   never touches Stable. Testing builds amd64 only unless testing_arm64 is set.
 #
 # A lock that carries an arm64 block ships arm64 as well. The two architectures
 # are independent chains that share only the plan: an arm64 failure never holds
@@ -47,9 +47,13 @@ on:
         options: [dedicated, github-amd64]
         default: dedicated
       arm64:
-        description: Also publish arm64 when the lock ships it
+        description: Also publish arm64 when the lock ships it (candidate and seal)
         type: boolean
         default: true
+      testing_arm64:
+        description: stage=testing builds amd64 only unless this is set
+        type: boolean
+        default: false
 
 permissions: {actions: write, contents: read, id-token: write}
 # Testing shares the Development queue: a Development publication signs its
@@ -99,11 +103,13 @@ jobs:
         env: {GITHUB_TOKEN: "${{ github.token }}"}
         run: |
           args=()
-          if [[ "${{ inputs.arm64 }}" != true ]]; then args+=(--only-amd64); fi
           if [[ "${{ inputs.stage }}" == testing ]]; then
+            # Testing is amd64 only unless asked: arm64 doubles the runner time.
+            if [[ "${{ inputs.testing_arm64 }}" != true ]]; then args+=(--only-amd64); fi
             [[ -z "${{ inputs.release }}" ]] || { echo "stage=testing takes no release" >&2; exit 1; }
             args+=(--testing)
           else
+            if [[ "${{ inputs.arm64 }}" != true ]]; then args+=(--only-amd64); fi
             [[ -n "${{ inputs.release }}" ]] || { echo "stage=${{ inputs.stage }} needs a release" >&2; exit 1; }
             args+=(--release "${{ inputs.release }}")
           fi

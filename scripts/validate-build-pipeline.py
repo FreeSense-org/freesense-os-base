@@ -186,7 +186,8 @@ for value in ("default: candidate",
 for value in ("options: [candidate, seal, testing]", "args+=(--testing)",
               "python3 scripts/stable_farm_plan.py --os-base-sha \"${GITHUB_SHA}\"",
               "if: inputs.stage != 'testing'", "channel seal-testing",
-              "inputs.stage == 'testing' && 'development-multiarch' || 'release-control'"):
+              "inputs.stage == 'testing' && 'development-multiarch' || 'release-control'",
+              'if [[ "${{ inputs.testing_arm64 }}" != true ]]; then args+=(--only-amd64); fi'):
     require(value in stable_workflow, f"stable Testing line is missing {value!r}")
 require(stable_workflow.count("channel seal-stable") == 2 and stable_workflow.count("channel seal-testing") == 2,
         "Stable seals and Testing publications must stay separate jobs")
@@ -194,6 +195,8 @@ testing_workflow = read(".github/workflows/testing.yml")
 require("gh workflow run stable.yml" in testing_workflow and "-f stage=testing" in testing_workflow
         and "vars.TESTING_CHANNEL_ENABLED == 'true'" in testing_workflow and "stage=seal" not in testing_workflow and "stage=candidate" not in testing_workflow,
         "testing.yml may only dispatch the opt-in Testing stage")
+require('-f testing_arm64="${ARM64}"' in testing_workflow and "ARM64: ${{ inputs.arm64 == true }}" in testing_workflow,
+        "the Testing nightly must stay amd64 only unless a manual run asks for arm64")
 require(stable_workflow.count("needs: [plan, approve]") == 2,
         "both Stable seal jobs must wait for the stable-publisher approval")
 require("scripts/check_release_locks.py --base" in read(".github/workflows/ci.yml"),
