@@ -87,7 +87,7 @@ func commandState(ctx context.Context, args []string) error {
 
 func commandChannel(ctx context.Context, args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: fsbuild channel <update|verify|seal-stable> [options]")
+		return errors.New("usage: fsbuild channel <update|verify|seal-stable|seal-testing|sign-file> [options]")
 	}
 	if args[0] == "sign-file" {
 		return commandSignChannelFile(args[1:])
@@ -147,8 +147,11 @@ func commandChannel(ctx context.Context, args []string) error {
 		mutate = func(payload control.Payload) (control.Payload, error) {
 			return control.Verify(payload, *component, *fingerprint)
 		}
-	case "seal-stable":
-		version := flags.String("version", "", "exact immutable Stable release version")
+	case "seal-stable", "seal-testing":
+		// seal-testing publishes the rolling Testing channel of the Stable
+		// train (the next patch, built from its RELENG branch) with the same
+		// checks; only the channel and its rules differ.
+		version := flags.String("version", "", "exact Stable-train release version")
 		systemFingerprint := flags.String("system-fingerprint", "", "sealed System fingerprint")
 		systemURL := flags.String("system-url", "", "immutable System URL")
 		systemGeneration := flags.Uint64("system-generation", 0, "System build generation")
@@ -192,6 +195,9 @@ func commandChannel(ctx context.Context, args []string) error {
 				packages.URL, packages.Generation = "packages", *packagesFingerprint,
 				*systemFingerprint, *packagesURL, *packagesGeneration
 			packages.BuiltAgainstSystem = *packagesBuiltAgainstSystem
+			if args[0] == "seal-testing" {
+				return control.PublishTesting(payload, system, packages)
+			}
 			return control.SealStable(payload, system, packages)
 		}
 	default:

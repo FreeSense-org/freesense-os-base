@@ -121,7 +121,7 @@ func putQualifiedDocument(ctx context.Context, backend store.Backend, key string
 			if nextErr != nil {
 				return false, fmt.Errorf("verify new qualified manifest: %w", nextErr)
 			}
-			if err := keepStable(old, next); err != nil {
+			if err := keepRetained(old, next); err != nil {
 				return false, fmt.Errorf("qualified publication of %q: %w", key, err)
 			}
 			channel, ok := old.Channels["devel"]

@@ -13,6 +13,12 @@ name: Publish FreeSense Stable train
 #   manifests (live on devices from here), tags v<release> in the four
 #   repositories, and release.yml builds, boot-tests and publishes the images.
 #
+# - stage=testing builds the rolling Testing line instead: the heads of the
+#   train's RELENG branches as a Development build of the next patch (e.g.
+#   1.1.6-DEVELOPMENT), published to the "testing" channel for test systems.
+#   testing.yml dispatches it nightly; it needs no lock and no approval, and it
+#   never touches Stable.
+#
 # A lock that carries an arm64 block ships arm64 as well. The two architectures
 # are independent chains that share only the plan: an arm64 failure never holds
 # back amd64, and a failed chain is re-run on its own. arm64 ships the generic
@@ -22,13 +28,13 @@ on:
   workflow_dispatch:
     inputs:
       release:
-        description: Exact checked release lock to publish
+        description: Exact checked release lock to publish (empty for stage=testing)
         type: string
-        required: true
+        default: ''
       stage:
-        description: candidate builds and stops; seal makes the tested candidate live (needs approval)
+        description: candidate builds and stops; seal makes the tested candidate live (needs approval); testing publishes the RELENG nightly
         type: choice
-        options: [candidate, seal]
+        options: [candidate, seal, testing]
         default: candidate
       queue_development:
         description: Start a fresh Development build after Stable is fully published
@@ -46,7 +52,11 @@ on:
         default: true
 
 permissions: {actions: write, contents: read, id-token: write}
-concurrency: {group: release-control, cancel-in-progress: false}
+# Testing shares the Development queue: a Development publication signs its
+# manifest early and commits it hours later, so the two must not interleave.
+concurrency:
+  group: ${{ inputs.stage == 'testing' && 'development-multiarch' || 'release-control' }}
+  cancel-in-progress: false
 
 jobs:
   plan:
@@ -86,13 +96,22 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with: {go-version-file: go.mod, cache: false}
       - id: plan
+        env: {GITHUB_TOKEN: "${{ github.token }}"}
         run: |
           args=()
           if [[ "${{ inputs.arm64 }}" != true ]]; then args+=(--only-amd64); fi
-          python3 scripts/stable_farm_plan.py \
-            --release "${{ inputs.release }}" --build-host "${{ inputs.build_host }}" \
+          if [[ "${{ inputs.stage }}" == testing ]]; then
+            [[ -z "${{ inputs.release }}" ]] || { echo "stage=testing takes no release" >&2; exit 1; }
+            args+=(--testing)
+          else
+            [[ -n "${{ inputs.release }}" ]] || { echo "stage=${{ inputs.stage }} needs a release" >&2; exit 1; }
+            args+=(--release "${{ inputs.release }}")
+          fi
+          python3 scripts/stable_farm_plan.py --os-base-sha "${GITHUB_SHA}" \
+            --build-host "${{ inputs.build_host }}" \
             --github-output "${GITHUB_OUTPUT}" "${args[@]}"
       - name: Release-policy gate (R1, R2; seal also R3, R4)
+        if: inputs.stage != 'testing'
         env: {GITHUB_TOKEN: "${{ github.token }}"}
         run: |
           args=(--stage "${{ inputs.stage }}")
@@ -147,7 +166,7 @@ jobs:
   # ---- amd64 ---------------------------------------------------------------
   system:
     needs: plan
-    if: inputs.stage == 'candidate'
+    if: inputs.stage == 'candidate' || inputs.stage == 'testing'
     uses: ./.github/workflows/component-farm.yml
     with:
       stage: system
@@ -157,7 +176,7 @@ jobs:
 
   packages:
     needs: [plan, system]
-    if: inputs.stage == 'candidate'
+    if: inputs.stage == 'candidate' || inputs.stage == 'testing'
     uses: ./.github/workflows/component-farm.yml
     with:
       stage: packages
@@ -167,6 +186,7 @@ jobs:
 
   candidate:
     needs: [plan, packages]
+    if: inputs.stage == 'candidate'
     runs-on: ubuntu-24.04
     steps:
       - name: Candidate repositories for the upgrade test
@@ -283,7 +303,7 @@ jobs:
   # ---- arm64 (independent of the amd64 chain above) -----------------------
   system-arm64:
     needs: plan
-    if: inputs.stage == 'candidate' && needs.plan.outputs.has_arm64 == 'true'
+    if: (inputs.stage == 'candidate' || inputs.stage == 'testing') && needs.plan.outputs.has_arm64 == 'true'
     uses: ./.github/workflows/component-farm.yml
     with:
       stage: system
@@ -293,7 +313,7 @@ jobs:
 
   packages-arm64:
     needs: [plan, system-arm64]
-    if: inputs.stage == 'candidate' && needs.plan.outputs.has_arm64 == 'true'
+    if: (inputs.stage == 'candidate' || inputs.stage == 'testing') && needs.plan.outputs.has_arm64 == 'true'
     uses: ./.github/workflows/component-farm.yml
     with:
       stage: packages
@@ -303,6 +323,7 @@ jobs:
 
   candidate-arm64:
     needs: [plan, packages-arm64]
+    if: inputs.stage == 'candidate'
     runs-on: ubuntu-24.04
     steps:
       - name: Candidate repositories for the upgrade test
@@ -398,3 +419,120 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh workflow run development-multiarch.yml --repo "${GITHUB_REPOSITORY}" --ref main
+
+  # ---- Testing (stage=testing): the RELENG nightly on the testing channel ----
+  publish-testing:
+    needs: [plan, packages]
+    if: inputs.stage == 'testing'
+    runs-on: ubuntu-24.04
+    environment: channel-publisher
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with: {go-version-file: go.mod, cache: false}
+      - run: go build -trimpath -o "${RUNNER_TEMP}/fsbuild" ./cmd/fsbuild
+      - name: Acquire channel writer
+        env:
+          R2_CREDENTIAL_BROKER_URL: ${{ vars.R2_CREDENTIAL_BROKER_URL }}
+          R2_CREDENTIAL_BROKER_AUDIENCE: ${{ vars.R2_CREDENTIAL_BROKER_AUDIENCE }}
+          R2_BUCKET: ${{ vars.R2_BUILD_BUCKET }}
+          R2_ENDPOINT: ${{ vars.R2_ENDPOINT }}
+        run: >-
+          "${RUNNER_TEMP}/fsbuild" credentials acquire --broker-url "${R2_CREDENTIAL_BROKER_URL}"
+          --audience "${R2_CREDENTIAL_BROKER_AUDIENCE}" --role channel-writer
+          --expected-bucket "${R2_BUCKET}" --expected-prefix v1 --expected-endpoint "${R2_ENDPOINT}"
+          --github-env "${GITHUB_ENV}"
+      - name: Publish the Testing nightly
+        env:
+          R2_BUCKET: ${{ vars.R2_BUILD_BUCKET }}
+          FSBUILD_STORE_PREFIX: v1
+          SIGNING_KEY: ${{ secrets.FREESENSE_PKG_SIGNING_KEY }}
+        run: |
+          key=$(mktemp); trap 'rm -f "$key"' EXIT; chmod 600 "$key"; printf '%s' "${SIGNING_KEY}" >"$key"
+          published_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          packages_marker="${RUNNER_TEMP}/packages-complete.json"
+          curl --fail --silent --show-error --location \
+            "${{ needs.plan.outputs.public_base_url }}/artifacts/packages/${{ needs.plan.outputs.package_train }}/${{ needs.plan.outputs.packages }}/complete.json" \
+            --output "${packages_marker}"
+          packages_built_against=$(jq -er \
+            '(.inputs.built_against_system // .inputs.system) as $system |
+             select(.schema_version == "freesense.artifact/v1" and .stage == "packages" and
+             .fingerprint == "${{ needs.plan.outputs.packages }}" and
+             ($system | test("^[0-9a-f]{64}$"))) | $system' \
+            "${packages_marker}")
+          # amd64 devices read the legacy repos.manifest.json (Stable 1.0.x) or
+          # repos.amd64.manifest.json (1.1 and later): seal both identically.
+          for mode in legacy qualified; do
+          extra=()
+          if [ "${mode}" = qualified ]; then extra=(--qualified-manifest --architecture amd64 --package-arch amd64); fi
+          "${RUNNER_TEMP}/fsbuild" channel seal-testing "${extra[@]}" \
+            --version "${{ needs.plan.outputs.release_version }}" \
+            --system-fingerprint "${{ needs.plan.outputs.system }}" \
+            --system-url "${{ needs.plan.outputs.public_base_url }}/artifacts/system/${{ needs.plan.outputs.system }}/amd64" \
+            --system-generation "${{ needs.plan.outputs.system_generation }}" \
+            --packages-fingerprint "${{ needs.plan.outputs.packages }}" \
+            --packages-url "${{ needs.plan.outputs.public_base_url }}/artifacts/packages/${{ needs.plan.outputs.package_train }}/${{ needs.plan.outputs.packages }}/amd64" \
+            --packages-generation "${{ needs.plan.outputs.packages_generation }}" \
+            --packages-built-against-system "${packages_built_against}" \
+            --freebsd-pin-id "${{ needs.plan.outputs.freebsd_pin_id }}" \
+            --package-train "${{ needs.plan.outputs.package_train }}" \
+            --abi "${{ needs.plan.outputs.abi }}" --altabi "${{ needs.plan.outputs.altabi }}" \
+            --osversion "${{ needs.plan.outputs.osversion }}" \
+            --published-at "${published_at}" --private-key "$key"
+          done
+
+  publish-testing-arm64:
+    needs: [plan, packages-arm64]
+    if: inputs.stage == 'testing' && needs.plan.outputs.has_arm64 == 'true'
+    runs-on: ubuntu-24.04
+    environment: channel-publisher
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with: {go-version-file: go.mod, cache: false}
+      - run: go build -trimpath -o "${RUNNER_TEMP}/fsbuild" ./cmd/fsbuild
+      - name: Acquire channel writer
+        env:
+          R2_CREDENTIAL_BROKER_URL: ${{ vars.R2_CREDENTIAL_BROKER_URL }}
+          R2_CREDENTIAL_BROKER_AUDIENCE: ${{ vars.R2_CREDENTIAL_BROKER_AUDIENCE }}
+          R2_BUCKET: ${{ vars.R2_BUILD_BUCKET }}
+          R2_ENDPOINT: ${{ vars.R2_ENDPOINT }}
+        run: >-
+          "${RUNNER_TEMP}/fsbuild" credentials acquire --broker-url "${R2_CREDENTIAL_BROKER_URL}"
+          --audience "${R2_CREDENTIAL_BROKER_AUDIENCE}" --role channel-writer
+          --expected-bucket "${R2_BUCKET}" --expected-prefix v1 --expected-endpoint "${R2_ENDPOINT}"
+          --github-env "${GITHUB_ENV}"
+      - name: Publish the Testing nightly (arm64)
+        env:
+          R2_BUCKET: ${{ vars.R2_BUILD_BUCKET }}
+          FSBUILD_STORE_PREFIX: v1
+          SIGNING_KEY: ${{ secrets.FREESENSE_PKG_SIGNING_KEY }}
+        run: |
+          key=$(mktemp); trap 'rm -f "$key"' EXIT; chmod 600 "$key"; printf '%s' "${SIGNING_KEY}" >"$key"
+          published_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          packages_marker="${RUNNER_TEMP}/packages-complete.json"
+          curl --fail --silent --show-error --location \
+            "${{ needs.plan.outputs.public_base_url }}/artifacts/packages/${{ needs.plan.outputs.package_train }}/${{ needs.plan.outputs.arm64_packages }}/complete.json" \
+            --output "${packages_marker}"
+          packages_built_against=$(jq -er \
+            '(.inputs.built_against_system // .inputs.system) as $system |
+             select(.schema_version == "freesense.artifact/v1" and .stage == "packages" and
+             .fingerprint == "${{ needs.plan.outputs.arm64_packages }}" and
+             ($system | test("^[0-9a-f]{64}$"))) | $system' \
+            "${packages_marker}")
+          # arm64 has no legacy manifest: devices read repos.aarch64.manifest.json.
+          "${RUNNER_TEMP}/fsbuild" channel seal-testing \
+            --qualified-manifest --architecture arm64 --package-arch aarch64 \
+            --version "${{ needs.plan.outputs.release_version }}" \
+            --system-fingerprint "${{ needs.plan.outputs.arm64_system }}" \
+            --system-url "${{ needs.plan.outputs.public_base_url }}/artifacts/system/${{ needs.plan.outputs.arm64_system }}/aarch64" \
+            --system-generation "${{ needs.plan.outputs.arm64_system_generation }}" \
+            --packages-fingerprint "${{ needs.plan.outputs.arm64_packages }}" \
+            --packages-url "${{ needs.plan.outputs.public_base_url }}/artifacts/packages/${{ needs.plan.outputs.package_train }}/${{ needs.plan.outputs.arm64_packages }}/aarch64" \
+            --packages-generation "${{ needs.plan.outputs.arm64_packages_generation }}" \
+            --packages-built-against-system "${packages_built_against}" \
+            --freebsd-pin-id "${{ needs.plan.outputs.arm64_freebsd_pin_id }}" \
+            --package-train "${{ needs.plan.outputs.package_train }}" \
+            --abi "${{ needs.plan.outputs.arm64_abi }}" --altabi "${{ needs.plan.outputs.arm64_altabi }}" \
+            --osversion "${{ needs.plan.outputs.arm64_osversion }}" \
+            --published-at "${published_at}" --private-key "$key"

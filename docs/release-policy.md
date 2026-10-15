@@ -12,6 +12,7 @@ fix one of them in the same pull request.
 |---|---|---|---|
 | Stable | `1.1.N-RELEASE` | `1.1.N` | sealed lock `config/releases/1.1.N.json`, sources on `RELENG_1_1` |
 | Stable candidate | `1.1.N-RELEASE` (the final version) | none: artifact repositories only | the same lock, `stable.yml` stage `candidate` |
+| Testing | `1.1.N-DEVELOPMENT` (N = newest lock + 1) | none: the `testing` channel only, no images | `RELENG_1_1` heads, nightly at 12:00 UTC (`testing.yml` → `stable.yml` stage `testing`) |
 | Development | `1.2.0-DEVELOPMENT` | `1.2.0-dev.YYYYMMDD.G` | `main` heads, nightly at 01:00 UTC |
 
 - `YYYYMMDD` is the UTC date of the freesense source commit (the same instant
@@ -20,7 +21,9 @@ fix one of them in the same pull request.
   keep their old `1.2.0-gG` / `1.1.0-gG` IDs.
 - Package versions are not changed by this policy: System core is
   `1.1.N_G` on Stable and `1.2.0.a.YYYYMMDD.HHMM_G` on Development, so
-  `pkg version -t` keeps ordering existing installations correctly.
+  `pkg version -t` keeps ordering existing installations correctly. Testing
+  is `1.1.N.a.YYYYMMDD.HHMM_G`, which sorts after `1.1.(N-1)` and before the
+  released `1.1.N`.
 - A Stable number is used once. It is never rebuilt with other inputs, and a
   release that is cancelled or broken is withdrawn, not reused (R2).
 
@@ -43,6 +46,24 @@ fix one of them in the same pull request.
   `stable_train` to `1.2` and `development_train` to `1.3`; `RELENG_1_1` is
   then frozen.
 
+## The Testing channel
+
+`testing` ("FreeSense 1.1 Testing") lets a test system follow Stable fixes
+before they are sealed:
+
+- It carries the newest `RELENG_1_1` build as the next patch. When `1.1.N`
+  is sealed, the next nightly moves Testing to `1.1.N+1`.
+- A 1.1 system can switch to Testing. While Testing is ahead of Stable the
+  Stable branch is hidden (it would be a downgrade); once Stable releases
+  that patch the system can switch back, and `1.1.N` installs over
+  `1.1.N.a.*`.
+- It is never the default channel, never moves backwards, and is never
+  removed while systems may select it: installed devices refuse a manifest in
+  which any channel's version drops. Development publications carry it
+  forward unchanged and refuse to commit if it changed after they signed.
+- It publishes no images and no release document.
+- `TESTING_CHANNEL_ENABLED=true` (repository variable) turns on the nightly.
+
 ## Rules
 
 - **R1 Locked sources.** Stable is built only from a sealed lock whose three
@@ -61,8 +82,9 @@ fix one of them in the same pull request.
   override this with `"soak_override": "<reason>"` in its lock.
 - **R5 Tags.** Every sealed Stable release is tagged `v<release>` in the four
   repositories. Tags are immutable.
-- **R6 Development.** Development publishes from `main` on the nightly
-  schedule. A manual Development dispatch needs an explicit request.
+- **R6 Development and Testing.** Development publishes from `main` and
+  Testing from `RELENG_<train>` on their nightly schedules. A manual dispatch
+  of either needs an explicit request.
 - **R7 Hands off publication data.** Channel manifests, R2 objects and
   download documents change only through workflows. Manual changes need an
   explicit, exact, authorized target.

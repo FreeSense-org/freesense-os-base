@@ -280,7 +280,11 @@ def main() -> int:
     parser.add_argument("--immutable-only", action="store_true", help="plan immutable artifacts without consulting mutable channel pointers")
     parser.add_argument("--release-lock", metavar="VERSION",
                         help="plan System/Optional for this sealed Stable release instead of the rolling Development line")
+    parser.add_argument("--line-version", metavar="VERSION",
+                        help="plan System/Optional for the rolling Testing line of the Stable train at this next patch")
     args = parser.parse_args()
+    if args.line_version and (args.kind not in {"system", "packages"} or args.release_lock):
+        raise SystemExit("--line-version plans only Testing System and Optional builds")
     if args.release_lock and (args.kind not in {"system", "packages"} or args.resolved_inputs):
         raise SystemExit("--release-lock plans only System and Optional builds, from the lock's own commits")
     resolved = {}
@@ -345,6 +349,15 @@ def main() -> int:
         sealed = release_lock.load(ROOT, policy, args.release_lock)
         policy = release_lock.policy_for(policy, sealed)
         resolved = release_lock.sources(sealed)
+    if args.line_version:
+        match = SEMVER.fullmatch(args.line_version)
+        stable_train = policy["release"]["stable_train"]
+        if match is None or f"{match.group(1)}.{match.group(2)}" != stable_train:
+            raise SystemExit(f"--line-version must be an exact {stable_train}.x version")
+        # Testing builds the Stable train as a Development build of its next
+        # patch: train 1.1, version 1.1.6, product version 1.1.6-DEVELOPMENT.
+        policy = {**policy, "package_train": stable_train,
+                  "release": {**policy["release"], "development_version": args.line_version}}
     selected_target = target(policy, args.target)
     if not selected_target["build_enabled"]:
         raise SystemExit(f"target {args.target} builds are disabled")
@@ -413,7 +426,12 @@ def main() -> int:
     # sources by its version, which the rolling identities do not name.
     release_identity = (
         {"release": sealed["release"], "product_version": sealed["product_version"]}
-        if sealed is not None else {}
+        if sealed is not None
+        # A Testing build is told apart from Stable and from its own next
+        # version (the version is stamped into the System).
+        else {"line": "testing", "release": args.line_version,
+              "product_version": f"{args.line_version}-DEVELOPMENT"}
+        if args.line_version else {}
     )
     if args.kind == "system" and (
         not SHA256.fullmatch(worker_tools_lock_sha256)
@@ -638,6 +656,9 @@ def main() -> int:
             ROOT / "config/multiarch-shards.json",
         ]),
         **({} if args.target == "amd64" else {"package_arch": selected_target["package_arch"]}),
+        # Testing packages are built as a Development build; a Stable candidate
+        # of the same sources builds its own.
+        **({"line": "testing"} if args.line_version else {}),
     })
     release_version = (
         channel_release_version

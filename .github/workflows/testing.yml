@@ -1,0 +1,28 @@
+name: Testing nightly
+
+# The Testing channel is the rolling pre-release of the Stable train: the heads
+# of its RELENG maintenance branches, built as the next patch (for example
+# 1.1.6-DEVELOPMENT) and published to the "testing" channel, so test systems
+# can follow Stable fixes before they are sealed (docs/release-policy.md).
+#
+# This only dispatches stable.yml with stage=testing, which plans, builds and
+# publishes; unchanged inputs reuse their stored builds, so a quiet night is
+# quick. Enabled by the repository variable TESTING_CHANNEL_ENABLED=true.
+
+on:
+  workflow_dispatch:
+  schedule:
+    # 12:00 UTC, well clear of the 01:00 Development cycle it queues behind.
+    - cron: '0 12 * * *'
+
+permissions: {actions: write, contents: read}
+
+jobs:
+  dispatch:
+    if: github.event_name == 'workflow_dispatch' || vars.TESTING_CHANNEL_ENABLED == 'true'
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Build and publish the Testing nightly
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run stable.yml --repo "${GITHUB_REPOSITORY}" --ref main -f stage=testing

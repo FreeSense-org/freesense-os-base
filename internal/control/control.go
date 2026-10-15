@@ -103,56 +103,10 @@ type UpdateOptions struct {
 // later call may advance stable to a strictly newer patch, but can never rewrite
 // a published version or move the channel backwards.
 func SealStable(payload Payload, system, packages UpdateOptions) (Payload, error) {
-	if system.Component != "system" || packages.Component != "packages" {
-		return Payload{}, errors.New("stable release requires System and Packages components")
-	}
-	if system.PackageTrain == "" || system.PackageTrain != packages.PackageTrain {
-		return Payload{}, errors.New("stable release components must use one package train")
-	}
-	versionMatch := releaseVersionPattern.FindStringSubmatch(system.Version)
-	if system.Version != packages.Version || len(versionMatch) != 4 ||
-		versionMatch[1]+"."+versionMatch[2] != system.PackageTrain {
-		return Payload{}, errors.New("stable release version must exactly match its package train")
-	}
-	if system.FreeBSDPinID != packages.FreeBSDPinID ||
-		packages.SystemFingerprint != system.Fingerprint {
-		return Payload{}, errors.New("sealed stable release has incompatible component bindings")
-	}
-	// An older channel cannot be mixed into the v3 envelope. Replace the legacy
-	// development selection rather than
-	// carrying unsigned compatibility assumptions into the new schema.
-	if payload.SchemaVersion == "freesense.channels/v1" || payload.SchemaVersion == "freesense.channels/v2" {
-		payload = Payload{SchemaVersion: PayloadSchema, Channels: map[string]Channel{}}
-	}
-	for _, channel := range payload.Channels {
-		if channel.System != nil && !fingerprintPattern.MatchString(channel.System.FreeBSDPinID) {
-			return Payload{}, errors.New("existing channels must migrate to FreeBSD pin identities before sealing stable")
-		}
-		if channel.Packages != nil &&
-			(!fingerprintPattern.MatchString(channel.Packages.FreeBSDPinID) ||
-				!fingerprintPattern.MatchString(channel.Packages.BuiltAgainstSystem)) {
-			return Payload{}, errors.New("existing channels must migrate package compatibility before sealing stable")
-		}
-	}
-	working := Payload{Channels: map[string]Channel{}}
-	var err error
-	working, err = Update(working, system)
+	payload, desired, err := releasePair(payload, system, packages)
 	if err != nil {
 		return Payload{}, err
 	}
-	working, err = Verify(working, "system", system.Fingerprint)
-	if err != nil {
-		return Payload{}, err
-	}
-	working, err = Update(working, packages)
-	if err != nil {
-		return Payload{}, err
-	}
-	working, err = Verify(working, "packages", packages.Fingerprint)
-	if err != nil {
-		return Payload{}, err
-	}
-	desired := working.Channels["devel"]
 	desired.Name = "stable"
 	// The label names the release line ("FreeSense 1.1 Stable"); the exact
 	// version is shown next to it by the WebUI.
@@ -193,6 +147,113 @@ func SealStable(payload Payload, system, packages UpdateOptions) (Payload, error
 	payload.SchemaVersion = PayloadSchema
 	payload.Channels["stable"] = desired
 	return payload, nil
+}
+
+// TestingChannel is the rolling pre-release of the Stable train: nightly
+// builds of its RELENG maintenance branch, versioned as the next patch
+// (docs/release-policy.md). It is never the default channel.
+const TestingChannel = "testing"
+
+// PublishTesting replaces the Testing channel with one verified System/Packages
+// pair of the Stable train. Unlike Stable it is rolling, but it never moves
+// backwards: installed devices refuse a manifest in which any channel's version
+// drops, and they refuse a selected channel whose generation drops.
+func PublishTesting(payload Payload, system, packages UpdateOptions) (Payload, error) {
+	payload, desired, err := releasePair(payload, system, packages)
+	if err != nil {
+		return Payload{}, err
+	}
+	desired.Name = TestingChannel
+	desired.Description = "FreeSense " + desired.PackageTrain + " Testing"
+	desired.Default = false
+	if payload.Channels == nil {
+		payload.Channels = map[string]Channel{}
+	}
+	if existing, ok := payload.Channels[TestingChannel]; ok {
+		if existing.Version != desired.Version && !stableAdvances(existing.Version, desired.Version) {
+			return Payload{}, errors.New("the Testing channel cannot move to an older version")
+		}
+		if existing.Version == desired.Version && pairGeneration(desired) < pairGeneration(existing) {
+			return Payload{}, errors.New("the Testing channel cannot move to an older generation")
+		}
+		if existing.Version == desired.Version && existing.Description == desired.Description &&
+			existing.PackageTrain == desired.PackageTrain && existing.ABI == desired.ABI &&
+			existing.AltABI == desired.AltABI && !existing.Default &&
+			componentIdentityEqual(existing.System, desired.System) &&
+			componentIdentityEqual(existing.Packages, desired.Packages) &&
+			existing.System.Verified && existing.Packages.Verified {
+			return payload, nil
+		}
+	}
+	// Devices need exactly one default channel; Testing is never it.
+	hasDefault := false
+	for name, channel := range payload.Channels {
+		if name != TestingChannel && channel.Default {
+			hasDefault = true
+		}
+	}
+	if !hasDefault {
+		return Payload{}, errors.New("the Testing channel needs a published default channel next to it")
+	}
+	payload.SchemaVersion = PayloadSchema
+	payload.Channels[TestingChannel] = desired
+	return payload, nil
+}
+
+// releasePair checks and verifies one Stable-train System/Packages pair. It
+// returns the pair as a channel (named devel until the caller renames it) and
+// the existing payload, migrated to the current schema.
+func releasePair(payload Payload, system, packages UpdateOptions) (Payload, Channel, error) {
+	if system.Component != "system" || packages.Component != "packages" {
+		return Payload{}, Channel{}, errors.New("stable release requires System and Packages components")
+	}
+	if system.PackageTrain == "" || system.PackageTrain != packages.PackageTrain {
+		return Payload{}, Channel{}, errors.New("stable release components must use one package train")
+	}
+	versionMatch := releaseVersionPattern.FindStringSubmatch(system.Version)
+	if system.Version != packages.Version || len(versionMatch) != 4 ||
+		versionMatch[1]+"."+versionMatch[2] != system.PackageTrain {
+		return Payload{}, Channel{}, errors.New("stable release version must exactly match its package train")
+	}
+	if system.FreeBSDPinID != packages.FreeBSDPinID ||
+		packages.SystemFingerprint != system.Fingerprint {
+		return Payload{}, Channel{}, errors.New("sealed stable release has incompatible component bindings")
+	}
+	// An older channel cannot be mixed into the v3 envelope. Replace the legacy
+	// development selection rather than
+	// carrying unsigned compatibility assumptions into the new schema.
+	if payload.SchemaVersion == "freesense.channels/v1" || payload.SchemaVersion == "freesense.channels/v2" {
+		payload = Payload{SchemaVersion: PayloadSchema, Channels: map[string]Channel{}}
+	}
+	for _, channel := range payload.Channels {
+		if channel.System != nil && !fingerprintPattern.MatchString(channel.System.FreeBSDPinID) {
+			return Payload{}, Channel{}, errors.New("existing channels must migrate to FreeBSD pin identities before sealing stable")
+		}
+		if channel.Packages != nil &&
+			(!fingerprintPattern.MatchString(channel.Packages.FreeBSDPinID) ||
+				!fingerprintPattern.MatchString(channel.Packages.BuiltAgainstSystem)) {
+			return Payload{}, Channel{}, errors.New("existing channels must migrate package compatibility before sealing stable")
+		}
+	}
+	working := Payload{Channels: map[string]Channel{}}
+	var err error
+	working, err = Update(working, system)
+	if err != nil {
+		return Payload{}, Channel{}, err
+	}
+	working, err = Verify(working, "system", system.Fingerprint)
+	if err != nil {
+		return Payload{}, Channel{}, err
+	}
+	working, err = Update(working, packages)
+	if err != nil {
+		return Payload{}, Channel{}, err
+	}
+	working, err = Verify(working, "packages", packages.Fingerprint)
+	if err != nil {
+		return Payload{}, Channel{}, err
+	}
+	return payload, working.Channels["devel"], nil
 }
 
 func ReserveGeneration(ctx context.Context, backend store.Backend, fingerprint string, proposed uint64) (Generation, bool, error) {
@@ -524,14 +585,20 @@ func ValidateDevelopmentPair(payload Payload, architecture, packageArch string) 
 	expectedABI := map[string]string{"amd64": "FreeBSD:16:amd64", "arm64": "FreeBSD:16:aarch64"}[architecture]
 	expectedAltABI := map[string]string{"amd64": "freebsd:16:x86:64", "arm64": "freebsd:16:aarch64:64"}[architecture]
 	channel, ok := payload.Channels["devel"]
-	// A Development manifest may carry the immutable Stable channel next to
-	// devel so a Development publication never removes it. Exactly one
-	// channel is the default.
+	// A Development manifest may carry the immutable Stable channel and the
+	// Testing channel next to devel, so a Development publication never
+	// removes them. Exactly one channel is the default, and never Testing.
 	stable, hasStable := payload.Channels["stable"]
 	wantChannels, develDefault := 1, true
 	if hasStable {
 		wantChannels, develDefault = 2, !stable.Default
 		if err := validateRetainedStable(stable, architecture, packageArch, expectedABI, expectedAltABI); err != nil {
+			return err
+		}
+	}
+	if testing, hasTesting := payload.Channels[TestingChannel]; hasTesting {
+		wantChannels++
+		if err := validateRetainedTesting(testing, architecture, packageArch, expectedABI, expectedAltABI); err != nil {
 			return err
 		}
 	}
@@ -582,30 +649,71 @@ func validateRetainedStable(channel Channel, architecture, packageArch, abi, alt
 	return validatePackageBinding(channel, channel.Packages)
 }
 
-// PreserveStable carries the Stable channel of an existing signed manifest into
-// next, so signing a new Development pair never removes a published release.
-// An existing manifest without a Stable channel leaves next unchanged; one that
-// fails verification is an error rather than something to ignore.
+// validateRetainedTesting checks the Testing channel carried alongside devel:
+// a complete pair for this architecture that is never the default.
+func validateRetainedTesting(channel Channel, architecture, packageArch, abi, altABI string) error {
+	if channel.Name != TestingChannel || channel.Default ||
+		channel.Description != "FreeSense "+channel.PackageTrain+" Testing" {
+		return errors.New("invalid retained Testing channel")
+	}
+	channel.Name = "stable"
+	if err := validateRetainedStable(channel, architecture, packageArch, abi, altABI); err != nil {
+		return errors.New("invalid retained Testing channel")
+	}
+	return nil
+}
+
+// PreserveStable carries the Stable and Testing channels of an existing signed
+// manifest into next, so signing a new Development pair never removes a
+// published release or the Testing line. An existing manifest without them
+// leaves next unchanged; one that fails verification is an error rather than
+// something to ignore.
 func PreserveStable(next Payload, existing []byte, key *rsa.PublicKey) (Payload, error) {
 	old, err := ParseSigned(existing, key)
 	if err != nil {
 		return Payload{}, fmt.Errorf("verify existing manifest: %w", err)
 	}
-	stable, ok := old.Channels["stable"]
-	if !ok {
-		return next, nil
-	}
-	channels := make(map[string]Channel, len(next.Channels)+1)
+	channels := make(map[string]Channel, len(next.Channels)+2)
 	for name, channel := range next.Channels {
 		channels[name] = channel
 	}
-	channels["stable"] = stable
-	if devel, ok := channels["devel"]; ok {
-		devel.Default = !stable.Default
-		channels["devel"] = devel
+	if testing, ok := old.Channels[TestingChannel]; ok {
+		channels[TestingChannel] = testing
+	}
+	if stable, ok := old.Channels["stable"]; ok {
+		channels["stable"] = stable
+		if devel, ok := channels["devel"]; ok {
+			devel.Default = !stable.Default
+			channels["devel"] = devel
+		}
 	}
 	next.Channels = channels
 	return next, nil
+}
+
+// keepRetained refuses a Development manifest replacement that would remove or
+// change the Testing channel. The replacement was signed earlier in the run;
+// if Testing was published meanwhile, the signed copy is stale and must not
+// roll it back.
+func keepRetained(old, next Payload) error {
+	if err := keepStable(old, next); err != nil {
+		return err
+	}
+	oldTesting, ok := old.Channels[TestingChannel]
+	if !ok {
+		return nil
+	}
+	newTesting, ok := next.Channels[TestingChannel]
+	if !ok {
+		return errors.New("publication would drop the Testing channel")
+	}
+	if oldTesting.Version != newTesting.Version || oldTesting.Description != newTesting.Description ||
+		oldTesting.Default != newTesting.Default ||
+		!componentIdentityEqual(oldTesting.System, newTesting.System) ||
+		!componentIdentityEqual(oldTesting.Packages, newTesting.Packages) {
+		return errors.New("the Testing channel changed after this manifest was signed")
+	}
+	return nil
 }
 
 // keepStable refuses a manifest replacement that would remove the published

@@ -54,8 +54,8 @@ class StableSeedTests(unittest.TestCase):
 
     def test_both_components_use_the_stable_seed(self):
         source = (ROOT / "scripts/stable_farm_plan.py").read_text(encoding="utf-8")
-        self.assertIn('stable_seed(manifest, "system", system)', source)
-        self.assertIn('stable_seed(manifest, "packages", packages)', source)
+        self.assertIn('stable_seed(manifest, "system", system, seeds)', source)
+        self.assertIn('stable_seed(manifest, "packages", packages, seeds)', source)
         self.assertEqual(stable_farm_plan.SEED_CHANNELS, ("stable", "devel"))
 
 
