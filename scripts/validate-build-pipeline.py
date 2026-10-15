@@ -178,10 +178,10 @@ for value in ("queue_development", "needs: [release, release-arm64]",
 for value in ("options: [candidate, seal]", "default: candidate",
               "if: inputs.stage == 'candidate'", "if: inputs.stage == 'seal'",
               "environment: stable-publisher", "scripts/stable_gate.py --release",
-              "--stage seal", "scripts/tag_release.py"):
+              'args=(--stage "${{ inputs.stage }}")', "scripts/tag_release.py"):
     require(value in stable_workflow, f"stable release-policy gate is missing {value!r}")
-require("environment: channel-publisher" not in stable_workflow,
-        "Stable seals must run in the approval-gated stable-publisher environment")
+require(stable_workflow.count("needs: [plan, approve]") == 2,
+        "both Stable seal jobs must wait for the stable-publisher approval")
 require("scripts/check_release_locks.py --base" in read(".github/workflows/ci.yml"),
         "CI does not check release locks against the release policy")
 release_workflow = read(".github/workflows/release.yml")

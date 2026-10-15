@@ -8,8 +8,8 @@ name: Publish FreeSense Stable train
 #   and the FreeBSD pin it was sealed against. Nothing goes live: the pair
 #   stays in its fingerprinted artifact repositories for an upgrade test.
 # - stage=seal re-plans the same lock (identical fingerprints), checks that the
-#   candidate is complete and the soak time has passed, waits for approval in
-#   the stable-publisher environment, signs the pair into the channel
+#   candidate is complete and the soak time has passed, waits for a
+#   maintainer's approval (stable-publisher environment), signs the pair into the channel
 #   manifests (live on devices from here), tags v<release> in the four
 #   repositories, and release.yml builds, boot-tests and publishes the images.
 #
@@ -92,9 +92,17 @@ jobs:
           python3 scripts/stable_farm_plan.py \
             --release "${{ inputs.release }}" --build-host "${{ inputs.build_host }}" \
             --github-output "${GITHUB_OUTPUT}" "${args[@]}"
-      - name: Release-policy gate (R1, R2)
+      - name: Release-policy gate (R1, R2; seal also R3, R4)
         env: {GITHUB_TOKEN: "${{ github.token }}"}
-        run: python3 scripts/stable_gate.py --release "${{ inputs.release }}" --stage candidate
+        run: |
+          args=(--stage "${{ inputs.stage }}")
+          if [[ "${{ inputs.stage }}" == seal ]]; then
+            args+=(--system "${{ steps.plan.outputs.system }}" --packages "${{ steps.plan.outputs.packages }}")
+            if [[ "${{ steps.plan.outputs.has_arm64 }}" == true ]]; then
+              args+=(--system "${{ steps.plan.outputs.arm64_system }}" --packages "${{ steps.plan.outputs.arm64_packages }}")
+            fi
+          fi
+          python3 scripts/stable_gate.py --release "${{ inputs.release }}" "${args[@]}"
       - run: go build -trimpath -o "${RUNNER_TEMP}/fsbuild" ./cmd/fsbuild
       - name: Acquire generation coordinator
         env:
@@ -172,18 +180,23 @@ jobs:
             echo "- Optional Packages: ${base}/artifacts/packages/${{ needs.plan.outputs.package_train }}/${{ needs.plan.outputs.packages }}/amd64"
           } >>"${GITHUB_STEP_SUMMARY}"
 
-  seal:
+  # The seal makes the release live on installed devices. A maintainer approves
+  # this job in the stable-publisher environment (required reviewer) after the
+  # plan job's gate passed; it holds no credentials of its own.
+  approve:
     needs: plan
     if: inputs.stage == 'seal'
     runs-on: ubuntu-24.04
     environment: stable-publisher
     steps:
+      - run: echo "Stable ${{ inputs.release }} seal approved by ${GITHUB_TRIGGERING_ACTOR}"
+
+  seal:
+    needs: [plan, approve]
+    runs-on: ubuntu-24.04
+    environment: channel-publisher
+    steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-      - name: Release-policy gate (R1-R4)
-        env: {GITHUB_TOKEN: "${{ github.token }}"}
-        run: >-
-          python3 scripts/stable_gate.py --release "${{ inputs.release }}" --stage seal
-          --system "${{ needs.plan.outputs.system }}" --packages "${{ needs.plan.outputs.packages }}"
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with: {go-version-file: go.mod, cache: false}
       - run: go build -trimpath -o "${RUNNER_TEMP}/fsbuild" ./cmd/fsbuild
@@ -302,17 +315,12 @@ jobs:
           } >>"${GITHUB_STEP_SUMMARY}"
 
   seal-arm64:
-    needs: plan
-    if: inputs.stage == 'seal' && needs.plan.outputs.has_arm64 == 'true'
+    needs: [plan, approve]
+    if: needs.plan.outputs.has_arm64 == 'true'
     runs-on: ubuntu-24.04
-    environment: stable-publisher
+    environment: channel-publisher
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-      - name: Release-policy gate (R1-R4)
-        env: {GITHUB_TOKEN: "${{ github.token }}"}
-        run: >-
-          python3 scripts/stable_gate.py --release "${{ inputs.release }}" --stage seal
-          --system "${{ needs.plan.outputs.arm64_system }}" --packages "${{ needs.plan.outputs.arm64_packages }}"
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with: {go-version-file: go.mod, cache: false}
       - run: go build -trimpath -o "${RUNNER_TEMP}/fsbuild" ./cmd/fsbuild

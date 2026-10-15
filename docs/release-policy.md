@@ -54,8 +54,8 @@ fix one of them in the same pull request.
 - **R3 Candidate, test, seal.** A Stable release is first built as a
   candidate (`stable.yml`, `stage: candidate`), upgrade-tested on a VM from
   the current Stable release, and only then sealed (`stage: seal`). The seal
-  job runs in the `stable-publisher` environment, which needs a maintainer's
-  approval. The seal makes the release live on installed devices.
+  waits for a maintainer's approval in the `stable-publisher` environment and
+  makes the release live on installed devices.
 - **R4 Soak time.** Two Stable seals are at least `stable_soak_hours`
   (config/build-policy.json) apart. A security or broken-update fix may
   override this with `"soak_override": "<reason>"` in its lock.
