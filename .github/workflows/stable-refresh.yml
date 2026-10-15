@@ -6,7 +6,8 @@ name: Propose a Stable refresh
 # and, if so, opens ONE pull request carrying the next patch lock.
 #
 # It is only a proposal. Merging it publishes nothing: a person reviews it,
-# merges it, then dispatches "Publish FreeSense Stable train" for that release.
+# merges it, then dispatches "Publish FreeSense Stable train" for that release:
+# stage=candidate, an upgrade test, then stage=seal (docs/release-policy.md).
 # A proposal nobody acts on closes itself after STALE_DAYS, and stays closed
 # until the proposal changes. Branches are never deleted here.
 

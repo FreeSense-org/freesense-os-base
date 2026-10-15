@@ -143,7 +143,7 @@
     }
   },
   "public_base_url": "https://pkg.freesense.org/v1",
-  "stable_soak_hours": 168,
+  "stable_soak_hours": 24,
   "runner": {
     "vcpus": 12,
     "memory_mib": 32768,

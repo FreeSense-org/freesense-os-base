@@ -11,6 +11,8 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
@@ -26,6 +28,15 @@ jobs:
       - run: npm --prefix broker test
       - run: npm --prefix broker run deploy:dry
       - run: python3 scripts/validate-build-pipeline.py
+      - name: Release locks follow the release policy (docs/release-policy.md)
+        env:
+          BASE: ${{ github.event_name == 'pull_request' && format('origin/{0}', github.base_ref) || github.event.before }}
+        run: |
+          if [ -n "${BASE}" ] && [ "${BASE}" != 0000000000000000000000000000000000000000 ] && git rev-parse -q --verify "${BASE}^{commit}" >/dev/null; then
+            python3 scripts/check_release_locks.py --base "${BASE}"
+          else
+            python3 scripts/check_release_locks.py
+          fi
       - name: Validate reusable workflow contracts
         run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12 -shellcheck= -pyflakes=
       - run: python3 -m py_compile scripts/*.py
@@ -56,5 +67,5 @@ jobs:
               --stages scripts/runner/stages --output "${render_dir}/${stage}.sh"
             sh -n "${render_dir}/${stage}.sh"
           done
-          jq -e . config/*.json broker/*.json >/dev/null
+          jq -e . config/*.json config/releases/*.json broker/*.json >/dev/null
           git diff --check

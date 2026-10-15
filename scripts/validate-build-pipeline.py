@@ -173,6 +173,17 @@ for value in ("queue_development", "needs: [release, release-arm64]",
               "gh workflow run development-multiarch.yml", "actions: write"):
     require(value in stable_workflow,
             f"stable-to-development ordered handoff is missing {value!r}")
+# Release policy (docs/release-policy.md): a Stable release is a candidate
+# first, and only an approved seal stage makes it live and tags it.
+for value in ("options: [candidate, seal]", "default: candidate",
+              "if: inputs.stage == 'candidate'", "if: inputs.stage == 'seal'",
+              "environment: stable-publisher", "scripts/stable_gate.py --release",
+              "--stage seal", "scripts/tag_release.py"):
+    require(value in stable_workflow, f"stable release-policy gate is missing {value!r}")
+require("environment: channel-publisher" not in stable_workflow,
+        "Stable seals must run in the approval-gated stable-publisher environment")
+require("scripts/check_release_locks.py --base" in read(".github/workflows/ci.yml"),
+        "CI does not check release locks against the release policy")
 release_workflow = read(".github/workflows/release.yml")
 require("retry-stable-bundle" in release_workflow and
         "recovery operation requires the configured sealed Stable train" in release_workflow,

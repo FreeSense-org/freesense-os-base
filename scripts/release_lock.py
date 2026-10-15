@@ -14,6 +14,9 @@ RELEASE = re.compile(r"^([0-9]+)\.([0-9]+)\.([0-9]+)$")
 NOTE_TYPES = {"security", "fix", "feature", "ui", "package", "documentation", "build", "other"}
 
 
+WITHDRAWN_SCHEMA = "freesense.withdrawn-releases/v1"
+
+
 def load(root: Path, policy: dict, release: str) -> dict:
     """Return the checked, sealed lock of one exact release of the Stable train."""
     stable_train = policy.get("release", {}).get("stable_train")
@@ -21,12 +24,23 @@ def load(root: Path, policy: dict, release: str) -> dict:
     if match is None or f"{match.group(1)}.{match.group(2)}" != stable_train:
         raise SystemExit(f"--release must be an exact {stable_train}.x version")
     lock = json.loads((root / "config/releases" / f"{release}.json").read_text(encoding="utf-8"))
+    validate(lock, release)
+    if lock.get("package_train") != stable_train:
+        raise SystemExit("release lock package train does not match Stable policy")
+    return lock
+
+
+def validate(lock: dict, release: str) -> dict:
+    """Check one lock document on its own, whatever train it belongs to."""
+    match = RELEASE.fullmatch(release)
+    if match is None:
+        raise SystemExit(f"invalid release number {release!r}")
     if lock.get("schema_version") != SCHEMA or not lock.get("sealed"):
         raise SystemExit("release lock is not sealed")
     if lock.get("release") != release or lock.get("product_version") != f"{release}-RELEASE":
         raise SystemExit("release lock version does not match the requested release")
-    if lock.get("package_train") != stable_train:
-        raise SystemExit("release lock package train does not match Stable policy")
+    if lock.get("package_train") != f"{match.group(1)}.{match.group(2)}":
+        raise SystemExit("release lock package train does not match its version")
     for key in ("source_sha", "system_ports_sha", "packages_sha", "freebsd_source_sha", "freebsd_ports_sha"):
         if not SHA.fullmatch(lock.get(key, "")):
             raise SystemExit(f"invalid release input {key}")
@@ -55,7 +69,34 @@ def load(root: Path, policy: dict, release: str) -> dict:
                    or not 0 < len(note["title"]) <= 180
                    for note in notes)):
         raise SystemExit("invalid release notes: up to 10 {type, title} entries")
+    # A seal sooner than stable_soak_hours after the previous one needs a
+    # written reason (release policy R4).
+    override = lock.get("soak_override")
+    if override is not None and (not isinstance(override, str) or not 0 < len(override) <= 180):
+        raise SystemExit("invalid soak_override: a reason of up to 180 characters")
     return lock
+
+
+def withdrawn(root: Path) -> dict[str, dict]:
+    """Releases that were cancelled or pulled, by version (release policy R2)."""
+    path = root / "config/releases/withdrawn.json"
+    if not path.exists():
+        return {}
+    document = json.loads(path.read_text(encoding="utf-8"))
+    entries = document.get("withdrawn") if isinstance(document, dict) else None
+    if document.get("schema_version") != WITHDRAWN_SCHEMA or not isinstance(entries, list):
+        raise SystemExit("invalid withdrawn.json")
+    found = {}
+    for entry in entries:
+        if (not isinstance(entry, dict) or set(entry) != {"release", "date", "reason", "superseded_by"}
+                or not RELEASE.fullmatch(str(entry["release"]))
+                or not re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}", str(entry["date"]))
+                or not isinstance(entry["reason"], str) or not 0 < len(entry["reason"]) <= 300
+                or not (entry["superseded_by"] is None or RELEASE.fullmatch(str(entry["superseded_by"])))
+                or entry["release"] in found):
+            raise SystemExit(f"invalid withdrawn.json entry: {entry!r}")
+        found[entry["release"]] = entry
+    return found
 
 
 def targets(lock: dict) -> list[str]:

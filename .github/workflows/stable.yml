@@ -1,10 +1,17 @@
 name: Publish FreeSense Stable train
 
-# A Stable release is an exact sealed lock (config/releases/<version>.json).
-# System and Optional Packages are built by the same delta component farm as
-# Development, from the lock's commits and the FreeBSD pin it was sealed
-# against; the sealed pair is then signed into the channel manifests, and
-# release.yml builds, boot-tests and publishes the images.
+# A Stable release is an exact sealed lock (config/releases/<version>.json),
+# released in two dispatches (docs/release-policy.md, R3):
+#
+# - stage=candidate builds System and Optional Packages with the same delta
+#   component farm as Development, from the lock's commits (on RELENG_<train>)
+#   and the FreeBSD pin it was sealed against. Nothing goes live: the pair
+#   stays in its fingerprinted artifact repositories for an upgrade test.
+# - stage=seal re-plans the same lock (identical fingerprints), checks that the
+#   candidate is complete and the soak time has passed, waits for approval in
+#   the stable-publisher environment, signs the pair into the channel
+#   manifests (live on devices from here), tags v<release> in the four
+#   repositories, and release.yml builds, boot-tests and publishes the images.
 #
 # A lock that carries an arm64 block ships arm64 as well. The two architectures
 # are independent chains that share only the plan: an arm64 failure never holds
@@ -18,6 +25,11 @@ on:
         description: Exact checked release lock to publish
         type: string
         required: true
+      stage:
+        description: candidate builds and stops; seal makes the tested candidate live (needs approval)
+        type: choice
+        options: [candidate, seal]
+        default: candidate
       queue_development:
         description: Start a fresh Development build after Stable is fully published
         type: boolean
@@ -77,9 +89,12 @@ jobs:
         run: |
           args=()
           if [[ "${{ inputs.arm64 }}" != true ]]; then args+=(--only-amd64); fi
-          python3 scripts/stable_farm_plan.py --os-base-sha "${GITHUB_SHA}" \
+          python3 scripts/stable_farm_plan.py \
             --release "${{ inputs.release }}" --build-host "${{ inputs.build_host }}" \
             --github-output "${GITHUB_OUTPUT}" "${args[@]}"
+      - name: Release-policy gate (R1, R2)
+        env: {GITHUB_TOKEN: "${{ github.token }}"}
+        run: python3 scripts/stable_gate.py --release "${{ inputs.release }}" --stage candidate
       - run: go build -trimpath -o "${RUNNER_TEMP}/fsbuild" ./cmd/fsbuild
       - name: Acquire generation coordinator
         env:
@@ -124,6 +139,7 @@ jobs:
   # ---- amd64 ---------------------------------------------------------------
   system:
     needs: plan
+    if: inputs.stage == 'candidate'
     uses: ./.github/workflows/component-farm.yml
     with:
       stage: system
@@ -133,6 +149,7 @@ jobs:
 
   packages:
     needs: [plan, system]
+    if: inputs.stage == 'candidate'
     uses: ./.github/workflows/component-farm.yml
     with:
       stage: packages
@@ -140,12 +157,33 @@ jobs:
       pair_generation: ${{ github.run_number }}
     secrets: inherit
 
-  seal:
-    needs: [plan, system, packages]
+  candidate:
+    needs: [plan, packages]
     runs-on: ubuntu-24.04
-    environment: channel-publisher
+    steps:
+      - name: Candidate repositories for the upgrade test
+        run: |
+          base="${{ needs.plan.outputs.public_base_url }}"
+          {
+            echo "## Stable ${{ inputs.release }} candidate (amd64)"
+            echo "Not live. Upgrade-test the current Stable release against these repositories,"
+            echo "then dispatch this workflow again with stage=seal (docs/release-policy.md, R3)."
+            echo "- System: ${base}/artifacts/system/${{ needs.plan.outputs.system }}/amd64"
+            echo "- Optional Packages: ${base}/artifacts/packages/${{ needs.plan.outputs.package_train }}/${{ needs.plan.outputs.packages }}/amd64"
+          } >>"${GITHUB_STEP_SUMMARY}"
+
+  seal:
+    needs: plan
+    if: inputs.stage == 'seal'
+    runs-on: ubuntu-24.04
+    environment: stable-publisher
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - name: Release-policy gate (R1-R4)
+        env: {GITHUB_TOKEN: "${{ github.token }}"}
+        run: >-
+          python3 scripts/stable_gate.py --release "${{ inputs.release }}" --stage seal
+          --system "${{ needs.plan.outputs.system }}" --packages "${{ needs.plan.outputs.packages }}"
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with: {go-version-file: go.mod, cache: false}
       - run: go build -trimpath -o "${RUNNER_TEMP}/fsbuild" ./cmd/fsbuild
@@ -199,6 +237,18 @@ jobs:
             --published-at "${published_at}" --private-key "$key"
           done
 
+  # Every sealed release is tagged v<release> at the lock's commits (R5). The
+  # token needs contents:write on the four repositories; a missing tag never
+  # holds back the release, and scripts/tag_release.py can be re-run by hand.
+  tag:
+    needs: [plan, seal]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - name: Tag v${{ inputs.release }}
+        env: {GITHUB_TOKEN: "${{ secrets.RELEASE_TAG_TOKEN }}"}
+        run: python3 scripts/tag_release.py --release "${{ inputs.release }}"
+
   # Images are built from the signed Stable channel just sealed: release.yml
   # reads it back, plans the installer and cloud images, boot-tests them, and
   # publishes the downloads and the release documents (stable.amd64.json and
@@ -220,7 +270,7 @@ jobs:
   # ---- arm64 (independent of the amd64 chain above) -----------------------
   system-arm64:
     needs: plan
-    if: needs.plan.outputs.has_arm64 == 'true'
+    if: inputs.stage == 'candidate' && needs.plan.outputs.has_arm64 == 'true'
     uses: ./.github/workflows/component-farm.yml
     with:
       stage: system
@@ -230,7 +280,7 @@ jobs:
 
   packages-arm64:
     needs: [plan, system-arm64]
-    if: needs.plan.outputs.has_arm64 == 'true'
+    if: inputs.stage == 'candidate' && needs.plan.outputs.has_arm64 == 'true'
     uses: ./.github/workflows/component-farm.yml
     with:
       stage: packages
@@ -238,13 +288,31 @@ jobs:
       pair_generation: ${{ github.run_number }}
     secrets: inherit
 
-  seal-arm64:
-    needs: [plan, system-arm64, packages-arm64]
-    if: needs.plan.outputs.has_arm64 == 'true'
+  candidate-arm64:
+    needs: [plan, packages-arm64]
     runs-on: ubuntu-24.04
-    environment: channel-publisher
+    steps:
+      - name: Candidate repositories for the upgrade test
+        run: |
+          base="${{ needs.plan.outputs.public_base_url }}"
+          {
+            echo "## Stable ${{ inputs.release }} candidate (arm64)"
+            echo "- System: ${base}/artifacts/system/${{ needs.plan.outputs.arm64_system }}/aarch64"
+            echo "- Optional Packages: ${base}/artifacts/packages/${{ needs.plan.outputs.package_train }}/${{ needs.plan.outputs.arm64_packages }}/aarch64"
+          } >>"${GITHUB_STEP_SUMMARY}"
+
+  seal-arm64:
+    needs: plan
+    if: inputs.stage == 'seal' && needs.plan.outputs.has_arm64 == 'true'
+    runs-on: ubuntu-24.04
+    environment: stable-publisher
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - name: Release-policy gate (R1-R4)
+        env: {GITHUB_TOKEN: "${{ github.token }}"}
+        run: >-
+          python3 scripts/stable_gate.py --release "${{ inputs.release }}" --stage seal
+          --system "${{ needs.plan.outputs.arm64_system }}" --packages "${{ needs.plan.outputs.arm64_packages }}"
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with: {go-version-file: go.mod, cache: false}
       - run: go build -trimpath -o "${RUNNER_TEMP}/fsbuild" ./cmd/fsbuild

@@ -5,7 +5,8 @@ The Stable train is frozen on maintenance branches (RELENG_<major>_<minor>) of
 freesense, freesense-system-ports and freesense-packages. A refresh is the next
 patch lock, config/releases/<train>.<N+1>.json, built from the head of those
 branches and the FreeBSD pin that is active now. It is only a proposal: merging
-the lock publishes nothing, and a person dispatches stable.yml to release it.
+the lock publishes nothing, and a person dispatches stable.yml to release it,
+first as a candidate and then as an approved seal (docs/release-policy.md).
 
 A proposal exists only when something would change against the newest lock of
 the train, so a quiet fortnight proposes nothing.
@@ -136,7 +137,8 @@ def describe(proposal: dict, today: str) -> str:
         f"## Stable {version} refresh proposal ({today})", "",
         f"A scheduled check found changes since **{proposal['previous']}**. Merging this changes "
         "only `config/releases/` — **it publishes nothing**. To release, merge it, then dispatch "
-        f"`Publish FreeSense Stable train` with `release={version}`.", "",
+        f"`Publish FreeSense Stable train` with `release={version}`, `stage=candidate`; after the "
+        "upgrade test, dispatch it again with `stage=seal` (docs/release-policy.md, R3).", "",
         "### What moves",
     ]
     for key, repository in SOURCES:
@@ -154,7 +156,8 @@ def describe(proposal: dict, today: str) -> str:
         "", "### Before you release",
         "- The FreeBSD base is 16.0-CURRENT: a pin refresh takes everything upstream changed, not only "
         "security fixes. Read the compare links above.",
-        f"- Upgrade-test {proposal['previous']} → {version} on a test VM.",
+        f"- Upgrade-test {proposal['previous']} → {version} on a test VM from the candidate repositories.",
+        "- Add release notes (`notes`) that name any release this one supersedes or withdraws (R9).",
         "- The pin this lock matches must still be active when you dispatch (it rotates every 14 days); "
         "if it has rotated, this proposal is replaced by a fresh one.",
         "- A person decides: leaving this open does nothing, and it closes itself when stale.",
