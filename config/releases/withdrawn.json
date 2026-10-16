@@ -18,6 +18,12 @@
       "date": "2026-10-16",
       "reason": "Withdrawn before release: the candidate passed its upgrade test but was never sealed or published. It was superseded so the PHP 8 fixes merged afterwards ship in the same release.",
       "superseded_by": "1.1.8"
+    },
+    {
+      "release": "1.1.8",
+      "date": "2026-10-17",
+      "reason": "Withdrawn before release: the candidate upgrade test showed that the changed Optional Packages and Status Monitoring kept their old versions, so updated systems did not get the fixes. Never sealed or published.",
+      "superseded_by": "1.1.9"
     }
   ]
 }
