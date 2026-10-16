@@ -1,0 +1,61 @@
+{
+  "schema_version": "freesense.release-lock/v1",
+  "release": "1.1.8",
+  "product_version": "1.1.8-RELEASE",
+  "package_train": "1.1",
+  "sealed": true,
+  "source_sha": "093c1992fc8a5a9464500430e4a3e618cfb96ebc",
+  "system_ports_sha": "8529f10ad1832543f65ecdc674d1737e5c8280cf",
+  "packages_sha": "17d256d0b745341962cf830ac2bff5383794840d",
+  "freebsd_source_sha": "a52c50b4b7c2652954ef1bd34710a4b1fc8ef391",
+  "freebsd_ports_sha": "2e67f384802ff04abd34e706fb098e4cd999e7e6",
+  "freebsd_osversion": 1600027,
+  "jail_object": "inputs/sha256/72913dcbc8c6ad668dde07a2c5ef9ff5dbc8e1b8bc25ce4e4469d6ad7ea8928b",
+  "worker_image_sha256": "f5fb1d5095d05a170a32ad7fc2682a0667a2da08aa87154c59fcc6e8656dd73d",
+  "worker_tools_sha256": "34e05bdf6a9c66de9c88edad18bdd73510e5f891fe83215968eb95bb547dc9c0",
+  "arm64": {
+    "jail_object": "inputs/sha256/7f1d799a71ad4f6c3ca21c7b3ad80cd96aef7bffde610ac3891d42daa8cece19"
+  },
+  "notes": [
+    {
+      "type": "fix",
+      "title": "RADIUS authentication works again on PHP 8.5 (PAP, CHAP-MD5, MS-CHAPv1 and MS-CHAPv2, with group and session attributes); broken since 1.1.0"
+    },
+    {
+      "type": "fix",
+      "title": "System > Boot Environments refuses to activate a boot environment of an older release (1.0), as the REST API already did"
+    },
+    {
+      "type": "security",
+      "title": "WebUI hardening: the rule editor escapes the gateway in JavaScript, the LDAP container lookup needs a CSRF-checked POST, and unused jquery.cookie 1.3.1 (CVE-2022-23395) is removed"
+    },
+    {
+      "type": "fix",
+      "title": "WebUI: PHP 8 fixes for undefined variables, array keys and null arguments on every page (a full E_ALL crawl is now clean of the known warnings)"
+    },
+    {
+      "type": "fix",
+      "title": "Firewall aliases and rules: proxy ARP and other VIP subnets containing a 1 are listed again, and IPv6 VIP networks are skipped as intended (broken on PHP 8)"
+    },
+    {
+      "type": "fix",
+      "title": "Diagnostics > GEOM Mirrors no longer stops with a fatal error when a form field is invalid"
+    },
+    {
+      "type": "fix",
+      "title": "Installer: a serial console that reports no size gets the standard 24x80, so the ZFS install dialog works"
+    },
+    {
+      "type": "package",
+      "title": "Optional packages: PHP 8.5 deprecation fixes (WireGuard, Tailscale, ACME, OpenVPN client export)"
+    },
+    {
+      "type": "ui",
+      "title": "System > Update > Settings explains the new Testing branch (nightly builds of the next Stable patch)"
+    },
+    {
+      "type": "other",
+      "title": "Supersedes 1.1.5; 1.1.6 and 1.1.7 were withdrawn before release and are included. Systems on 1.1.1 to 1.1.4 need the one-time console command from the 1.1.5 notes first"
+    }
+  ]
+}

@@ -12,6 +12,12 @@
       "date": "2026-10-15",
       "reason": "Withdrawn before release: never sealed or published. The candidate was cancelled so the security fixes merged after the lock ship in the same release.",
       "superseded_by": "1.1.7"
+    },
+    {
+      "release": "1.1.7",
+      "date": "2026-10-16",
+      "reason": "Withdrawn before release: the candidate passed its upgrade test but was never sealed or published. It was superseded so the PHP 8 fixes merged afterwards ship in the same release.",
+      "superseded_by": "1.1.8"
     }
   ]
 }
