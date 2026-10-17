@@ -29,31 +29,12 @@ cat >>/usr/local/etc/poudriere.d/make.conf <<'EOF'
 IGNORE_OSVERSION=yes
 PKG_ENV+= IGNORE_OSVERSION=yes
 EOF
-# net/libzmq4 (ntopng) builds net/norm for its optional NORM multicast
-# transport. FreeBSD 16 renamed IPPROTO_DIVERT to __IPPROTO_DIVERT, which
-# norm 1.5.9's bundled protolib still uses, so norm does not compile. ntopng
-# does not use NORM. This goes in the global make.conf: build.sh rewrites
-# FreeSense_main-make.conf when it starts the build, discarding anything added
-# here. Only amd64 builds libzmq4 and norm from source (the pin rejects both
-# official packages there). On aarch64 the System repository already supplies
-# the official libzmq4, and rebuilding it with other options makes it differ
-# from System's package of the same name, which fails the repository merge.
-if [ "${PACKAGE_ARCH}" = amd64 ]; then
-  echo 'net_libzmq4_UNSET_FORCE=NORM' >>/usr/local/etc/poudriere.d/make.conf
-fi
 if [ -n "${MIRROR_PLAN_OBJECT}" ]; then
   fetch_delta_mirror
   verify_mirror_plan_current /root/freesense-system-ports /root/freesense-packages
   write_delta_bulk optional
 else
   cp tools/conf/pfPorts/poudriere_packages tools/conf/pfPorts/poudriere_bulk
-fi
-if [ "${PACKAGE_ARCH}" = amd64 ]; then
-  # The sealed plan was computed with libzmq4's default NORM option, so it
-  # lists net/norm as a root of its own. With NORM off nothing needs norm, and
-  # building it only fails (see the override above).
-  awk '$0 != "net/norm"' tools/conf/pfPorts/poudriere_bulk >tools/conf/pfPorts/poudriere_bulk.next
-  mv tools/conf/pfPorts/poudriere_bulk.next tools/conf/pfPorts/poudriere_bulk
 fi
 policy=/root/freesense-packages/architecture-policy.json
 jq -e --arg arch "${PACKAGE_ARCH}" '
@@ -101,6 +82,23 @@ fi
 for package in /root/system-repo/All/*.pkg "${lower}"/All/*.pkg; do
   merge_package "${package}" "${combined}/All" "${inventory}" identical
 done
+# net/libzmq4 (ntopng) builds net/norm for its optional NORM multicast
+# transport. FreeBSD 16 renamed IPPROTO_DIVERT to __IPPROTO_DIVERT, which
+# norm 1.5.9's bundled protolib still uses, so norm does not compile from
+# source. ntopng does not use NORM. When System or the mirror already supplies
+# libzmq4 (the official package, built with NORM), Optional must reuse it:
+# rebuilding it with other options makes it differ from that package of the
+# same name, which fails the repository merge. Whether it is supplied depends
+# on the pin's official catalog, not on the architecture. Only when it is not
+# is libzmq4 built here without NORM, and the sealed plan's net/norm root
+# dropped. This goes in the global make.conf: build.sh rewrites
+# FreeSense_main-make.conf when it starts the build, discarding anything added
+# here.
+if ! awk -F '|' '$1 == "libzmq4" { found=1 } END { exit !found }' "${inventory}"; then
+  echo 'net_libzmq4_UNSET_FORCE=NORM' >>/usr/local/etc/poudriere.d/make.conf
+  awk '$0 != "net/norm"' tools/conf/pfPorts/poudriere_bulk >tools/conf/pfPorts/poudriere_bulk.next
+  mv tools/conf/pfPorts/poudriere_bulk.next tools/conf/pfPorts/poudriere_bulk
+fi
 if [ "${SYSTEM_PART}" = finalize ]; then
   shard=0
   while [ "${shard}" -lt "${SYSTEM_SHARD_COUNT}" ]; do
