@@ -66,11 +66,11 @@
   "source_archives": {
     "2208b8828a2c4683ef0d87f4a8d2785324faefba": {
       "format": "freesense.git-bare-shallow-tar/v1",
-      "object": "inputs/sha256/7a161ba5815d9194892a65505d9f5ba9b01cec3628308b4a439c7f8d2e0021c9",
+      "object": "inputs/sha256/4159db80ef99b02be8c4f76dac442bab0a12e197261885462490e9c2e037589a",
       "ref": "refs/heads/main",
       "repository": "freebsd/freebsd-ports",
-      "sha256": "7a161ba5815d9194892a65505d9f5ba9b01cec3628308b4a439c7f8d2e0021c9",
-      "size": 120678400
+      "sha256": "4159db80ef99b02be8c4f76dac442bab0a12e197261885462490e9c2e037589a",
+      "size": 120647680
     },
     "2e67f384802ff04abd34e706fb098e4cd999e7e6": {
       "format": "freesense.git-bare-shallow-tar/v1",
@@ -80,13 +80,13 @@
       "sha256": "b3695c41d5ee6b8daca0deb57bae9da13e3dfa1cc2494e410de51e7749b59557",
       "size": 119644160
     },
-    "930789a27ea51cdb578da59d82f36b20e569265d": {
+    "3a3ea9a0eb1ff5e044373aac4a03e137ad4c878d": {
       "format": "freesense.git-bare-shallow-tar/v1",
-      "object": "inputs/sha256/863948a0e4cecadb0746b7a7ad4585ba68d1815fca84fcb7d7eaeb984fde84c3",
+      "object": "inputs/sha256/c8d66f4e8067b4066138c4724d2bddf2a23c836562e117198e721a18abcc0cdb",
       "ref": "refs/heads/main",
       "repository": "freebsd/freebsd-ports",
-      "sha256": "863948a0e4cecadb0746b7a7ad4585ba68d1815fca84fcb7d7eaeb984fde84c3",
-      "size": 119439360
+      "sha256": "c8d66f4e8067b4066138c4724d2bddf2a23c836562e117198e721a18abcc0cdb",
+      "size": 119623680
     },
     "a52c50b4b7c2652954ef1bd34710a4b1fc8ef391": {
       "format": "freesense.git-bare-shallow-tar/v1",
@@ -457,8 +457,8 @@
         "size": 175329196
       },
       "mirror": {
-        "fingerprint": "f65dd14fb5eec162e381dd564b3e4c299bda6a96c1837384b5a2eacf084ffa55",
-        "object": "inputs/sha256/73be44ccf1b4d131d66f9cd7d0c155a382a778eceb603afffabd15a946d1a600",
+        "fingerprint": "ce571af22dbb24b745770ffff7971cdd85683ae308a5ae173971b8425cbffc18",
+        "object": "inputs/sha256/cd74e50405ca4a7b2da5fd9931d5c74b01d79e36bab9d3dc94a427c356614ebd",
         "overlay_origins": [
           "devel/FreeSense-composer-deps",
           "devel/php-FreeSense-module",
@@ -527,7 +527,7 @@
           "www/FreeSense-pkg-WebGateway-AV",
           "www/adguardhome-bin"
         ],
-        "ports_commit": "930789a27ea51cdb578da59d82f36b20e569265d"
+        "ports_commit": "3a3ea9a0eb1ff5e044373aac4a03e137ad4c878d"
       },
       "package_catalog": {
         "created": true,
@@ -846,8 +846,8 @@
         "size": 163683536
       },
       "mirror": {
-        "fingerprint": "1ab3ec5bee39a2370a2e8aad4908909f88c43235a809013a09d0c9f3e3f570d9",
-        "object": "inputs/sha256/5b1d90819a04f34a1c650c397a18ed9aa2e427d3acdb8454a75f12c3ef9e37c9",
+        "fingerprint": "8c7a4170f95f5daad967b6fd72e5b5759ecf2a1c1c7a9de09f51a4133ffde510",
+        "object": "inputs/sha256/7c057bd18c0bb00a33018ae4adffe6ca77474c6f1385cb2d7cbe3ea348755f00",
         "overlay_origins": [
           "devel/FreeSense-composer-deps",
           "devel/php-FreeSense-module",
