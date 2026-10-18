@@ -607,5 +607,40 @@ class PublishDownloadTests(unittest.TestCase):
             self.assertFalse(Path(output, "stable.json").exists())
 
 
+class GithubCompareTests(unittest.TestCase):
+    """The release notes read every page of a long GitHub comparison."""
+
+    @staticmethod
+    def pages(total: int):
+        commits = [{"commit": {"message": f"Fix thing {i}" + chr(10) * 2 + "body"}} for i in range(total)]
+        batches = [commits[i:i + 100] for i in range(0, total, 100)] or [[]]
+
+        def urlopen(request, timeout=0):
+            page = int(request.full_url.rsplit("&page=", 1)[1])
+            body = json.dumps({"total_commits": total, "commits": batches[page - 1]}).encode()
+            response = mock.MagicMock()
+            response.__enter__.return_value = io.BytesIO(body)
+            return response
+        return urlopen
+
+    def test_reads_all_pages_beyond_100_commits(self):
+        with mock.patch.object(publish.urllib.request, "urlopen", side_effect=self.pages(250)):
+            changes = publish.github_compare("FreeSense-org/freesense", "a" * 40, "b" * 40)
+        self.assertEqual(len(changes), 250)
+        self.assertEqual(changes[0]["title"], "Fix thing 0")
+
+    def test_one_short_page_is_enough(self):
+        with mock.patch.object(publish.urllib.request, "urlopen", side_effect=self.pages(7)):
+            self.assertEqual(len(publish.github_compare("FreeSense-org/freesense", "a" * 40, "b" * 40)), 7)
+
+    def test_a_comparison_over_the_cap_still_fails(self):
+        with mock.patch.object(publish, "COMPARE_COMMIT_LIMIT", 200), mock.patch.object(
+            publish.urllib.request, "urlopen", side_effect=self.pages(250)
+        ):
+            with self.assertRaises(SystemExit) as raised:
+                publish.github_compare("FreeSense-org/freesense", "a" * 40, "b" * 40)
+        self.assertIn("safety limit", str(raised.exception))
+
+
 if __name__ == "__main__":
     unittest.main()

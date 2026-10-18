@@ -100,6 +100,10 @@ def classify_change(title: str) -> str:
     return "other"
 
 
+# GitHub returns a comparison 100 commits at a time; read every page up to this many.
+COMPARE_COMMIT_LIMIT = 1000
+
+
 def github_compare(repository: str, before: str, after: str) -> list[dict[str, str]]:
     if before == after:
         return []
@@ -111,20 +115,31 @@ def github_compare(repository: str, before: str, after: str) -> list[dict[str, s
     token = os.environ.get("GITHUB_TOKEN", "")
     if token:
         headers["Authorization"] = f"Bearer {token}"
-    request = urllib.request.Request(
-        f"https://api.github.com/repos/{repository}/compare/{before}...{after}?per_page=100",
-        headers=headers,
-    )
-    try:
-        with urllib.request.urlopen(request, timeout=30) as response:
-            comparison = json.load(response)
-    except (OSError, urllib.error.URLError, ValueError) as error:
-        raise SystemExit(f"unable to build release notes for {repository}: {error}") from error
-    commits = comparison.get("commits") if isinstance(comparison, dict) else None
-    if not isinstance(commits, list):
-        raise SystemExit(f"GitHub returned invalid release notes for {repository}")
-    if comparison.get("total_commits", len(commits)) > len(commits):
-        raise SystemExit(f"release notes for {repository} exceed the 100-commit safety limit")
+    commits: list = []
+    page = 1
+    while True:
+        request = urllib.request.Request(
+            f"https://api.github.com/repos/{repository}/compare/{before}...{after}?per_page=100&page={page}",
+            headers=headers,
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=30) as response:
+                comparison = json.load(response)
+        except (OSError, urllib.error.URLError, ValueError) as error:
+            raise SystemExit(f"unable to build release notes for {repository}: {error}") from error
+        batch = comparison.get("commits") if isinstance(comparison, dict) else None
+        if not isinstance(batch, list):
+            raise SystemExit(f"GitHub returned invalid release notes for {repository}")
+        commits.extend(batch)
+        total = comparison.get("total_commits", len(commits))
+        # A page is full when more may follow; stop when we have them all.
+        if len(commits) >= total or len(batch) < 100:
+            break
+        if len(commits) >= COMPARE_COMMIT_LIMIT:
+            break
+        page += 1
+    if total > COMPARE_COMMIT_LIMIT or len(commits) < total:
+        raise SystemExit(f"release notes for {repository} exceed the {COMPARE_COMMIT_LIMIT}-commit safety limit")
     changes = []
     for commit in commits:
         message = commit.get("commit", {}).get("message", "") if isinstance(commit, dict) else ""
