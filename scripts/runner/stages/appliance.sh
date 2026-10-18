@@ -54,6 +54,7 @@ chroot "${root}" /usr/bin/env PKG_INSTALL_EPOCH="${SOURCE_DATE_EPOCH}" /bin/sh -
     install -f -y -r FreeSenseAssembly FreeSense-system
   ! pkg info -e FreeSense-cloud-init
   ! pkg info -e qemu-guest-agent
+  ! pkg info -e open-vm-tools-nox11
 '
 umount "${root}/dev"
 rm -rf "${root}/tmp/assembly-repo" "${root}/tmp/assembly-repos" \
