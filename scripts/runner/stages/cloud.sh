@@ -93,7 +93,7 @@ run_in_cloud_chroot "${root}" /usr/bin/env \
   pkg add /tmp/pkg-bootstrap.pkg
   pkg -o REPOS_DIR=/tmp/assembly-repos -o PKG_CACHEDIR=/tmp/assembly-cache \
     update -f -r FreeSenseAssembly
-  for pkg_name in FreeSense-cloud-init qemu-guest-agent; do
+  for pkg_name in FreeSense-cloud-init qemu-guest-agent open-vm-tools-nox11; do
     pkg -o REPOS_DIR=/tmp/assembly-repos -o PKG_CACHEDIR=/tmp/assembly-cache \
       rquery -r FreeSenseAssembly "%n" "${pkg_name}" >/dev/null || {
         echo "required cloud image package is missing: ${pkg_name}" >&2
@@ -103,7 +103,8 @@ run_in_cloud_chroot "${root}" /usr/bin/env \
   pkg -o REPOS_DIR=/tmp/assembly-repos \
     -o PKG_CACHEDIR=/tmp/assembly-cache install -y -r FreeSenseAssembly \
     FreeSense FreeSense-base FreeSense-kernel-FreeSense FreeSense-system \
-    FreeSense-default-config-serial FreeSense-repoc FreeSense-cloud-init qemu-guest-agent
+    FreeSense-default-config-serial FreeSense-repoc FreeSense-cloud-init qemu-guest-agent \
+    open-vm-tools-nox11
   # FreeSense-base expands its base payload during installation. Reapply the
   # signed product overlay last so its absolute /etc files win deterministically.
   pkg -o REPOS_DIR=/tmp/assembly-repos \

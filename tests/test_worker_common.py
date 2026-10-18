@@ -501,6 +501,7 @@ class WorkerVersionValidationTests(unittest.TestCase):
         self.assertIn("/usr/bin/sockstat -46 -l", smoke)
         self.assertIn("/sbin/pfctl -vvsr", smoke)
         self.assertIn("service qemu-guest-agent status", smoke)
+        self.assertIn("open-vm-tools-nox11", smoke)
         self.assertIn("cloud-init query userdata", smoke)
         self.assertIn("FreeSense-cloud-init", smoke)
         self.assertIn("/var/lib/cloud/instance/user-data.txt", smoke)

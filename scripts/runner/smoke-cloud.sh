@@ -567,6 +567,7 @@ ssh_args=(ssh -q -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking
 "${ssh_args[@]}" "set -eu
   pkg query '%n' FreeSense-cloud-init >/dev/null
   pkg query '%n' qemu-guest-agent >/dev/null
+  pkg query '%n' open-vm-tools-nox11 >/dev/null
   test \"\$(sysrc -n qemu_guest_agent_enable)\" = YES
   service qemu-guest-agent status
   cloud_rc=0
