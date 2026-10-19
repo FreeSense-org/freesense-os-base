@@ -299,11 +299,18 @@ EOF
   # package is used, and a missing compiler is still refused by bsd.port.mk's
   # defined(IGNORE) check. This is build environment, not a package option, so
   # it lives here rather than in the audited FreeSense make.conf.
+  # The mirrored Go toolchain also died with SIGILL under qemu-user while a
+  # port downloaded its modules (tailscale and node_exporter, "Fetching ...
+  # dependencies"), so the go commands of an emulated build run with the full
+  # qemu CPU model (GO_ENV reaches go mod download and go build).
   cat >/usr/local/etc/poudriere.d/make.conf <<'EOF'
 IGNORE_OSVERSION=yes
 PKG_ENV+= IGNORE_OSVERSION=yes
 .if defined(QEMU_EMULATING) && ${.CURDIR:M*/lang/go1[0-9][0-9]}
 .MAKEFLAGS: IGNORE=
+.endif
+.if defined(QEMU_EMULATING)
+GO_ENV+= QEMU_CPU=max
 .endif
 EOF
   cp -f /usr/local/etc/poudriere.d/pkg.conf /usr/local/etc/pkg.conf
