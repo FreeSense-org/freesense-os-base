@@ -1,0 +1,37 @@
+{
+  "schema_version": "freesense.release-lock/v1",
+  "release": "1.1.10",
+  "product_version": "1.1.10-RELEASE",
+  "package_train": "1.1",
+  "sealed": true,
+  "source_sha": "192abeb936ac4aa7ce193e4f80864047b8af9439",
+  "system_ports_sha": "1bb1e65e25b672b8532d7d769d4abf0521acd60e",
+  "packages_sha": "a954e68e1b23227ee0005be6e596f2beffbd55a4",
+  "freebsd_source_sha": "a52c50b4b7c2652954ef1bd34710a4b1fc8ef391",
+  "freebsd_ports_sha": "2e67f384802ff04abd34e706fb098e4cd999e7e6",
+  "freebsd_osversion": 1600027,
+  "jail_object": "inputs/sha256/72913dcbc8c6ad668dde07a2c5ef9ff5dbc8e1b8bc25ce4e4469d6ad7ea8928b",
+  "worker_image_sha256": "f5fb1d5095d05a170a32ad7fc2682a0667a2da08aa87154c59fcc6e8656dd73d",
+  "worker_tools_sha256": "34e05bdf6a9c66de9c88edad18bdd73510e5f891fe83215968eb95bb547dc9c0",
+  "arm64": {
+    "jail_object": "inputs/sha256/7f1d799a71ad4f6c3ca21c7b3ad80cd96aef7bffde610ac3891d42daa8cece19"
+  },
+  "notes": [
+    {
+      "type": "security",
+      "title": "PHP 8.5.12 fixes two critical remote code execution flaws in PHP itself (CVE-2026-109618 and CVE-2026-109619). Update promptly"
+    },
+    {
+      "type": "security",
+      "title": "WebUI hardening from the security audit: XML-RPC code execution limited to uid 0, captive portal and CSRF checks, widget disconnect by POST, safe unserialize, shell escaping"
+    },
+    {
+      "type": "fix",
+      "title": "VXLAN: a multicast group port now follows the local port"
+    },
+    {
+      "type": "other",
+      "title": "Supersedes 1.1.9; nothing to do first. Systems on 1.1.1 to 1.1.4 still need the one-time console command from the 1.1.5 notes"
+    }
+  ]
+}
