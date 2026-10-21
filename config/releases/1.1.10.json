@@ -5,8 +5,8 @@
   "package_train": "1.1",
   "sealed": true,
   "source_sha": "192abeb936ac4aa7ce193e4f80864047b8af9439",
-  "system_ports_sha": "1bb1e65e25b672b8532d7d769d4abf0521acd60e",
-  "packages_sha": "a954e68e1b23227ee0005be6e596f2beffbd55a4",
+  "system_ports_sha": "e1c24498c926207f4ed9447860ad2c656ccdf003",
+  "packages_sha": "d3309a8e4907b936ffb66f44daf6750be7b9508c",
   "freebsd_source_sha": "a52c50b4b7c2652954ef1bd34710a4b1fc8ef391",
   "freebsd_ports_sha": "2e67f384802ff04abd34e706fb098e4cd999e7e6",
   "freebsd_osversion": 1600027,
@@ -26,8 +26,16 @@
       "title": "WebUI hardening from the security audit: XML-RPC code execution limited to uid 0, captive portal and CSRF checks, widget disconnect by POST, safe unserialize, shell escaping"
     },
     {
+      "type": "security",
+      "title": "Optional HAProxy updated from 3.4.2 to 3.4.7: fixes JWT/JWE buffer overflows, HTTP/2 and HTTP/3 framing and request-smuggling issues, and several crashes"
+    },
+    {
       "type": "fix",
       "title": "VXLAN: a multicast group port now follows the local port"
+    },
+    {
+      "type": "fix",
+      "title": "Cloud images: a re-apply of the cloud configuration no longer wipes an admin password the administrator has set"
     },
     {
       "type": "other",
