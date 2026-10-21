@@ -66,11 +66,11 @@
   "source_archives": {
     "2208b8828a2c4683ef0d87f4a8d2785324faefba": {
       "format": "freesense.git-bare-shallow-tar/v1",
-      "object": "inputs/sha256/7a161ba5815d9194892a65505d9f5ba9b01cec3628308b4a439c7f8d2e0021c9",
+      "object": "inputs/sha256/4159db80ef99b02be8c4f76dac442bab0a12e197261885462490e9c2e037589a",
       "ref": "refs/heads/main",
       "repository": "freebsd/freebsd-ports",
-      "sha256": "7a161ba5815d9194892a65505d9f5ba9b01cec3628308b4a439c7f8d2e0021c9",
-      "size": 120678400
+      "sha256": "4159db80ef99b02be8c4f76dac442bab0a12e197261885462490e9c2e037589a",
+      "size": 120647680
     },
     "2e67f384802ff04abd34e706fb098e4cd999e7e6": {
       "format": "freesense.git-bare-shallow-tar/v1",
@@ -80,14 +80,6 @@
       "sha256": "b3695c41d5ee6b8daca0deb57bae9da13e3dfa1cc2494e410de51e7749b59557",
       "size": 119644160
     },
-    "8e18e3939be9e4ea489d5504d12de91827b8498b": {
-      "format": "freesense.git-bare-shallow-tar/v1",
-      "object": "inputs/sha256/2e1f84cdd7577687f847a10687c792965e8f73315857ffcef203ccad6fd6eaac",
-      "ref": "refs/heads/main",
-      "repository": "freebsd/freebsd-ports",
-      "sha256": "2e1f84cdd7577687f847a10687c792965e8f73315857ffcef203ccad6fd6eaac",
-      "size": 119900160
-    },
     "a52c50b4b7c2652954ef1bd34710a4b1fc8ef391": {
       "format": "freesense.git-bare-shallow-tar/v1",
       "object": "inputs/sha256/af61279fe03d77dd86f98a39fca61a1ee248639fe365620327f341f485ea8f8a",
@@ -95,6 +87,14 @@
       "repository": "freebsd/freebsd-src",
       "sha256": "af61279fe03d77dd86f98a39fca61a1ee248639fe365620327f341f485ea8f8a",
       "size": 378245120
+    },
+    "ce97aa4dd1d9326775655b810ef384f38f78f0e5": {
+      "format": "freesense.git-bare-shallow-tar/v1",
+      "object": "inputs/sha256/629bea4c93515290e4e9eed05c232c81d733d206e22e308ca04b1cc9448ab446",
+      "ref": "refs/heads/main",
+      "repository": "freebsd/freebsd-ports",
+      "sha256": "629bea4c93515290e4e9eed05c232c81d733d206e22e308ca04b1cc9448ab446",
+      "size": 120299520
     }
   },
   "targets": {
@@ -457,8 +457,8 @@
         "size": 175329196
       },
       "mirror": {
-        "fingerprint": "c2fb323c2522aaab0943afb9029c9c12e566c076e39eb83284ceb31c6e6d64f8",
-        "object": "inputs/sha256/46c7de6b5b19bf07a84c645162f1984d17f60286de0b0429ddfca6d47067bab8",
+        "fingerprint": "f33ce5fca4aff47e67285bf9405157b2e235005587711e9bd0122c957f8486bb",
+        "object": "inputs/sha256/b9756ab0092fce65db664529778e8c66453e5dacda8e4a211314e89caa4311c2",
         "overlay_origins": [
           "devel/FreeSense-composer-deps",
           "devel/php-FreeSense-module",
@@ -467,6 +467,7 @@
           "emulators/FreeSense-pkg-Qemu-Guest-Agent",
           "emulators/open-vm-tools",
           "ftp/FreeSense-pkg-tftpd",
+          "lang/php85",
           "net-mgmt/FreeSense-pkg-ANDwatch",
           "net-mgmt/FreeSense-pkg-Telegraf",
           "net-mgmt/FreeSense-pkg-lldpd",
@@ -531,7 +532,7 @@
           "www/FreeSense-pkg-WebGateway-AV",
           "www/adguardhome-bin"
         ],
-        "ports_commit": "8e18e3939be9e4ea489d5504d12de91827b8498b"
+        "ports_commit": "ce97aa4dd1d9326775655b810ef384f38f78f0e5"
       },
       "package_catalog": {
         "created": true,
@@ -850,8 +851,8 @@
         "size": 163683536
       },
       "mirror": {
-        "fingerprint": "ed7fa22b27f2b50c68074ee84d953f762052103a67642c4ca0d75430ff855e56",
-        "object": "inputs/sha256/b4f41dccfb6fdcda1cf480c896162b40ef06ade40f8f064e100965236679772f",
+        "fingerprint": "908023f6c994dcec9ffd5ee3f9dc576ae07e69443f462b3ee9f276af7efffdf6",
+        "object": "inputs/sha256/7a4d94598c5ba280fa47e79ea926abd58f1096cc68c1565a93c0be394dacb68c",
         "overlay_origins": [
           "devel/FreeSense-composer-deps",
           "devel/php-FreeSense-module",
@@ -860,6 +861,7 @@
           "emulators/FreeSense-pkg-Qemu-Guest-Agent",
           "emulators/open-vm-tools",
           "ftp/FreeSense-pkg-tftpd",
+          "lang/php85",
           "net-mgmt/FreeSense-pkg-ANDwatch",
           "net-mgmt/FreeSense-pkg-Telegraf",
           "net-mgmt/FreeSense-pkg-lldpd",
