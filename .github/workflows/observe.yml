@@ -89,7 +89,14 @@ jobs:
           # One bare clone served to the guest beats cloning 1.5 GB through the
           # VM's user-mode network.
           git clone --quiet --bare https://github.com/freebsd/freebsd-ports.git "${target}/ports.git"
-          git -C "${target}/ports.git" cat-file -e "${{ steps.observed.outputs.commit }}^{commit}"
+          commit="${{ steps.observed.outputs.commit }}"
+          # Upstream builds its packages from a commit that can be off the
+          # branches by the time we look (history rewritten afterwards): the
+          # branch clone lacks it, but GitHub serves any commit by its exact
+          # SHA. A ref keeps it fetchable from the copy served to the guest.
+          git -C "${target}/ports.git" cat-file -e "${commit}^{commit}" 2>/dev/null || git -C "${target}/ports.git" fetch --quiet origin "${commit}"
+          git -C "${target}/ports.git" cat-file -e "${commit}^{commit}"
+          git -C "${target}/ports.git" update-ref "refs/observed/${commit}" "${commit}"
           tar -C "${target}" --owner=0 --group=0 --numeric-owner -cf "${target}/serve/ports.git.tar" ports.git
           rm -rf "${target}/ports.git"
 
