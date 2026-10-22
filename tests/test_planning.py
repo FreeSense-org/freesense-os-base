@@ -359,6 +359,13 @@ class PlannerChannelTests(unittest.TestCase):
                 1600020,
             )
 
+    def test_image_plans_use_the_selected_systems_train(self):
+        for kind in ("iso", "cloud", "appliance"):
+            self.assertEqual(plan.mirror_train_for(kind, "1.2", "1.1"), "1.1")
+            self.assertEqual(plan.mirror_train_for(kind, "1.2", ""), "1.2")
+        for kind in ("system", "packages"):
+            self.assertEqual(plan.mirror_train_for(kind, "1.1", "1.2"), "1.1")
+
     def test_cloud_and_iso_share_one_bundle_identity(self):
         with tempfile.TemporaryDirectory() as directory:
             closure = Path(directory, "system.json")

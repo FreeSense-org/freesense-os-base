@@ -48,6 +48,18 @@ SEMVER = re.compile(r"^([0-9]+)\.([0-9]+)\.([0-9]+)$")
 TRAIN = re.compile(r"^[0-9]+\.[0-9]+$")
 
 
+def mirror_train_for(kind: str, policy_train: str, closure_train: str) -> str:
+    """The train whose mirror a plan builds against.
+
+    An image plan has no release lock, so the policy names Development's train.
+    It follows the selected System instead, which was built from its own
+    train's mirror.
+    """
+    if kind in {"iso", "cloud", "appliance"} and closure_train:
+        return closure_train
+    return policy_train
+
+
 def release_policy(policy: dict, channel: str, version: str) -> tuple[str, str]:
     configured = policy.get("release")
     if not isinstance(configured, dict):
@@ -368,7 +380,8 @@ def main() -> int:
     # A train whose sources differ from Development's has its own mirror and
     # plan: Development's plan lists ports Stable does not have and misses the
     # overlays Stable carries.
-    target_mirror = mirror_for(target_pin, policy["package_train"])
+    mirror_train = mirror_train_for(args.kind, policy["package_train"], channel_package_train)
+    target_mirror = mirror_for(target_pin, mirror_train)
     pinned_ports_commit = target_mirror.get("ports_commit") or lock["freebsd_ports"]["commit"]
     execution_inputs = {}
     worker_image = lock.get("worker_image", {})
@@ -376,7 +389,7 @@ def main() -> int:
     if lock.get("schema_version") == "freesense.freebsd-pin/v4":
         from multiarch_pin import worker
         build_host = args.build_host or "github-amd64"
-        execution_inputs = worker(lock, args.target, build_host, policy["package_train"])
+        execution_inputs = worker(lock, args.target, build_host, mirror_train)
         worker_image = execution_inputs["worker_image"]
         worker_tools = execution_inputs["worker_tools"]
         selected_target["executor"] = execution_inputs["executor"]
