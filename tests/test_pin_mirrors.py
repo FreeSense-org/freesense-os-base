@@ -10,6 +10,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 
+import multiarch_pin  # noqa: E402
 import pin_mirrors  # noqa: E402
 
 # The amd64 values mirror run 35510255406 produced and #224 pinned.
@@ -89,6 +90,49 @@ class PinMirrorsTests(unittest.TestCase):
         updated = pin_mirrors.apply(pin, {"amd64": PINNED_BY_224}, now=inside(pin))
         self.assertEqual(updated["targets"]["amd64"]["mirror"], PINNED_BY_224)
         self.assertEqual(json.dumps(pin, sort_keys=True), before)
+
+    def test_a_train_has_a_mirror_of_its_own(self):
+        pin = current_pin()
+        for arch in pin_mirrors.ARCHES:
+            pin["targets"][arch]["mirror"] = dict(PINNED_BY_224)
+            pin["targets"][arch].pop("train_mirrors", None)
+        # Development's mirror says nothing about the Stable train.
+        self.assertEqual(pin_mirrors.missing(pin, train="1.1"), list(pin_mirrors.ARCHES))
+        updated = pin_mirrors.apply(pin, {"amd64": PINNED_BY_224}, now=inside(pin), train="1.1")
+        self.assertEqual(updated["targets"]["amd64"]["train_mirrors"], {"1.1": PINNED_BY_224})
+        self.assertEqual(updated["targets"]["amd64"]["mirror"], PINNED_BY_224)
+        self.assertEqual(pin_mirrors.missing(updated, train="1.1"), ["arm64"])
+        self.assertEqual(pin_mirrors.missing(updated), [])
+
+    def test_train_mirror_is_checked_against_its_own_overlays(self):
+        pin = current_pin()
+        for arch in pin_mirrors.ARCHES:
+            pin["targets"][arch]["train_mirrors"] = {
+                "1.1": {**PINNED_BY_224, "overlay_origins": ["lang/php85"]}}
+        self.assertEqual(pin_mirrors.missing(pin, ["lang/php85"], train="1.1"), [])
+        self.assertEqual(pin_mirrors.missing(pin, ["lang/php85", "net/haproxy"], train="1.1"),
+                         list(pin_mirrors.ARCHES))
+
+    def test_builds_take_their_own_trains_mirror_or_the_development_one(self):
+        other = {**PINNED_BY_224, "fingerprint": "1" * 64}
+        target = {"mirror": PINNED_BY_224, "train_mirrors": {"1.1": other}}
+        self.assertEqual(multiarch_pin.mirror_for(target, "1.1"), other)
+        self.assertEqual(multiarch_pin.mirror_for(target, "1.2"), PINNED_BY_224)
+        self.assertEqual(multiarch_pin.mirror_for(target), PINNED_BY_224)
+        self.assertEqual(multiarch_pin.mirror_for({}, "1.1"), {})
+
+    def test_incomplete_or_misnamed_train_mirrors_are_refused(self):
+        pin = current_pin()
+        with self.assertRaises(ValueError):
+            pin_mirrors.apply(pin, {"amd64": {"object": "inputs/sha256/" + "0" * 64}}, now=inside(pin), train="1.1")
+        with self.assertRaises(ValueError):
+            pin_mirrors.apply(pin, {"amd64": PINNED_BY_224}, now=inside(pin), train="stable")
+
+    def test_a_train_mirrors_ports_commit_keeps_its_archive(self):
+        pin = current_pin()
+        updated = pin_mirrors.apply(pin, {"amd64": PINNED_BY_224}, now=inside(pin), train="1.1")
+        self.assertEqual(multiarch_pin.archivable_commits(updated)[PLAN["ports_commit"]],
+                         "freebsd/freebsd-ports")
 
     def test_record_keeps_the_pin_file_format(self):
         pin = current_pin()

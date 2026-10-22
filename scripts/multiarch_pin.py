@@ -13,6 +13,7 @@ import re
 
 ARCHES = {"amd64": "FreeBSD:16:amd64", "arm64": "FreeBSD:16:aarch64"}
 SHA256 = re.compile(r"^[0-9a-f]{64}$")
+TRAIN = re.compile(r"^[0-9]+\.[0-9]+$")
 SOURCE_REPOSITORIES = {"freebsd/freebsd-src", "freebsd/freebsd-ports"}
 SOURCE_ARCHIVE_FORMAT = "freesense.git-bare-shallow-tar/v1"
 
@@ -34,6 +35,28 @@ def blob(value: object, label: str) -> dict:
     if value.get("object") != obj:
         value["object"] = obj
     return value
+
+
+def validate_mirror(mirror: object, label: str) -> None:
+    if (not isinstance(mirror, dict)
+            or not str(mirror.get("object", "")).startswith("inputs/sha256/")
+            or not SHA256.fullmatch(str(mirror.get("fingerprint", "")))
+            or not re.fullmatch(r"[0-9a-f]{40}", str(mirror.get("ports_commit", "")))):
+        raise ValueError(f"{label} pin is incomplete")
+
+
+def mirror_for(target: dict, train: str | None = None) -> dict:
+    """The mirror a build of one package train layers on, or {} when none is pinned.
+
+    A train with its own mirror uses it; every other train uses the Development
+    one. The plan inside a mirror lists the ports its sources build, so a train
+    whose sources differ must not be handed another train's plan.
+    """
+    if train:
+        own = (target.get("train_mirrors") or {}).get(train)
+        if own:
+            return own
+    return target.get("mirror") or {}
 
 
 def validate(pin: dict, *, now: datetime | None = None) -> None:
@@ -75,13 +98,20 @@ def validate(pin: dict, *, now: datetime | None = None) -> None:
         # Optional until the pin cycle cuts one. When present it binds the
         # mirror, the plan it came from and the ports commit both were
         # computed at, so the build cannot mix one snapshot with another.
+        # `mirror` serves the Development train. A Stable train whose sources
+        # differ from Development's (other packages, other overlays) has its
+        # own plan and mirror under `train_mirrors`.
         mirror = target.get("mirror")
         if mirror is not None:
-            if (not isinstance(mirror, dict)
-                    or not str(mirror.get("object", "")).startswith("inputs/sha256/")
-                    or not SHA256.fullmatch(str(mirror.get("fingerprint", "")))
-                    or not re.fullmatch(r"[0-9a-f]{40}", str(mirror.get("ports_commit", "")))):
-                raise ValueError(f"{arch} mirror pin is incomplete")
+            validate_mirror(mirror, f"{arch} mirror")
+        train_mirrors = target.get("train_mirrors")
+        if train_mirrors is not None:
+            if not isinstance(train_mirrors, dict):
+                raise ValueError(f"{arch} train mirrors must map a package train to a mirror")
+            for train, entry in train_mirrors.items():
+                if not TRAIN.fullmatch(str(train)):
+                    raise ValueError(f"{arch} train mirror is not keyed by a package train")
+                validate_mirror(entry, f"{arch} {train} train mirror")
     if not any("rust" in pin["targets"][arch]["binary_seed"].get("verified_roots", []) for arch in ARCHES):
         raise ValueError("pin has no official lang/rust package on any architecture")
     validate_source_archives(pin)
@@ -114,9 +144,10 @@ def archivable_commits(pin: dict) -> dict[str, str]:
     commits = {pin["freebsd_source"]["commit"]: "freebsd/freebsd-src",
                pin["freebsd_ports"]["commit"]: "freebsd/freebsd-ports"}
     for target in pin.get("targets", {}).values():
-        ports = (target.get("mirror") or {}).get("ports_commit")
-        if ports:
-            commits[ports] = "freebsd/freebsd-ports"
+        for mirror in [target.get("mirror") or {}, *(target.get("train_mirrors") or {}).values()]:
+            ports = mirror.get("ports_commit")
+            if ports:
+                commits[ports] = "freebsd/freebsd-ports"
     return commits
 
 
@@ -139,7 +170,7 @@ def source_archive(pin: dict, commit: str, repository: str) -> str:
     return archive.get("object", "") if archive.get("repository") == repository else ""
 
 
-def worker(pin: dict, target: str, host: str) -> dict:
+def worker(pin: dict, target: str, host: str, train: str | None = None) -> dict:
     validate(pin)
     allowed = {
         "amd64": {"github-amd64", "dedicated"},
@@ -157,7 +188,7 @@ def worker(pin: dict, target: str, host: str) -> dict:
         "worker_tools": inputs["worker_tools"],
         "binary_seed": pin["targets"][target]["binary_seed"],
         # Per target, not per host: the mirror is the ABI's lower layer.
-        "mirror": pin["targets"][target].get("mirror", {}),
+        "mirror": mirror_for(pin["targets"][target], train),
     }
 
 

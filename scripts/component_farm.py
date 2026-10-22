@@ -29,7 +29,7 @@ def check(plan: dict, stage: str, generation: str, pin: dict, policy: dict) -> d
     if stage not in {"system", "packages"} or not re.fullmatch(r"[1-9][0-9]*", generation):
         raise ValueError("farm requires a component and reserved pair generation")
     validate(pin)
-    execution = worker(pin, plan["target"], plan["build_host"])
+    execution = worker(pin, plan["target"], plan["build_host"], plan.get("package_train"))
     descriptor = target(policy, plan["target"])
     for field in ("architecture", "package_arch", "abi", "altabi", "freebsd_target",
                   "freebsd_target_arch", "poudriere_arch", "kernel"):

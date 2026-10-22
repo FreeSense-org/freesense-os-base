@@ -19,7 +19,7 @@ from datetime import datetime, timedelta, timezone
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from build_platform import image_profile, load_policy, manifest_name, pin_target, release_profiles, target
-from multiarch_pin import source_archive
+from multiarch_pin import mirror_for, source_archive
 import release_lock
 
 
@@ -365,7 +365,10 @@ def main() -> int:
     # A frozen mirror is cut at the ports commit upstream actually published
     # from. Poudriere judges a seeded package stale at any other commit and
     # rebuilds it from source, so the build has to use the mirror's.
-    target_mirror = target_pin.get("mirror") or {}
+    # A train whose sources differ from Development's has its own mirror and
+    # plan: Development's plan lists ports Stable does not have and misses the
+    # overlays Stable carries.
+    target_mirror = mirror_for(target_pin, policy["package_train"])
     pinned_ports_commit = target_mirror.get("ports_commit") or lock["freebsd_ports"]["commit"]
     execution_inputs = {}
     worker_image = lock.get("worker_image", {})
@@ -373,7 +376,7 @@ def main() -> int:
     if lock.get("schema_version") == "freesense.freebsd-pin/v4":
         from multiarch_pin import worker
         build_host = args.build_host or "github-amd64"
-        execution_inputs = worker(lock, args.target, build_host)
+        execution_inputs = worker(lock, args.target, build_host, policy["package_train"])
         worker_image = execution_inputs["worker_image"]
         worker_tools = execution_inputs["worker_tools"]
         selected_target["executor"] = execution_inputs["executor"]

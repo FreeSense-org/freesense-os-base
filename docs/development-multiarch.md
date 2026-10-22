@@ -56,6 +56,15 @@ not called, because the broker issues `mirror-writer` only to a directly dispatc
 records each plan object, fingerprint and ports commit with `scripts/pin_mirrors.py`, and opens the
 `automation/freebsd-mirror` pull request with auto-merge. With every mirror pinned it exits at once.
 
+Development and Stable do not share a plan. A plan lists the ports the FreeSense sources build, and
+those differ by branch: `main` carries packages and overlays that `RELENG_1_1` does not (and the other
+way round), so a Development plan names ports Stable cannot build and misses Stable's overlays. The
+pin therefore holds the Development mirror under `targets.<arch>.mirror` and the Stable train's under
+`targets.<arch>.train_mirrors."<train>"`. `pin-mirrors.yml` cuts both: it evaluates the Stable train
+from `RELENG_<train>` (`observe.yml` input `train=stable`), and `plan.py` hands a build the mirror of
+its own package train, falling back to the Development one when the train has none. Retention keeps
+four mirrors per architecture (two per train).
+
 Delta finalizers discard conflicting package variants from their disposable
 seed, remembering discarded identities across later shards. Poudriere then runs
 the complete root list. The final repository merge remains strict; this repair

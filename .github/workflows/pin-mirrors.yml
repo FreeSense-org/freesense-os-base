@@ -44,11 +44,23 @@ jobs:
       # built from source. A mirror cut before an overlay existed still lists
       # the port as prebuilt and the repositories fail to compose, so a change
       # in the overlaid ports makes the pinned mirror stale.
+      #
+      # The Stable train builds from its own branch, whose packages and
+      # overlays differ from Development's, so it has a mirror and plan of its
+      # own, cut from that branch. Development's plan lists ports Stable does
+      # not have (and cannot build) and lacks Stable's overlays.
       - name: Check out the ports overlays
         run: |
           set -euo pipefail
-          git clone --quiet --depth 1 https://github.com/FreeSense-org/freesense-system-ports.git "${RUNNER_TEMP}/overlay-system"
-          git clone --quiet --depth 1 https://github.com/FreeSense-org/freesense-packages.git "${RUNNER_TEMP}/overlay-packages"
+          stable_train=$(jq -er .release.stable_train config/build-policy.json)
+          stable_branch="RELENG_${stable_train//./_}"
+          echo "STABLE_TRAIN=${stable_train}" >>"${GITHUB_ENV}"
+          echo "STABLE_BRANCH=${stable_branch}" >>"${GITHUB_ENV}"
+          for repo in system-ports packages; do
+            name=freesense-${repo}
+            git clone --quiet --depth 1 "https://github.com/FreeSense-org/${name}.git" "${RUNNER_TEMP}/overlay-development-${repo}"
+            git clone --quiet --depth 1 --branch "${stable_branch}" "https://github.com/FreeSense-org/${name}.git" "${RUNNER_TEMP}/overlay-stable-${repo}"
+          done
 
       - id: missing
         name: Find architectures without a current mirror
@@ -56,24 +68,33 @@ jobs:
           RECUT: ${{ inputs.recut || false }}
         run: |
           set -euo pipefail
-          overlays=(--overlay "${RUNNER_TEMP}/overlay-system" --overlay "${RUNNER_TEMP}/overlay-packages")
-          if [[ ${RECUT} == true ]]; then
-            archs=$(python3 -c 'import sys; sys.path.insert(0, "scripts"); from multiarch_pin import ARCHES; print(" ".join(ARCHES))')
-          else
-            archs=$(python3 scripts/pin_mirrors.py "${overlays[@]}" missing | tr '\n' ' ' | sed 's/ *$//')
-          fi
-          echo "archs=${archs}" >>"${GITHUB_OUTPUT}"
-          if [[ -z ${archs} ]]; then
-            echo "Every architecture already has a pinned mirror."
-          else
-            echo "Cutting mirrors for: ${archs}"
-          fi
+          all_archs=$(python3 -c 'import sys; sys.path.insert(0, "scripts"); from multiarch_pin import ARCHES; print(" ".join(ARCHES))')
+          summary=""
+          for kind in development stable; do
+            overlays=(--overlay "${RUNNER_TEMP}/overlay-${kind}-system-ports" --overlay "${RUNNER_TEMP}/overlay-${kind}-packages")
+            train_args=()
+            [[ ${kind} == development ]] || train_args=(--train "${STABLE_TRAIN}")
+            if [[ ${RECUT} == true ]]; then
+              archs=${all_archs}
+            else
+              archs=$(python3 scripts/pin_mirrors.py "${train_args[@]}" "${overlays[@]}" missing | tr '\n' ' ' | sed 's/ *$//')
+            fi
+            echo "archs_${kind}=${archs}" >>"${GITHUB_OUTPUT}"
+            if [[ -z ${archs} ]]; then
+              echo "The ${kind} train already has a current mirror for every architecture."
+            else
+              echo "Cutting ${kind} mirrors for: ${archs}"
+              summary+="${kind}: ${archs}; "
+            fi
+          done
+          echo "archs=${summary}" >>"${GITHUB_OUTPUT}"
           sha256sum config/freebsd-16.json | cut -d' ' -f1 >"${RUNNER_TEMP}/pin.sha256"
 
-      - name: Observe, then mirror, each architecture
+      - name: Observe, then mirror, each architecture of each train
         if: steps.missing.outputs.archs != ''
         env:
-          ARCHS: ${{ steps.missing.outputs.archs }}
+          ARCHS_DEVELOPMENT: ${{ steps.missing.outputs.archs_development }}
+          ARCHS_STABLE: ${{ steps.missing.outputs.archs_stable }}
         run: |
           set -euo pipefail
           # gh workflow run prints no run id. Dispatches happen one at a time,
@@ -93,39 +114,61 @@ jobs:
             echo "no ${workflow} run appeared for ${arch}" >&2
             return 1
           }
-          declare -A observe
-          for arch in ${ARCHS}; do
-            observe[${arch}]=$(dispatch observe.yml "${arch}")
-            echo "Observe ${arch}: run ${observe[${arch}]}"
-          done
-          for arch in ${ARCHS}; do
-            gh run watch "${observe[${arch}]}" --interval 60 --exit-status >/dev/null
-            echo "Observe ${arch} succeeded"
-          done
-          source_sha=$(gh api repos/FreeSense-org/freesense/commits/main --jq .sha)
-          generation=$(date -u +%s)
-          declare -A mirror
-          for arch in ${ARCHS}; do
-            mirror[${arch}]=$(dispatch mirror.yml "${arch}" \
-              -f "observe_run_id=${observe[${arch}]}" -f "source_sha=${source_sha}" \
-              -f "generation=${generation}")
-            echo "Mirror ${arch}: run ${mirror[${arch}]}"
-          done
-          args=()
-          for arch in ${ARCHS}; do
-            gh run watch "${mirror[${arch}]}" --interval 60 --exit-status >/dev/null
-            echo "Mirror ${arch} succeeded"
-            gh run download "${mirror[${arch}]}" --name "mirror-${arch}" --dir "${RUNNER_TEMP}/mirror-${arch}"
-            args+=(--mirror "${arch}" "${RUNNER_TEMP}/mirror-${arch}")
-          done
+          # Cut the mirrors of one train: observe every architecture, then
+          # mirror every architecture, leaving the downloaded plans in
+          # ${RUNNER_TEMP}/mirror-<train>-<arch>.
+          cut_train() {
+            kind=$1 archs=$2 source_sha=$3
+            declare -A observe mirror
+            for arch in ${archs}; do
+              observe[${arch}]=$(dispatch observe.yml "${arch}" -f "train=${kind}")
+              echo "Observe ${kind} ${arch}: run ${observe[${arch}]}"
+            done
+            for arch in ${archs}; do
+              gh run watch "${observe[${arch}]}" --interval 60 --exit-status >/dev/null
+              echo "Observe ${kind} ${arch} succeeded"
+            done
+            generation=$(date -u +%s)
+            for arch in ${archs}; do
+              mirror[${arch}]=$(dispatch mirror.yml "${arch}" \
+                -f "observe_run_id=${observe[${arch}]}" -f "source_sha=${source_sha}" \
+                -f "generation=${generation}" -f "train=${kind}")
+              echo "Mirror ${kind} ${arch}: run ${mirror[${arch}]}"
+            done
+            for arch in ${archs}; do
+              gh run watch "${mirror[${arch}]}" --interval 60 --exit-status >/dev/null
+              echo "Mirror ${kind} ${arch} succeeded"
+              gh run download "${mirror[${arch}]}" --name "mirror-${arch}" --dir "${RUNNER_TEMP}/mirror-${kind}-${arch}"
+            done
+          }
+          # One train after the other: each observe and mirror run already
+          # serializes per architecture, and the broker issues the mirror
+          # credential to one mirror run at a time.
+          if [[ -n ${ARCHS_DEVELOPMENT} ]]; then
+            cut_train development "${ARCHS_DEVELOPMENT}" "$(gh api repos/FreeSense-org/freesense/commits/main --jq .sha)"
+          fi
+          if [[ -n ${ARCHS_STABLE} ]]; then
+            cut_train stable "${ARCHS_STABLE}" "$(gh api "repos/FreeSense-org/freesense/commits/${STABLE_BRANCH}" --jq .sha)"
+          fi
           git fetch --no-tags origin main
           git show origin/main:config/freebsd-16.json | sha256sum | cut -d' ' -f1 | cmp -s - "${RUNNER_TEMP}/pin.sha256" || {
             echo "the pin on main changed while mirrors were cut; the next run starts over" >&2
             exit 1
           }
-          overlays=(--overlay "${RUNNER_TEMP}/overlay-system" --overlay "${RUNNER_TEMP}/overlay-packages")
-          python3 scripts/pin_mirrors.py "${overlays[@]}" record "${args[@]}"
-          python3 scripts/pin_mirrors.py "${overlays[@]}" missing | { ! grep -q .; }
+          for kind in development stable; do
+            archs_var=ARCHS_${kind^^}
+            archs=${!archs_var}
+            [[ -n ${archs} ]] || continue
+            overlays=(--overlay "${RUNNER_TEMP}/overlay-${kind}-system-ports" --overlay "${RUNNER_TEMP}/overlay-${kind}-packages")
+            train_args=()
+            [[ ${kind} == development ]] || train_args=(--train "${STABLE_TRAIN}")
+            args=()
+            for arch in ${archs}; do
+              args+=(--mirror "${arch}" "${RUNNER_TEMP}/mirror-${kind}-${arch}")
+            done
+            python3 scripts/pin_mirrors.py "${train_args[@]}" "${overlays[@]}" record "${args[@]}"
+            python3 scripts/pin_mirrors.py "${train_args[@]}" "${overlays[@]}" missing | { ! grep -q .; }
+          done
 
       - name: Open or update the single mirror PR
         if: steps.missing.outputs.archs != ''

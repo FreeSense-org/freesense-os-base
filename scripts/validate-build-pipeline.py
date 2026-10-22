@@ -58,9 +58,10 @@ require("force:" not in pin_workflow and "FORCE_PIN" not in pin_workflow,
 pin_mirrors_workflow = read(".github/workflows/pin-mirrors.yml")
 # The overlays decide which ports are source-built, so both the staleness check
 # and the recorded mirror must see them.
-for value in ('scripts/pin_mirrors.py "${overlays[@]}" missing',
-              'scripts/pin_mirrors.py "${overlays[@]}" record',
-              "overlay-system", "overlay-packages",
+# Each package train is cut from its own branch's overlays: Stable's differ.
+for value in ('scripts/pin_mirrors.py "${train_args[@]}" "${overlays[@]}" missing',
+              'scripts/pin_mirrors.py "${train_args[@]}" "${overlays[@]}" record',
+              "overlay-development-", "overlay-stable-", '-f "train=${kind}"',
               "dispatch observe.yml", "dispatch mirror.yml", "gh pr merge"):
     require(value in pin_mirrors_workflow, f"pin-mirrors is missing {value!r}")
 require("uses: ./.github/workflows/mirror.yml" not in pin_mirrors_workflow,
@@ -140,7 +141,7 @@ require("cron: '0 1 * * *'" in multiarch_workflow,
         "the daily multiarch cycle is not fixed at 01:00 UTC")
 retention_workflow = read(".github/workflows/retention.yml")
 for value in ('cron: "30 4 * * *"', "scripts/r2_retention.py",
-              "--keep-devel 4", "--keep-mirrors 2", "--orphan-grace-hours 168",
+              "--keep-devel 4", "--keep-mirrors 4", "--orphan-grace-hours 168",
               "--completed-grace-hours 0", "--keep-smoke 1",
               "--role retention-build-reader",
               "--role retention-download-reader",

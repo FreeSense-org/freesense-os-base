@@ -28,6 +28,11 @@ on:
         description: Generation to record on the published artifact
         type: string
         default: '1'
+      train:
+        description: Package train of the observation run (development or stable)
+        type: choice
+        options: [development, stable]
+        default: development
 
 permissions: {contents: read, id-token: write}
 concurrency:
@@ -63,10 +68,11 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           OBSERVE_RUN_ID: ${{ inputs.observe_run_id }}
+          TRAIN_SUFFIX: ${{ inputs.train == 'stable' && '-stable' || '' }}
         run: |
           set -euo pipefail
           gh run download "${OBSERVE_RUN_ID}" --repo "${GITHUB_REPOSITORY}" \
-            --name "freebsd-pin-${ARCH}-observed" --dir "${RUNNER_TEMP}/observed"
+            --name "freebsd-pin-${ARCH}${TRAIN_SUFFIX}-observed" --dir "${RUNNER_TEMP}/observed"
           plan=$(find "${RUNNER_TEMP}/observed" -name mirror-plan.json -print -quit)
           [[ -n ${plan} ]]
           summary=$(find "${RUNNER_TEMP}/observed" -name summary.json -print -quit)

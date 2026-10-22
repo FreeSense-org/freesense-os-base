@@ -14,7 +14,7 @@ from datetime import datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from multiarch_pin import ARCHES, SHA256, validate, with_source_archives  # noqa: E402
+from multiarch_pin import ARCHES, SHA256, TRAIN, validate, with_source_archives  # noqa: E402
 
 COMMIT = re.compile(r"[0-9a-f]{40}")
 
@@ -35,8 +35,15 @@ def overlay_origins(directories: list[Path]) -> list[str]:
     return sorted(origins)
 
 
-def missing(pin: dict, overlays: list[str] | None = None) -> list[str]:
-    """Architectures whose pin target needs a (new) mirror.
+def pinned_mirror(target: dict, train: str | None) -> dict | None:
+    """The mirror pinned for one package train: `mirror` is Development's."""
+    if train:
+        return (target.get("train_mirrors") or {}).get(train)
+    return target.get("mirror")
+
+
+def missing(pin: dict, overlays: list[str] | None = None, train: str | None = None) -> list[str]:
+    """Architectures whose pin target needs a (new) mirror for a package train.
 
     An architecture needs one when it has none, or when its mirror was cut for
     a different set of overlaid ports than the overlays have now. A mirror cut
@@ -44,7 +51,7 @@ def missing(pin: dict, overlays: list[str] | None = None) -> list[str]:
     """
     stale = []
     for arch in ARCHES:
-        mirror = pin["targets"][arch].get("mirror")
+        mirror = pinned_mirror(pin["targets"][arch], train)
         if not mirror:
             stale.append(arch)
         elif overlays is not None and "overlay_origins" in mirror and mirror["overlay_origins"] != overlays:
@@ -77,10 +84,13 @@ def ports_archive(entry: dict, archive: dict) -> dict[str, dict]:
 
 
 def apply(pin: dict, mirrors: dict[str, dict], *, now: datetime | None = None,
-          archives: dict[str, dict] | None = None) -> dict:
+          archives: dict[str, dict] | None = None, train: str | None = None) -> dict:
     updated = json.loads(json.dumps(pin))
     for arch, entry in mirrors.items():
-        updated["targets"][arch]["mirror"] = entry
+        if train:
+            updated["targets"][arch].setdefault("train_mirrors", {})[train] = entry
+        else:
+            updated["targets"][arch]["mirror"] = entry
     # Re-cutting a mirror moves its ports commit; the old commit's archive goes.
     updated = with_source_archives(updated, archives or {})
     validate(updated, now=now)
@@ -91,6 +101,8 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--pin", type=Path, default=Path("config/freebsd-16.json"))
     sub = parser.add_subparsers(dest="command", required=True)
+    parser.add_argument("--train", default=None,
+                        help="package train whose own mirror this is (default: the Development mirror)")
     parser.add_argument("--overlay", type=Path, action="append", default=None,
                         help="a FreeSense ports overlay checkout (freesense-system-ports, freesense-packages)")
     sub.add_parser("missing", help="print the architectures that need a mirror, one per line")
@@ -98,10 +110,12 @@ def main() -> None:
     record.add_argument("--mirror", nargs=2, action="append", metavar=("ARCH", "DIR"), required=True,
                         help="architecture and the directory holding its mirror-plan(.blob).json")
     args = parser.parse_args()
+    if args.train is not None and not TRAIN.fullmatch(args.train):
+        raise SystemExit(f"not a package train: {args.train}")
     pin = json.loads(args.pin.read_text(encoding="utf-8"))
     overlays = overlay_origins(args.overlay) if args.overlay else None
     if args.command == "missing":
-        for arch in missing(pin, overlays):
+        for arch in missing(pin, overlays, args.train):
             print(arch)
         return
     mirrors, archives = {}, {}
@@ -117,7 +131,7 @@ def main() -> None:
             archives.update(ports_archive(mirrors[arch], json.loads(archive.read_text(encoding="utf-8"))))
         else:
             print(f"{arch} mirror has no stored ports archive; its builds fetch ports from GitHub")
-    args.pin.write_text(json.dumps(apply(pin, mirrors, archives=archives), indent=2, sort_keys=True) + "\n",
+    args.pin.write_text(json.dumps(apply(pin, mirrors, archives=archives, train=args.train), indent=2, sort_keys=True) + "\n",
                         encoding="utf-8", newline="\n")
 
 

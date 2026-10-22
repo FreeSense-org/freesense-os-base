@@ -26,10 +26,18 @@ on:
         description: Evaluate this ports commit instead of the one the catalogue reports
         type: string
         default: ''
+      train:
+        description: >-
+          Package train to evaluate. development reads main of the FreeSense
+          repositories; stable reads the Stable release branch, whose packages
+          and overlays differ from Development's and so need a plan of their own.
+        type: choice
+        options: [development, stable]
+        default: development
 
 permissions: {contents: read}
 concurrency:
-  group: observe-${{ inputs.architecture }}
+  group: observe-${{ inputs.architecture }}-${{ inputs.train }}
   cancel-in-progress: true
 
 jobs:
@@ -98,14 +106,31 @@ jobs:
       - name: Evaluate the ports tree at that commit
         env:
           OBSERVED: ${{ steps.observed.outputs.commit }}
+          TRAIN_KIND: ${{ inputs.train }}
         run: |
           set -euo pipefail
           target="${RUNNER_TEMP}/observe"
+          # The plan lists the ports the FreeSense sources build, so a train is
+          # evaluated from its own branch, with its own version and train.
+          if [[ ${TRAIN_KIND} == stable ]]; then
+            PACKAGE_TRAIN=$(jq -er .release.stable_train config/build-policy.json)
+            PRODUCT_VERSION="${PACKAGE_TRAIN}.0"
+            SOURCE_REF="refs/heads/RELENG_${PACKAGE_TRAIN//./_}"
+          else
+            PACKAGE_TRAIN=$(jq -er .release.development_train config/build-policy.json)
+            PRODUCT_VERSION=$(jq -er .release.development_version config/build-policy.json)
+            SOURCE_REF=refs/heads/main
+          fi
+          echo "Evaluating train ${PACKAGE_TRAIN} (${PRODUCT_VERSION}) from ${SOURCE_REF}"
           image_sha=$(jq -er --arg arch "${ARCH}" '.targets[$arch].worker_image.sha256' config/freebsd-16.json)
           tools_sha=$(jq -er --arg arch "${ARCH}" '.targets[$arch].worker_tools.sha256' config/freebsd-16.json)
           public_base=$(jq -er .public_base_url config/build-policy.json)
           for repo in freesense freesense-system-ports freesense-packages freesense-os-base; do
-            sha=$(git ls-remote "https://github.com/FreeSense-org/${repo}.git" refs/heads/main | cut -f1)
+            # The build scripts always come from os-base main; only the product
+            # sources and the overlays follow the train.
+            ref=${SOURCE_REF}
+            [[ ${repo} != freesense-os-base ]] || ref=refs/heads/main
+            sha=$(git ls-remote "https://github.com/FreeSense-org/${repo}.git" "${ref}" | cut -f1)
             [[ ${sha} =~ ^[0-9a-f]{40}$ ]]
             printf '%s\n' "${sha}" >"${target}/${repo}.sha"
           done
@@ -158,10 +183,10 @@ jobs:
             git -C "/root/\${name}" checkout --detach "\${revision}"
           done
           mkdir -p /usr/local/etc/poudriere.d
-          sed -e 's,%%PRODUCT_NAME%%,FreeSense,g' -e 's,%%PRODUCT_VERSION%%,1.2.0,g' \
-            -e 's,%%FREESENSE_PACKAGE_TRAIN%%,1.2,g' /root/source/tools/conf/pfPorts/make.conf \
+          sed -e 's,%%PRODUCT_NAME%%,FreeSense,g' -e 's,%%PRODUCT_VERSION%%,${PRODUCT_VERSION},g' \
+            -e 's,%%FREESENSE_PACKAGE_TRAIN%%,${PACKAGE_TRAIN},g' /root/source/tools/conf/pfPorts/make.conf \
             >/usr/local/etc/poudriere.d/FreeSense_main-make.conf
-          printf 'PRODUCT_NAME=FreeSense\nPRODUCT_VERSION=1.2.0\nFREESENSE_PACKAGE_TRAIN=1.2\nPOUDRIERE_PORTS_NAME=FreeSense_main\n' \
+          printf 'PRODUCT_NAME=FreeSense\nPRODUCT_VERSION=${PRODUCT_VERSION}\nFREESENSE_PACKAGE_TRAIN=${PACKAGE_TRAIN}\nPOUDRIERE_PORTS_NAME=FreeSense_main\n' \
             >>/usr/local/etc/poudriere.d/FreeSense_main-make.conf
           PIN_ARCH='${ARCH}' python3 - <<'PY' >/root/roots.json
           import json
@@ -239,7 +264,7 @@ jobs:
       - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
         if: always()
         with:
-          name: freebsd-pin-${{ inputs.architecture }}-observed
+          name: freebsd-pin-${{ inputs.architecture }}${{ inputs.train == 'stable' && '-stable' || '' }}-observed
           path: |
             ${{ runner.temp }}/observe/report/
             ${{ runner.temp }}/observe/evaluated.json
