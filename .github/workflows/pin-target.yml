@@ -236,7 +236,8 @@ jobs:
             python3 /root/os-definition/scripts/package_requirements.py \
               --ports /root/ports --make-conf /usr/local/etc/poudriere.d/FreeSense_main-make.conf \
               --architecture '${ARCH}' --ports-sha "\${candidate}" \
-              --roots /root/roots.json --output /root/requirements.json
+              --roots /root/roots.json --overlay /root/system --overlay /root/packages \
+              --output /root/requirements.json
             jq -cn --arg commit "\${candidate}" --arg committed_at "\${committed_at}" \
               --slurpfile requirements /root/requirements.json \
               '{commit:\$commit,committed_at:\$committed_at,requirements:\$requirements[0]}' \

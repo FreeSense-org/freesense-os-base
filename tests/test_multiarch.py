@@ -268,6 +268,20 @@ class RequirementsCollectorTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "directive"):
             package_requirements.audit_make_conf('.include "other.conf"\n')
 
+    def test_an_overlay_upstream_has_caught_up_with_is_still_overlaid(self):
+        # lang/php85 8.5.12 reached the ports tree the overlay was written for:
+        # the copied-in files equal upstream, so the git diff is empty. The stage
+        # builds the port from source regardless, so the plan must not mirror it.
+        with tempfile.TemporaryDirectory() as directory:
+            overlay = Path(directory)
+            (overlay / "lang/php85").mkdir(parents=True)
+            (overlay / "lang/php85/Makefile").write_text("PORTNAME=php85\n")
+            overlaid = set(package_requirements.overlay_origins([overlay]))
+        self.assertTrue(package_requirements.is_overlaid("lang/php85", set(), overlaid))
+        self.assertFalse(package_requirements.is_overlaid("lang/php84", set(), overlaid))
+        # A file the overlay adds to a port without a Makefile of its own still counts.
+        self.assertTrue(package_requirements.is_overlaid("lang/php84", {"lang/php84/files/patch-x"}, overlaid))
+
     def test_dependency_origins_preserve_flavors_and_reject_unsupported_subpackages(self):
         self.assertEqual(package_requirements.dependency_origin("git>=2:devel/git@tiny"), "devel/git@tiny")
         for value in ("pkg:../outside", "pkg:devel/lib~dev", "unresolved", "pkg:/absolute/path"):
@@ -277,6 +291,7 @@ class RequirementsCollectorTests(unittest.TestCase):
     def test_collects_build_dependencies_without_misclassifying_them_as_runtime_dependencies(self):
         collector = object.__new__(package_requirements.Collector)
         collector.abi, collector.knobs, collector.changed = "FreeBSD:16:amd64", set(), set()
+        collector.overlaid = set()
         collector.records, collector.by_origin = {}, {}
         def values(origin, names):
             result = {name: "" for name in names}
@@ -315,6 +330,7 @@ class RequirementsCollectorTests(unittest.TestCase):
     def test_collector_handles_origin_aliases_for_identical_package(self):
         collector = object.__new__(package_requirements.Collector)
         collector.abi, collector.knobs, collector.changed = "FreeBSD:16:amd64", set(), set()
+        collector.overlaid = set()
         collector.records, collector.by_origin = {}, {}
         def values(origin, names):
             result = {name: "" for name in names}
@@ -330,6 +346,7 @@ class RequirementsCollectorTests(unittest.TestCase):
     def test_collector_rejects_conflicting_package_records(self):
         collector = object.__new__(package_requirements.Collector)
         collector.abi, collector.knobs, collector.changed = "FreeBSD:16:amd64", set(), set()
+        collector.overlaid = set()
         collector.records, collector.by_origin = {}, {}
         def values(origin, names):
             result = {name: "" for name in names}

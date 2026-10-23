@@ -16,6 +16,7 @@ import re
 import subprocess
 
 from multiarch_pin import ARCHES
+from pin_mirrors import overlay_origins
 
 # These assignments affect metadata, dependency selection, fetch location or
 # packaging, rather than silently changing a package's compiled interfaces.
@@ -66,9 +67,24 @@ def dependency_origin(value: str) -> str:
     return parts[1]
 
 
+def is_overlaid(path: str, changed: set[str], overlaid: set[str]) -> bool:
+    """Whether FreeSense carries a port, whatever the pinned ports tree says.
+
+    A git diff after the overlays are copied in sees only what differs from the
+    pinned commit. An overlay that upstream has caught up with (lang/php85 once
+    FreeBSD ships the version the overlay was written for) changes nothing and
+    drops out of the diff, yet the stage still builds it from source and refuses
+    a mirror plan that lists it. The overlay directories are what the stage
+    checks, so they decide here too.
+    """
+    return path in overlaid or any(item.startswith(path + "/") for item in changed)
+
+
 class Collector:
-    def __init__(self, ports: Path, make_conf: Path, architecture: str, ports_sha: str):
+    def __init__(self, ports: Path, make_conf: Path, architecture: str, ports_sha: str,
+                 overlays: list[Path] | None = None):
         self.ports, self.make_conf, self.architecture = ports.resolve(), make_conf.resolve(), architecture
+        self.overlaid = set(overlay_origins(overlays or []))
         self.abi = ARCHES[architecture]
         self.knobs = audit_make_conf(make_conf.read_text())
         self.records = {}
@@ -115,7 +131,7 @@ class Collector:
         record = {
             "name": name, "version": values["PKGVERSION"], "origin": values["PKGORIGIN"],
             "abi": self.abi, "options": options, "deps": {},
-            "overlay": any(changed.startswith(path + "/") for changed in self.changed),
+            "overlay": is_overlaid(path, self.changed, self.overlaid),
             "custom_patches": bool(values["EXTRA_PATCHES"]),
             "non_options_knobs": any(re.match(SOURCE_KNOBS[key], path) for key in self.knobs if key in SOURCE_KNOBS),
             "kernel_sensitive": "kmod" in values["USES"].split(),
@@ -163,10 +179,12 @@ if __name__ == "__main__":
     parser.add_argument("--architecture", choices=ARCHES, required=True)
     parser.add_argument("--ports-sha", required=True)
     parser.add_argument("--roots", type=Path, required=True)
+    parser.add_argument("--overlay", type=Path, action="append", default=[],
+                        help="a FreeSense ports overlay checkout (freesense-system-ports, freesense-packages)")
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     expected = "aarch64" if args.architecture == "arm64" else "amd64"
     if os.uname().sysname != "FreeBSD" or subprocess.check_output(["uname", "-p"], text=True).strip() != expected:
         raise SystemExit("requirements must be evaluated on the native target FreeBSD worker")
-    result = Collector(args.ports, args.make_conf, args.architecture, args.ports_sha).collect(json.loads(args.roots.read_text()))
+    result = Collector(args.ports, args.make_conf, args.architecture, args.ports_sha, args.overlay).collect(json.loads(args.roots.read_text()))
     args.output.write_text(json.dumps(result, sort_keys=True, indent=2) + "\n")
