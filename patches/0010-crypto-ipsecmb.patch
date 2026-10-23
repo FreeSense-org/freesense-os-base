@@ -1,0 +1,1742 @@
+diff --git a/sys/crypto/ipsecmb/compat/assert.h b/sys/crypto/ipsecmb/compat/assert.h
+new file mode 100644
+index 0000000..ccd7f5c
+--- /dev/null
++++ b/sys/crypto/ipsecmb/compat/assert.h
+@@ -0,0 +1,11 @@
++/*
++ * Kernel stand-in for <assert.h>, used only to build intel-ipsec-mb into ipsecmb(4).
++ */
++#ifndef _IPSECMB_COMPAT_ASSERT_H_
++#define _IPSECMB_COMPAT_ASSERT_H_
++#include <sys/param.h>
++#include <sys/systm.h>
++#ifndef assert
++#define assert(x) KASSERT((x), ("intel-ipsec-mb assertion: %s", #x))
++#endif
++#endif
+diff --git a/sys/crypto/ipsecmb/compat/errno.h b/sys/crypto/ipsecmb/compat/errno.h
+new file mode 100644
+index 0000000..b1ea8d5
+--- /dev/null
++++ b/sys/crypto/ipsecmb/compat/errno.h
+@@ -0,0 +1,8 @@
++/*
++ * Kernel stand-in for <errno.h>, used only to build intel-ipsec-mb into ipsecmb(4).
++ */
++#ifndef _IPSECMB_COMPAT_ERRNO_H_
++#define _IPSECMB_COMPAT_ERRNO_H_
++#include <sys/param.h>
++#include <sys/errno.h>
++#endif
+diff --git a/sys/crypto/ipsecmb/compat/limits.h b/sys/crypto/ipsecmb/compat/limits.h
+new file mode 100644
+index 0000000..296f6ad
+--- /dev/null
++++ b/sys/crypto/ipsecmb/compat/limits.h
+@@ -0,0 +1,8 @@
++/*
++ * Kernel stand-in for <limits.h>, used only to build intel-ipsec-mb into ipsecmb(4).
++ */
++#ifndef _IPSECMB_COMPAT_LIMITS_H_
++#define _IPSECMB_COMPAT_LIMITS_H_
++#include <sys/param.h>
++#include <sys/limits.h>
++#endif
+diff --git a/sys/crypto/ipsecmb/compat/malloc.h b/sys/crypto/ipsecmb/compat/malloc.h
+new file mode 100644
+index 0000000..c1d6475
+--- /dev/null
++++ b/sys/crypto/ipsecmb/compat/malloc.h
+@@ -0,0 +1,7 @@
++/*
++ * Kernel stand-in for <malloc.h>, used only to build intel-ipsec-mb into ipsecmb(4).
++ */
++#ifndef _IPSECMB_COMPAT_MALLOC_H_
++#define _IPSECMB_COMPAT_MALLOC_H_
++#include <stdlib.h>
++#endif
+diff --git a/sys/crypto/ipsecmb/compat/stddef.h b/sys/crypto/ipsecmb/compat/stddef.h
+new file mode 100644
+index 0000000..f82c38d
+--- /dev/null
++++ b/sys/crypto/ipsecmb/compat/stddef.h
+@@ -0,0 +1,8 @@
++/*
++ * Kernel stand-in for <stddef.h>, used only to build intel-ipsec-mb into ipsecmb(4).
++ */
++#ifndef _IPSECMB_COMPAT_STDDEF_H_
++#define _IPSECMB_COMPAT_STDDEF_H_
++#include <sys/param.h>
++#include <sys/stddef.h>
++#endif
+diff --git a/sys/crypto/ipsecmb/compat/stdint.h b/sys/crypto/ipsecmb/compat/stdint.h
+new file mode 100644
+index 0000000..7bc19a5
+--- /dev/null
++++ b/sys/crypto/ipsecmb/compat/stdint.h
+@@ -0,0 +1,8 @@
++/*
++ * Kernel stand-in for <stdint.h>, used only to build intel-ipsec-mb into ipsecmb(4).
++ */
++#ifndef _IPSECMB_COMPAT_STDINT_H_
++#define _IPSECMB_COMPAT_STDINT_H_
++#include <sys/param.h>
++#include <sys/stdint.h>
++#endif
+diff --git a/sys/crypto/ipsecmb/compat/stdio.h b/sys/crypto/ipsecmb/compat/stdio.h
+new file mode 100644
+index 0000000..1209862
+--- /dev/null
++++ b/sys/crypto/ipsecmb/compat/stdio.h
+@@ -0,0 +1,8 @@
++/*
++ * Kernel stand-in for <stdio.h>, used only to build intel-ipsec-mb into ipsecmb(4).
++ */
++#ifndef _IPSECMB_COMPAT_STDIO_H_
++#define _IPSECMB_COMPAT_STDIO_H_
++#include <sys/param.h>
++#include <sys/systm.h>
++#endif
+diff --git a/sys/crypto/ipsecmb/compat/stdlib.h b/sys/crypto/ipsecmb/compat/stdlib.h
+new file mode 100644
+index 0000000..7964db1
+--- /dev/null
++++ b/sys/crypto/ipsecmb/compat/stdlib.h
+@@ -0,0 +1,10 @@
++/*
++ * Kernel stand-in for <stdlib.h>, used only to build intel-ipsec-mb into ipsecmb(4).
++ */
++#ifndef _IPSECMB_COMPAT_STDLIB_H_
++#define _IPSECMB_COMPAT_STDLIB_H_
++#include <sys/param.h>
++/* alloc.c is built with free/memalign redirected here; neither is ever called. */
++void ipsecmb_lib_free(void *);
++void *ipsecmb_lib_memalign(size_t, size_t);
++#endif
+diff --git a/sys/crypto/ipsecmb/compat/string.h b/sys/crypto/ipsecmb/compat/string.h
+new file mode 100644
+index 0000000..a2d00f3
+--- /dev/null
++++ b/sys/crypto/ipsecmb/compat/string.h
+@@ -0,0 +1,15 @@
++/*
++ * Kernel stand-in for <string.h>, used only to build intel-ipsec-mb into ipsecmb(4).
++ */
++#ifndef _IPSECMB_COMPAT_STRING_H_
++#define _IPSECMB_COMPAT_STRING_H_
++#include <sys/param.h>
++#include <sys/systm.h>
++/* imb_get_strerror() falls back to strerror() for system errno values. */
++static inline const char *
++ipsecmb_strerror(int errnum)
++{
++	return (errnum == 0 ? "no error" : "system error");
++}
++#define strerror(e) ipsecmb_strerror(e)
++#endif
+diff --git a/sys/crypto/ipsecmb/ipsecmb.c b/sys/crypto/ipsecmb/ipsecmb.c
+new file mode 100644
+index 0000000..69b5ecd
+--- /dev/null
++++ b/sys/crypto/ipsecmb/ipsecmb.c
+@@ -0,0 +1,1155 @@
++/*-
++ * SPDX-License-Identifier: BSD-2-Clause
++ *
++ * Copyright (c) 2026 FreeSense
++ *
++ * Redistribution and use in source and binary forms, with or without
++ * modification, are permitted provided that the following conditions
++ * are met:
++ * 1. Redistributions of source code must retain the above copyright
++ *    notice, this list of conditions and the following disclaimer.
++ * 2. Redistributions in binary form must reproduce the above copyright
++ *    notice, this list of conditions and the following disclaimer in the
++ *    documentation and/or other materials provided with the distribution.
++ *
++ * THIS SOFTWARE IS PROVIDED BY THE AUTHOR AND CONTRIBUTORS ``AS IS'' AND
++ * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
++ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
++ * ARE DISCLAIMED.  IN NO EVENT SHALL THE AUTHOR OR CONTRIBUTORS BE LIABLE
++ * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
++ * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
++ * OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
++ * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
++ * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
++ * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
++ * SUCH DAMAGE.
++ */
++
++/*
++ * ipsecmb: an asynchronous OpenCrypto driver on Intel's multi-buffer crypto
++ * library (intel-ipsec-mb, sys/contrib/intel-ipsec-mb).
++ *
++ * The library processes several independent buffers at once in the SIMD
++ * lanes of one core. To give it several buffers, requests are not processed
++ * in the caller's context: cryptodev_process() queues them for a worker
++ * thread bound to the caller's CPU. The worker owns one IMB_MGR and an FPU
++ * context for its whole life, feeds the queued requests to the job manager,
++ * and finishes the jobs the manager hands back. When its queue runs dry it
++ * flushes the manager (or first waits flush_usec for more work, if set), so
++ * batches form under load and a lone packet is not held back.
++ *
++ * Supported: AES-GCM and ChaCha20-Poly1305 (AEAD), AES-CBC with HMAC-SHA1/
++ * SHA2-256/384/512 (ETA, also with a separate ESN), AES-CBC alone and the
++ * HMACs alone.
++ */
++
++#include <sys/param.h>
++#include <sys/systm.h>
++#include <sys/bus.h>
++#include <sys/counter.h>
++#include <sys/kernel.h>
++#include <sys/kthread.h>
++#include <sys/lock.h>
++#include <sys/malloc.h>
++#include <sys/module.h>
++#include <sys/mutex.h>
++#include <sys/proc.h>
++#include <sys/queue.h>
++#include <sys/sched.h>
++#include <sys/smp.h>
++#include <sys/sysctl.h>
++
++#include <vm/uma.h>
++
++#include <machine/fpu.h>
++#include <machine/md_var.h>
++#include <machine/specialreg.h>
++
++#include <opencrypto/cryptodev.h>
++
++#include <intel-ipsec-mb.h>
++
++#include "cryptodev_if.h"
++
++static MALLOC_DEFINE(M_IPSECMB, "ipsecmb", "Intel IPsec-MB crypto");
++
++/* Library threads get a larger stack: some AVX-512 routines keep big frames. */
++#define	IPSECMB_KSTACK_PAGES	8
++#define	IPSECMB_ESN_LEN		4
++#define	IPSECMB_AAD_INLINE	64
++#define	IPSECMB_TAG_MAX		IMB_SHA512_DIGEST_SIZE_IN_BYTES
++#define	IPSECMB_GCM_TAG_LEN	16
++#define	IPSECMB_MAX_LEN		65535	/* MB_MAX_LEN16: CBC and HMAC job limit */
++
++static SYSCTL_NODE(_hw, OID_AUTO, ipsecmb, CTLFLAG_RD | CTLFLAG_MPSAFE, 0,
++    "Intel IPsec-MB crypto driver");
++
++static int ipsecmb_arch_tunable = 0;
++SYSCTL_INT(_hw_ipsecmb, OID_AUTO, arch, CTLFLAG_RDTUN, &ipsecmb_arch_tunable, 0,
++    "Instruction set: 0 best available, 1 SSE, 2 AVX2, 3 AVX-512");
++static int ipsecmb_threads_tunable = 0;
++SYSCTL_INT(_hw_ipsecmb, OID_AUTO, threads, CTLFLAG_RDTUN, &ipsecmb_threads_tunable, 0,
++    "Worker threads (0: one per CPU)");
++static int ipsecmb_sync = 0;
++SYSCTL_INT(_hw_ipsecmb, OID_AUTO, sync, CTLFLAG_RWTUN, &ipsecmb_sync, 0,
++    "Debug: flush the job manager after every request (no batching)");
++/*
++ * 0 (default): flush as soon as the queue is empty. Batches still form
++ * whenever requests arrive faster than a worker drains them, and a quiet flow
++ * is never held back. A wait (in microseconds) trades latency for fuller
++ * batches; it depends on the event timer and hurt CBC+HMAC badly in tests.
++ */
++static int ipsecmb_flush_usec = 0;
++SYSCTL_INT(_hw_ipsecmb, OID_AUTO, flush_usec, CTLFLAG_RWTUN, &ipsecmb_flush_usec, 0,
++    "How long an idle worker waits for more work before flushing (microseconds, 0: flush at once)");
++
++/* Expanded keys: separately allocated so they can be 64-byte aligned. */
++struct ipsecmb_keys {
++	struct gcm_key_data	gcm __aligned(64);
++	uint32_t		enc[60] __aligned(64);
++	uint32_t		dec[60] __aligned(64);
++	uint8_t			chacha[32] __aligned(64);
++	uint8_t			ipad[IMB_SHA512_DIGEST_SIZE_IN_BYTES] __aligned(64);
++	uint8_t			opad[IMB_SHA512_DIGEST_SIZE_IN_BYTES] __aligned(64);
++};
++
++struct ipsecmb_session {
++	struct ipsecmb_keys	*keys;
++	void			*keys_mem;
++	IMB_CIPHER_MODE		cipher_mode;
++	IMB_HASH_ALG		hash_alg;
++	int			mode;		/* CSP_MODE_* */
++	int			esn;		/* CSP_F_ESN */
++	u_int			key_len;
++	u_int			mlen;
++};
++
++struct ipsecmb_req {
++	uint8_t			tag[IPSECMB_TAG_MAX] __aligned(16);
++	uint8_t			iv[16] __aligned(16);
++	uint8_t			aad_inline[IPSECMB_AAD_INLINE] __aligned(16);
++	STAILQ_ENTRY(ipsecmb_req) link;
++	struct cryptop		*crp;
++	struct ipsecmb_session	*ses;
++	struct ipsecmb_keys	*keys;		/* session or per-request keys */
++	void			*tmpkeys_mem;	/* per-request keys */
++	uint8_t			*bounce;	/* [aad][payload][esn] copy */
++	size_t			bounce_len;
++	uint8_t			*aad_alloc;
++	int			bounce_payload_off;
++};
++
++STAILQ_HEAD(ipsecmb_reqq, ipsecmb_req);
++
++struct ipsecmb_worker {
++	struct mtx		mtx;
++	struct ipsecmb_reqq	queue;
++	IMB_MGR			*mgr;
++	void			*mgr_mem;
++	struct thread		*td;
++	struct ipsecmb_softc	*sc;
++	int			cpu;
++	int			inflight;
++	bool			sleeping;
++	bool			stop;
++	bool			ready;
++	bool			running;
++} __aligned(CACHE_LINE_SIZE);
++
++struct ipsecmb_softc {
++	device_t		dev;
++	int32_t			cid;
++	int			nworkers;
++	struct ipsecmb_worker	*workers;
++	IMB_MGR			*setup_mgr;	/* key setup in newsession */
++	void			*setup_mem;
++	struct mtx		setup_mtx;
++	uma_zone_t		req_zone;
++	IMB_ARCH		arch;
++	uint64_t		features;
++	counter_u64_t		jobs;
++	counter_u64_t		flushes;
++	counter_u64_t		bounces;
++	counter_u64_t		errors;
++	counter_u64_t		enomem;
++	counter_u64_t		auth_failures;
++	int			last_status;	/* IMB_STATUS of the last failed job */
++	int			last_errno;	/* imb_get_errno() after it */
++};
++
++static const char *
++ipsecmb_arch_name(IMB_ARCH arch)
++{
++	switch (arch) {
++	case IMB_ARCH_SSE:
++		return ("SSE");
++	case IMB_ARCH_AVX2:
++		return ("AVX2");
++	case IMB_ARCH_AVX512:
++		return ("AVX-512");
++	default:
++		return ("none");
++	}
++}
++
++/* Memory for a job manager; allocated before entering an FPU section. */
++static void *
++ipsecmb_mgr_alloc(void)
++{
++	return (malloc(imb_get_mb_mgr_size() + 64, M_IPSECMB, M_WAITOK | M_ZERO));
++}
++
++static void
++ipsecmb_mgr_free(void *mem)
++{
++	if (mem == NULL)
++		return;
++	explicit_bzero(mem, imb_get_mb_mgr_size() + 64);
++	free(mem, M_IPSECMB);
++}
++
++/*
++ * Initialise a job manager in memory from ipsecmb_mgr_alloc(). The caller
++ * holds an FPU context (possibly a critical section): no sleeping here.
++ */
++static IMB_MGR *
++ipsecmb_mgr_init(struct ipsecmb_softc *sc, void *mem, IMB_ARCH *archp)
++{
++	IMB_MGR *mgr;
++
++	mgr = imb_set_pointers_mb_mgr((void *)roundup2((uintptr_t)mem, 64), 0, 1);
++	if (mgr == NULL)
++		return (NULL);
++	switch (ipsecmb_arch_tunable) {
++	case 1:
++		init_mb_mgr_sse(mgr);
++		*archp = IMB_ARCH_SSE;
++		break;
++	case 2:
++		init_mb_mgr_avx2(mgr);
++		*archp = IMB_ARCH_AVX2;
++		break;
++	case 3:
++		init_mb_mgr_avx512(mgr);
++		*archp = IMB_ARCH_AVX512;
++		break;
++	default:
++		init_mb_mgr_auto(mgr, archp);
++		break;
++	}
++	if (imb_get_errno(mgr) != 0 ||
++	    ((mgr->features & IMB_FEATURE_SELF_TEST) != 0 &&
++	    (mgr->features & IMB_FEATURE_SELF_TEST_PASS) == 0))
++		return (NULL);
++	return (mgr);
++}
++
++/* ------------------------------------------------------------------ */
++/* Sessions                                                            */
++/* ------------------------------------------------------------------ */
++
++static IMB_HASH_ALG
++ipsecmb_hmac_alg(int alg, u_int *full)
++{
++	switch (alg) {
++	case CRYPTO_SHA1_HMAC:
++		*full = IMB_SHA1_DIGEST_SIZE_IN_BYTES;
++		return (IMB_AUTH_HMAC_SHA_1);
++	case CRYPTO_SHA2_256_HMAC:
++		*full = IMB_SHA256_DIGEST_SIZE_IN_BYTES;
++		return (IMB_AUTH_HMAC_SHA_256);
++	case CRYPTO_SHA2_384_HMAC:
++		*full = IMB_SHA384_DIGEST_SIZE_IN_BYTES;
++		return (IMB_AUTH_HMAC_SHA_384);
++	case CRYPTO_SHA2_512_HMAC:
++		*full = IMB_SHA512_DIGEST_SIZE_IN_BYTES;
++		return (IMB_AUTH_HMAC_SHA_512);
++	default:
++		*full = 0;
++		return (IMB_AUTH_NULL);
++	}
++}
++
++/* The library accepts the full HMAC or its IPsec truncation (RFC 2404, 4868). */
++static bool
++ipsecmb_hmac_mlen_ok(u_int mlen, u_int full)
++{
++	return (mlen == 0 || mlen == full || mlen == full / 2 ||
++	    (full == IMB_SHA1_DIGEST_SIZE_IN_BYTES && mlen == 12));
++}
++
++static bool
++ipsecmb_aes_klen_ok(int klen)
++{
++	return (klen == 16 || klen == 24 || klen == 32);
++}
++
++static int
++ipsecmb_probesession(device_t dev, const struct crypto_session_params *csp)
++{
++	u_int full;
++
++	if ((csp->csp_flags & ~(CSP_F_SEPARATE_AAD | CSP_F_ESN)) != 0)
++		return (EINVAL);
++	/* Keys must come with the session; per-request keys are handled but slow. */
++	if (csp->csp_cipher_klen != 0 && csp->csp_cipher_key == NULL)
++		return (EINVAL);
++	if (csp->csp_auth_klen != 0 && csp->csp_auth_key == NULL)
++		return (EINVAL);
++
++	switch (csp->csp_mode) {
++	case CSP_MODE_AEAD:
++		if ((csp->csp_flags & CSP_F_ESN) != 0)
++			return (EINVAL);
++		switch (csp->csp_cipher_alg) {
++		case CRYPTO_AES_NIST_GCM_16:
++			if (!ipsecmb_aes_klen_ok(csp->csp_cipher_klen) ||
++			    csp->csp_ivlen != AES_GCM_IV_LEN ||
++			    (csp->csp_auth_mlen != 0 && csp->csp_auth_mlen != IPSECMB_GCM_TAG_LEN))
++				return (EINVAL);
++			break;
++		case CRYPTO_CHACHA20_POLY1305:
++			if (csp->csp_cipher_klen != 32 || csp->csp_ivlen != 12 ||
++			    (csp->csp_auth_mlen != 0 && csp->csp_auth_mlen != POLY1305_HASH_LEN))
++				return (EINVAL);
++			break;
++		default:
++			return (EINVAL);
++		}
++		break;
++	case CSP_MODE_ETA:
++		if (csp->csp_cipher_alg != CRYPTO_AES_CBC ||
++		    !ipsecmb_aes_klen_ok(csp->csp_cipher_klen) ||
++		    ipsecmb_hmac_alg(csp->csp_auth_alg, &full) == IMB_AUTH_NULL ||
++		    csp->csp_auth_klen == 0 ||
++		    !ipsecmb_hmac_mlen_ok(csp->csp_auth_mlen, full))
++			return (EINVAL);
++		break;
++	case CSP_MODE_CIPHER:
++		if ((csp->csp_flags & CSP_F_ESN) != 0 ||
++		    csp->csp_cipher_alg != CRYPTO_AES_CBC ||
++		    !ipsecmb_aes_klen_ok(csp->csp_cipher_klen))
++			return (EINVAL);
++		break;
++	case CSP_MODE_DIGEST:
++		if ((csp->csp_flags & CSP_F_ESN) != 0 ||
++		    ipsecmb_hmac_alg(csp->csp_auth_alg, &full) == IMB_AUTH_NULL ||
++		    csp->csp_auth_klen == 0 ||
++		    !ipsecmb_hmac_mlen_ok(csp->csp_auth_mlen, full))
++			return (EINVAL);
++		break;
++	default:
++		return (EINVAL);
++	}
++	return (CRYPTODEV_PROBE_ACCEL_SOFTWARE);
++}
++
++static struct ipsecmb_keys *
++ipsecmb_keys_alloc(void **memp, int how)
++{
++	void *mem;
++
++	mem = malloc(sizeof(struct ipsecmb_keys) + 64, M_IPSECMB, how | M_ZERO);
++	if (mem == NULL)
++		return (NULL);
++	*memp = mem;
++	return ((struct ipsecmb_keys *)roundup2((uintptr_t)mem, 64));
++}
++
++static void
++ipsecmb_keys_free(void *mem)
++{
++	struct ipsecmb_keys *keys;
++
++	if (mem == NULL)
++		return;
++	keys = (struct ipsecmb_keys *)roundup2((uintptr_t)mem, 64);
++	explicit_bzero(keys, sizeof(*keys));
++	free(mem, M_IPSECMB);
++}
++
++/* Expand the cipher and auth keys. The caller holds an FPU context. */
++static void
++ipsecmb_keys_setup(IMB_MGR *mgr, const struct ipsecmb_session *ses,
++    struct ipsecmb_keys *keys, const void *ckey, const void *akey, int aklen)
++{
++	if (ckey != NULL) {
++		switch (ses->cipher_mode) {
++		case IMB_CIPHER_GCM:
++			if (ses->key_len == 16)
++				IMB_AES128_GCM_PRE(mgr, ckey, &keys->gcm);
++			else if (ses->key_len == 24)
++				IMB_AES192_GCM_PRE(mgr, ckey, &keys->gcm);
++			else
++				IMB_AES256_GCM_PRE(mgr, ckey, &keys->gcm);
++			break;
++		case IMB_CIPHER_CBC:
++			if (ses->key_len == 16)
++				IMB_AES_KEYEXP_128(mgr, ckey, keys->enc, keys->dec);
++			else if (ses->key_len == 24)
++				IMB_AES_KEYEXP_192(mgr, ckey, keys->enc, keys->dec);
++			else
++				IMB_AES_KEYEXP_256(mgr, ckey, keys->enc, keys->dec);
++			break;
++		case IMB_CIPHER_CHACHA20_POLY1305:
++			memcpy(keys->chacha, ckey, sizeof(keys->chacha));
++			break;
++		default:
++			break;
++		}
++	}
++	if (akey != NULL && ses->hash_alg != IMB_AUTH_NULL &&
++	    ses->cipher_mode != IMB_CIPHER_GCM &&
++	    ses->cipher_mode != IMB_CIPHER_CHACHA20_POLY1305)
++		imb_hmac_ipad_opad(mgr, ses->hash_alg, akey, aklen, keys->ipad,
++		    keys->opad);
++}
++
++static int
++ipsecmb_newsession(device_t dev, crypto_session_t cses,
++    const struct crypto_session_params *csp)
++{
++	struct ipsecmb_softc *sc = device_get_softc(dev);
++	struct ipsecmb_session *ses;
++	u_int full = 0;
++	bool fpu_entered;
++
++	ses = crypto_get_driver_session(cses);
++	ses->mode = csp->csp_mode;
++	ses->esn = (csp->csp_flags & CSP_F_ESN) != 0;
++	ses->key_len = csp->csp_cipher_klen;
++	ses->cipher_mode = IMB_CIPHER_NULL;
++	ses->hash_alg = IMB_AUTH_NULL;
++
++	switch (csp->csp_mode) {
++	case CSP_MODE_AEAD:
++		if (csp->csp_cipher_alg == CRYPTO_AES_NIST_GCM_16) {
++			/*
++			 * GCM jobs use IMB_AUTH_AES_GMAC for every key size;
++			 * the _192/_256 variants are for standalone GMAC.
++			 */
++			ses->cipher_mode = IMB_CIPHER_GCM;
++			ses->hash_alg = IMB_AUTH_AES_GMAC;
++		} else {
++			ses->cipher_mode = IMB_CIPHER_CHACHA20_POLY1305;
++			ses->hash_alg = IMB_AUTH_CHACHA20_POLY1305;
++		}
++		ses->mlen = 16;
++		break;
++	case CSP_MODE_ETA:
++		ses->cipher_mode = IMB_CIPHER_CBC;
++		ses->hash_alg = ipsecmb_hmac_alg(csp->csp_auth_alg, &full);
++		ses->mlen = csp->csp_auth_mlen != 0 ? csp->csp_auth_mlen : full;
++		break;
++	case CSP_MODE_CIPHER:
++		ses->cipher_mode = IMB_CIPHER_CBC;
++		break;
++	case CSP_MODE_DIGEST:
++		ses->hash_alg = ipsecmb_hmac_alg(csp->csp_auth_alg, &full);
++		ses->mlen = csp->csp_auth_mlen != 0 ? csp->csp_auth_mlen : full;
++		break;
++	default:
++		return (EINVAL);
++	}
++
++	ses->keys = ipsecmb_keys_alloc(&ses->keys_mem, M_WAITOK);
++
++	mtx_lock(&sc->setup_mtx);
++	if (is_fpu_kern_thread(0)) {
++		fpu_entered = false;
++	} else {
++		fpu_kern_enter(curthread, NULL, FPU_KERN_NOCTX);
++		fpu_entered = true;
++	}
++	ipsecmb_keys_setup(sc->setup_mgr, ses, ses->keys, csp->csp_cipher_key,
++	    csp->csp_auth_key, csp->csp_auth_klen);
++	if (fpu_entered)
++		fpu_kern_leave(curthread, NULL);
++	mtx_unlock(&sc->setup_mtx);
++	return (0);
++}
++
++static void
++ipsecmb_freesession(device_t dev, crypto_session_t cses)
++{
++	struct ipsecmb_session *ses;
++
++	ses = crypto_get_driver_session(cses);
++	ipsecmb_keys_free(ses->keys_mem);
++	ses->keys_mem = NULL;
++	ses->keys = NULL;
++}
++
++/* ------------------------------------------------------------------ */
++/* Requests                                                            */
++/* ------------------------------------------------------------------ */
++
++/* A pointer to [start, start + len) when that range is one segment of the buffer. */
++static uint8_t *
++ipsecmb_contig(struct crypto_buffer *cb, int start, int len)
++{
++	struct crypto_buffer_cursor cc;
++	size_t seglen;
++	void *p;
++
++	crypto_cursor_init(&cc, cb);
++	crypto_cursor_advance(&cc, start);
++	p = crypto_cursor_segment(&cc, &seglen);
++	if (p == NULL || seglen < (size_t)len)
++		return (NULL);
++	return (p);
++}
++
++static void
++ipsecmb_req_free(struct ipsecmb_softc *sc, struct ipsecmb_req *req)
++{
++	if (req->bounce != NULL) {
++		explicit_bzero(req->bounce, req->bounce_len);
++		free(req->bounce, M_IPSECMB);
++	}
++	if (req->aad_alloc != NULL)
++		free(req->aad_alloc, M_IPSECMB);
++	ipsecmb_keys_free(req->tmpkeys_mem);
++	explicit_bzero(req->tag, sizeof(req->tag));
++	uma_zfree(sc->req_zone, req);
++}
++
++static void
++ipsecmb_req_done(struct ipsecmb_softc *sc, struct ipsecmb_req *req, int error)
++{
++	struct cryptop *crp = req->crp;
++
++	if (error == EBADMSG)
++		counter_u64_add(sc->auth_failures, 1);
++	else if (error != 0)
++		counter_u64_add(sc->errors, 1);
++	ipsecmb_req_free(sc, req);
++	crp->crp_etype = error;
++	crypto_done(crp);
++}
++
++/* The AAD as one contiguous block, copied out of the buffer when it is split. */
++static const uint8_t *
++ipsecmb_req_aad(struct ipsecmb_req *req)
++{
++	struct cryptop *crp = req->crp;
++	uint8_t *p;
++
++	if (crp->crp_aad_length == 0)
++		return (req->aad_inline);
++	if (crp->crp_aad != NULL)
++		return (crp->crp_aad);
++	p = ipsecmb_contig(&crp->crp_buf, crp->crp_aad_start, crp->crp_aad_length);
++	if (p != NULL)
++		return (p);
++	if (crp->crp_aad_length <= IPSECMB_AAD_INLINE) {
++		p = req->aad_inline;
++	} else {
++		req->aad_alloc = malloc(crp->crp_aad_length, M_IPSECMB, M_NOWAIT);
++		if (req->aad_alloc == NULL)
++			return (NULL);
++		p = req->aad_alloc;
++	}
++	crypto_copydata(crp, crp->crp_aad_start, crp->crp_aad_length, p);
++	return (p);
++}
++
++/*
++ * Lay the data out for the job. AEAD and cipher-only jobs need the payload
++ * contiguous; ETA and digest jobs need [aad][payload][esn] contiguous, because
++ * the HMAC covers all of it. Use the buffer in place when it already is,
++ * otherwise copy into a bounce buffer (copied back on completion).
++ */
++static int
++ipsecmb_req_layout(struct ipsecmb_softc *sc, struct ipsecmb_req *req,
++    uint8_t **basep, int *hash_offp, int *hash_lenp, int *payload_offp)
++{
++	struct cryptop *crp = req->crp;
++	struct ipsecmb_session *ses = req->ses;
++	int aadlen, plen, esnlen;
++	bool hashed_aad;
++	uint8_t *p;
++
++	plen = crp->crp_payload_length;
++	hashed_aad = (ses->mode == CSP_MODE_ETA || ses->mode == CSP_MODE_DIGEST);
++	aadlen = hashed_aad ? crp->crp_aad_length : 0;
++	esnlen = (hashed_aad && ses->esn) ? IPSECMB_ESN_LEN : 0;
++
++	if (!hashed_aad || (aadlen == 0 && esnlen == 0)) {
++		p = ipsecmb_contig(&crp->crp_buf, crp->crp_payload_start, plen);
++		if (p != NULL || plen == 0) {
++			*basep = p != NULL ? p : req->tag;
++			*hash_offp = 0;
++			*hash_lenp = plen;
++			*payload_offp = 0;
++			return (0);
++		}
++	} else if (esnlen == 0 && crp->crp_aad == NULL &&
++	    crp->crp_aad_start + aadlen == crp->crp_payload_start) {
++		p = ipsecmb_contig(&crp->crp_buf, crp->crp_aad_start, aadlen + plen);
++		if (p != NULL) {
++			*basep = p;
++			*hash_offp = 0;
++			*hash_lenp = aadlen + plen;
++			*payload_offp = aadlen;
++			return (0);
++		}
++	}
++
++	req->bounce_len = aadlen + plen + esnlen;
++	req->bounce = malloc(MAX(req->bounce_len, 1), M_IPSECMB, M_NOWAIT);
++	if (req->bounce == NULL)
++		return (ENOMEM);
++	counter_u64_add(sc->bounces, 1);
++	if (aadlen != 0) {
++		if (crp->crp_aad != NULL)
++			memcpy(req->bounce, crp->crp_aad, aadlen);
++		else
++			crypto_copydata(crp, crp->crp_aad_start, aadlen, req->bounce);
++	}
++	crypto_copydata(crp, crp->crp_payload_start, plen, req->bounce + aadlen);
++	if (esnlen != 0)
++		memcpy(req->bounce + aadlen + plen, crp->crp_esn, esnlen);
++	req->bounce_payload_off = aadlen;
++	*basep = req->bounce;
++	*hash_offp = 0;
++	*hash_lenp = aadlen + plen + esnlen;
++	*payload_offp = aadlen;
++	return (0);
++}
++
++/* Fill an IMB_JOB from a request. The worker thread holds the FPU. */
++static int
++ipsecmb_fill_job(struct ipsecmb_worker *w, struct ipsecmb_req *req, IMB_JOB *job)
++{
++	struct cryptop *crp = req->crp;
++	struct ipsecmb_session *ses = req->ses;
++	const struct crypto_session_params *csp;
++	const uint8_t *aad = NULL;
++	uint8_t *base;
++	int error, hash_off, hash_len, payload_off;
++	bool encrypt;
++
++	csp = crypto_get_params(crp->crp_session);
++	encrypt = CRYPTO_OP_IS_ENCRYPT(crp->crp_op);
++
++	/* Per-request keys: expand them for this request only. */
++	req->keys = ses->keys;
++	if (crp->crp_cipher_key != NULL || crp->crp_auth_key != NULL) {
++		req->keys = ipsecmb_keys_alloc(&req->tmpkeys_mem, M_NOWAIT);
++		if (req->keys == NULL)
++			return (ENOMEM);
++		memcpy(req->keys, ses->keys, sizeof(*req->keys));
++		ipsecmb_keys_setup(w->mgr, ses, req->keys, crp->crp_cipher_key,
++		    crp->crp_auth_key, csp->csp_auth_klen);
++	}
++
++	if (ses->cipher_mode == IMB_CIPHER_CBC &&
++	    (crp->crp_payload_length % AES_BLOCK_LEN) != 0)
++		return (EINVAL);
++	/*
++	 * The job API takes at most 64 KiB - 1 for CBC and for HMAC. IPsec
++	 * packets never come close; larger /dev/crypto requests get EFBIG.
++	 */
++	if (ses->cipher_mode == IMB_CIPHER_CBC &&
++	    crp->crp_payload_length > IPSECMB_MAX_LEN)
++		return (EFBIG);
++	if ((ses->mode == CSP_MODE_ETA || ses->mode == CSP_MODE_DIGEST) &&
++	    crp->crp_aad_length + crp->crp_payload_length +
++	    (ses->esn ? IPSECMB_ESN_LEN : 0) > IPSECMB_MAX_LEN)
++		return (EFBIG);
++
++	if (ses->mode == CSP_MODE_AEAD) {
++		aad = ipsecmb_req_aad(req);
++		if (aad == NULL)
++			return (ENOMEM);
++	}
++	error = ipsecmb_req_layout(w->sc, req, &base, &hash_off, &hash_len,
++	    &payload_off);
++	if (error != 0)
++		return (error);
++	if (ses->cipher_mode != IMB_CIPHER_NULL)
++		crypto_read_iv(crp, req->iv);
++
++	/*
++	 * cipher_start_src_offset_in_bytes applies to src only: the library
++	 * writes the cipher output at dst itself, so dst is the payload.
++	 */
++	job->src = base;
++	job->dst = base + payload_off;
++	job->cipher_mode = ses->cipher_mode;
++	job->hash_alg = ses->hash_alg;
++	job->cipher_direction = encrypt ? IMB_DIR_ENCRYPT : IMB_DIR_DECRYPT;
++	/* Encrypt-then-MAC: hash the ciphertext, before decrypting it. */
++	job->chain_order = encrypt ? IMB_ORDER_CIPHER_HASH : IMB_ORDER_HASH_CIPHER;
++	job->key_len_in_bytes = ses->key_len;
++	job->cipher_start_src_offset_in_bytes = payload_off;
++	job->msg_len_to_cipher_in_bytes = crp->crp_payload_length;
++	job->hash_start_src_offset_in_bytes = hash_off;
++	job->msg_len_to_hash_in_bytes = hash_len;
++	job->iv = req->iv;
++	job->iv_len_in_bytes = csp->csp_ivlen;
++	job->auth_tag_output = req->tag;
++	job->auth_tag_output_len_in_bytes = ses->mlen;
++	job->user_data = req;
++
++	switch (ses->cipher_mode) {
++	case IMB_CIPHER_GCM:
++		job->enc_keys = &req->keys->gcm;
++		job->dec_keys = &req->keys->gcm;
++		job->hash_start_src_offset_in_bytes = payload_off;
++		job->msg_len_to_hash_in_bytes = crp->crp_payload_length;
++		job->u.GCM.aad = aad;
++		job->u.GCM.aad_len_in_bytes = crp->crp_aad_length;
++		job->u.GCM.ctx = NULL;
++		break;
++	case IMB_CIPHER_CHACHA20_POLY1305:
++		job->enc_keys = req->keys->chacha;
++		job->dec_keys = req->keys->chacha;
++		job->hash_start_src_offset_in_bytes = payload_off;
++		job->msg_len_to_hash_in_bytes = crp->crp_payload_length;
++		job->u.CHACHA20_POLY1305.aad = aad;
++		job->u.CHACHA20_POLY1305.aad_len_in_bytes = crp->crp_aad_length;
++		job->u.CHACHA20_POLY1305.ctx = NULL;
++		break;
++	case IMB_CIPHER_CBC:
++		job->enc_keys = req->keys->enc;
++		job->dec_keys = req->keys->dec;
++		break;
++	default:
++		job->enc_keys = NULL;
++		job->dec_keys = NULL;
++		job->msg_len_to_cipher_in_bytes = 0;
++		job->iv_len_in_bytes = 0;
++		break;
++	}
++	if (ses->mode == CSP_MODE_ETA || ses->mode == CSP_MODE_DIGEST) {
++		job->u.HMAC._hashed_auth_key_xor_ipad = req->keys->ipad;
++		job->u.HMAC._hashed_auth_key_xor_opad = req->keys->opad;
++	}
++	if (ses->mode == CSP_MODE_CIPHER) {
++		job->hash_alg = IMB_AUTH_NULL;
++		job->msg_len_to_hash_in_bytes = 0;
++		job->auth_tag_output = NULL;
++		job->auth_tag_output_len_in_bytes = 0;
++	}
++	return (0);
++}
++
++/* A job came back from the manager: copy results out and finish the request. */
++static void
++ipsecmb_complete_job(struct ipsecmb_worker *w, IMB_JOB *job)
++{
++	struct ipsecmb_req *req = job->user_data;
++	struct ipsecmb_session *ses = req->ses;
++	struct cryptop *crp = req->crp;
++	uint8_t want[IPSECMB_TAG_MAX];
++	int error = 0;
++
++	w->inflight--;
++	if (job->status != IMB_STATUS_COMPLETED) {
++		w->sc->last_status = job->status;
++		w->sc->last_errno = imb_get_errno(w->mgr);
++		ipsecmb_req_done(w->sc, req, EIO);
++		return;
++	}
++	if (req->bounce != NULL && ses->mode != CSP_MODE_DIGEST)
++		crypto_copyback(crp, crp->crp_payload_start, crp->crp_payload_length,
++		    req->bounce + req->bounce_payload_off);
++	if (ses->mode != CSP_MODE_CIPHER) {
++		if ((crp->crp_op & CRYPTO_OP_VERIFY_DIGEST) != 0 ||
++		    (ses->mode == CSP_MODE_AEAD && !CRYPTO_OP_IS_ENCRYPT(crp->crp_op))) {
++			crypto_copydata(crp, crp->crp_digest_start, ses->mlen, want);
++			if (timingsafe_bcmp(want, req->tag, ses->mlen) != 0)
++				error = EBADMSG;
++			explicit_bzero(want, sizeof(want));
++		} else {
++			crypto_copyback(crp, crp->crp_digest_start, ses->mlen, req->tag);
++		}
++	}
++	ipsecmb_req_done(w->sc, req, error);
++}
++
++static void
++ipsecmb_drain_completed(struct ipsecmb_worker *w, IMB_JOB *job)
++{
++	while (job != NULL) {
++		ipsecmb_complete_job(w, job);
++		job = IMB_GET_COMPLETED_JOB(w->mgr);
++	}
++}
++
++static void
++ipsecmb_flush(struct ipsecmb_worker *w)
++{
++	IMB_JOB *job;
++
++	if (w->inflight == 0)
++		return;
++	counter_u64_add(w->sc->flushes, 1);
++	while ((job = IMB_FLUSH_JOB(w->mgr)) != NULL)
++		ipsecmb_drain_completed(w, job);
++}
++
++static void
++ipsecmb_submit(struct ipsecmb_worker *w, struct ipsecmb_req *req)
++{
++	IMB_JOB *job;
++	int error;
++
++	job = IMB_GET_NEXT_JOB(w->mgr);
++	error = ipsecmb_fill_job(w, req, job);
++	if (error != 0) {
++		/* The slot is simply reused by the next request. */
++		ipsecmb_req_done(w->sc, req, error);
++		return;
++	}
++	counter_u64_add(w->sc->jobs, 1);
++	w->inflight++;
++	job = IMB_SUBMIT_JOB(w->mgr);
++	ipsecmb_drain_completed(w, job);
++}
++
++static void
++ipsecmb_worker_main(void *arg)
++{
++	struct ipsecmb_worker *w = arg;
++	struct ipsecmb_softc *sc = w->sc;
++	struct ipsecmb_reqq batch;
++	struct ipsecmb_req *req;
++	IMB_ARCH arch;
++	sbintime_t wait;
++
++	thread_lock(curthread);
++	sched_bind(curthread, w->cpu);
++	thread_unlock(curthread);
++	fpu_kern_thread(0);
++
++	w->mgr_mem = ipsecmb_mgr_alloc();
++	w->mgr = ipsecmb_mgr_init(sc, w->mgr_mem, &arch);
++	if (w->mgr == NULL) {
++		ipsecmb_mgr_free(w->mgr_mem);
++		w->mgr_mem = NULL;
++	}
++	mtx_lock(&w->mtx);
++	w->ready = true;
++	w->running = (w->mgr != NULL);
++	wakeup(&w->ready);
++	if (!w->running) {
++		w->td = NULL;
++		mtx_unlock(&w->mtx);
++		kthread_exit();
++	}
++
++	STAILQ_INIT(&batch);
++	for (;;) {
++		while (STAILQ_EMPTY(&w->queue) && !w->stop) {
++			if (w->inflight > 0) {
++				/* Wait a little for more work, then flush what is pending. */
++				wait = SBT_1US * MAX(ipsecmb_flush_usec, 1);
++				w->sleeping = true;
++				msleep_sbt(w, &w->mtx, 0, "imbwait", wait, SBT_1US, 0);
++				w->sleeping = false;
++				if (STAILQ_EMPTY(&w->queue)) {
++					mtx_unlock(&w->mtx);
++					ipsecmb_flush(w);
++					mtx_lock(&w->mtx);
++				}
++				continue;
++			}
++			w->sleeping = true;
++			msleep(w, &w->mtx, 0, "imbidle", 0);
++			w->sleeping = false;
++		}
++		if (STAILQ_EMPTY(&w->queue) && w->stop)
++			break;
++		STAILQ_CONCAT(&batch, &w->queue);
++		mtx_unlock(&w->mtx);
++
++		while ((req = STAILQ_FIRST(&batch)) != NULL) {
++			STAILQ_REMOVE_HEAD(&batch, link);
++			ipsecmb_submit(w, req);
++			if (ipsecmb_sync)
++				ipsecmb_flush(w);
++		}
++		if (ipsecmb_flush_usec <= 0)
++			ipsecmb_flush(w);
++		mtx_lock(&w->mtx);
++	}
++	mtx_unlock(&w->mtx);
++	ipsecmb_flush(w);
++
++	mtx_lock(&w->mtx);
++	ipsecmb_mgr_free(w->mgr_mem);
++	w->mgr = NULL;
++	w->mgr_mem = NULL;
++	w->running = false;
++	w->td = NULL;
++	wakeup(&w->td);
++	mtx_unlock(&w->mtx);
++	kthread_exit();
++}
++
++static int
++ipsecmb_process(device_t dev, struct cryptop *crp, int hint)
++{
++	struct ipsecmb_softc *sc = device_get_softc(dev);
++	struct ipsecmb_worker *w;
++	struct ipsecmb_req *req;
++	bool wake;
++
++	req = uma_zalloc(sc->req_zone, M_NOWAIT | M_ZERO);
++	if (req == NULL) {
++		counter_u64_add(sc->enomem, 1);
++		crp->crp_etype = ENOMEM;
++		crypto_done(crp);
++		return (0);
++	}
++	req->crp = crp;
++	req->ses = crypto_get_driver_session(crp->crp_session);
++
++	w = &sc->workers[curcpu % sc->nworkers];
++	mtx_lock(&w->mtx);
++	STAILQ_INSERT_TAIL(&w->queue, req, link);
++	wake = w->sleeping;
++	mtx_unlock(&w->mtx);
++	if (wake)
++		wakeup_one(w);
++	return (0);
++}
++
++/* ------------------------------------------------------------------ */
++/* Device                                                              */
++/* ------------------------------------------------------------------ */
++
++static void
++ipsecmb_identify(driver_t *driver, device_t parent)
++{
++	if (device_find_child(parent, "ipsecmb", DEVICE_UNIT_ANY) == NULL)
++		BUS_ADD_CHILD(parent, 10, "ipsecmb", DEVICE_UNIT_ANY);
++}
++
++static int
++ipsecmb_probe(device_t dev)
++{
++	/* The library's lowest level (SSE) needs SSE4.2, AES-NI and PCLMULQDQ. */
++	if ((cpu_feature2 & (CPUID2_SSE42 | CPUID2_AESNI | CPUID2_PCLMULQDQ)) !=
++	    (CPUID2_SSE42 | CPUID2_AESNI | CPUID2_PCLMULQDQ)) {
++		device_printf(dev, "needs SSE4.2, AES-NI and PCLMULQDQ\n");
++		return (ENXIO);
++	}
++	device_set_desc(dev, "Intel IPsec-MB multi-buffer crypto");
++	return (BUS_PROBE_DEFAULT);
++}
++
++static void ipsecmb_stop_workers(struct ipsecmb_softc *sc);
++
++static int
++ipsecmb_sysctl_counter(SYSCTL_HANDLER_ARGS)
++{
++	counter_u64_t c = *(counter_u64_t *)arg1;
++	uint64_t v;
++
++	v = counter_u64_fetch(c);
++	return (sysctl_handle_64(oidp, &v, 0, req));
++}
++
++static void
++ipsecmb_sysctls(struct ipsecmb_softc *sc)
++{
++	struct sysctl_ctx_list *ctx = device_get_sysctl_ctx(sc->dev);
++	struct sysctl_oid_list *children = SYSCTL_CHILDREN(device_get_sysctl_tree(sc->dev));
++
++	SYSCTL_ADD_CONST_STRING(ctx, children, OID_AUTO, "arch", CTLFLAG_RD,
++	    ipsecmb_arch_name(sc->arch), "Instruction set in use");
++	SYSCTL_ADD_CONST_STRING(ctx, children, OID_AUTO, "library", CTLFLAG_RD,
++	    imb_get_version_str(), "intel-ipsec-mb version");
++	SYSCTL_ADD_INT(ctx, children, OID_AUTO, "workers", CTLFLAG_RD,
++	    &sc->nworkers, 0, "Worker threads");
++	SYSCTL_ADD_INT(ctx, children, OID_AUTO, "last_status", CTLFLAG_RD,
++	    &sc->last_status, 0, "IMB_STATUS of the last failed job");
++	SYSCTL_ADD_INT(ctx, children, OID_AUTO, "last_errno", CTLFLAG_RD,
++	    &sc->last_errno, 0, "Library error code after the last failed job");
++	SYSCTL_ADD_PROC(ctx, children, OID_AUTO, "jobs", CTLTYPE_U64 | CTLFLAG_RD | CTLFLAG_MPSAFE,
++	    &sc->jobs, 0, ipsecmb_sysctl_counter, "QU", "Jobs submitted");
++	SYSCTL_ADD_PROC(ctx, children, OID_AUTO, "flushes", CTLTYPE_U64 | CTLFLAG_RD | CTLFLAG_MPSAFE,
++	    &sc->flushes, 0, ipsecmb_sysctl_counter, "QU", "Job manager flushes");
++	SYSCTL_ADD_PROC(ctx, children, OID_AUTO, "bounces", CTLTYPE_U64 | CTLFLAG_RD | CTLFLAG_MPSAFE,
++	    &sc->bounces, 0, ipsecmb_sysctl_counter, "QU", "Requests copied to a bounce buffer");
++	SYSCTL_ADD_PROC(ctx, children, OID_AUTO, "errors", CTLTYPE_U64 | CTLFLAG_RD | CTLFLAG_MPSAFE,
++	    &sc->errors, 0, ipsecmb_sysctl_counter, "QU", "Requests finished with an error (other than a failed verification)");
++	SYSCTL_ADD_PROC(ctx, children, OID_AUTO, "enomem", CTLTYPE_U64 | CTLFLAG_RD | CTLFLAG_MPSAFE,
++	    &sc->enomem, 0, ipsecmb_sysctl_counter, "QU", "Requests refused for lack of memory");
++	SYSCTL_ADD_PROC(ctx, children, OID_AUTO, "auth_failures", CTLTYPE_U64 | CTLFLAG_RD | CTLFLAG_MPSAFE,
++	    &sc->auth_failures, 0, ipsecmb_sysctl_counter, "QU", "Requests whose tag or digest did not verify");
++}
++
++static int
++ipsecmb_attach(device_t dev)
++{
++	struct ipsecmb_softc *sc = device_get_softc(dev);
++	struct ipsecmb_worker *w;
++	int error, i;
++
++	sc->dev = dev;
++	mtx_init(&sc->setup_mtx, "ipsecmb setup", NULL, MTX_DEF);
++	sc->jobs = counter_u64_alloc(M_WAITOK);
++	sc->flushes = counter_u64_alloc(M_WAITOK);
++	sc->bounces = counter_u64_alloc(M_WAITOK);
++	sc->errors = counter_u64_alloc(M_WAITOK);
++	sc->enomem = counter_u64_alloc(M_WAITOK);
++	sc->auth_failures = counter_u64_alloc(M_WAITOK);
++	sc->req_zone = uma_zcreate("ipsecmb_req", sizeof(struct ipsecmb_req),
++	    NULL, NULL, NULL, NULL, UMA_ALIGN_CACHE, 0);
++
++	sc->setup_mem = ipsecmb_mgr_alloc();
++	fpu_kern_enter(curthread, NULL, FPU_KERN_NOCTX);
++	sc->setup_mgr = ipsecmb_mgr_init(sc, sc->setup_mem, &sc->arch);
++	if (sc->setup_mgr != NULL)
++		sc->features = sc->setup_mgr->features;
++	fpu_kern_leave(curthread, NULL);
++	if (sc->setup_mgr == NULL) {
++		device_printf(dev, "job manager init or self-test failed\n");
++		error = ENXIO;
++		goto fail;
++	}
++
++	sc->nworkers = mp_ncpus;
++	if (ipsecmb_threads_tunable > 0 && ipsecmb_threads_tunable < sc->nworkers)
++		sc->nworkers = ipsecmb_threads_tunable;
++	sc->workers = malloc(sizeof(*sc->workers) * sc->nworkers, M_IPSECMB,
++	    M_WAITOK | M_ZERO);
++	for (i = 0; i < sc->nworkers; i++) {
++		w = &sc->workers[i];
++		w->sc = sc;
++		w->cpu = i;
++		mtx_init(&w->mtx, "ipsecmb worker", NULL, MTX_DEF);
++		STAILQ_INIT(&w->queue);
++		error = kthread_add(ipsecmb_worker_main, w, NULL, &w->td, 0,
++		    IPSECMB_KSTACK_PAGES, "ipsecmb%d", i);
++		if (error != 0) {
++			device_printf(dev, "cannot start worker %d: %d\n", i, error);
++			w->td = NULL;
++			goto fail;
++		}
++		mtx_lock(&w->mtx);
++		while (!w->ready)
++			msleep(&w->ready, &w->mtx, 0, "imbinit", 0);
++		mtx_unlock(&w->mtx);
++		if (!w->running) {
++			error = ENXIO;
++			goto fail;
++		}
++	}
++
++	sc->cid = crypto_get_driverid(dev, sizeof(struct ipsecmb_session),
++	    CRYPTOCAP_F_SOFTWARE | CRYPTOCAP_F_ACCEL_SOFTWARE);
++	if (sc->cid < 0) {
++		device_printf(dev, "failed to allocate crypto driver id\n");
++		error = ENXIO;
++		goto fail;
++	}
++	ipsecmb_sysctls(sc);
++	device_printf(dev, "intel-ipsec-mb %s, %s, %d worker%s\n",
++	    imb_get_version_str(), ipsecmb_arch_name(sc->arch), sc->nworkers,
++	    sc->nworkers == 1 ? "" : "s");
++	return (0);
++
++fail:
++	ipsecmb_stop_workers(sc);
++	ipsecmb_mgr_free(sc->setup_mem);
++	sc->setup_mem = NULL;
++	uma_zdestroy(sc->req_zone);
++	counter_u64_free(sc->jobs);
++	counter_u64_free(sc->flushes);
++	counter_u64_free(sc->bounces);
++	counter_u64_free(sc->errors);
++	counter_u64_free(sc->enomem);
++	counter_u64_free(sc->auth_failures);
++	mtx_destroy(&sc->setup_mtx);
++	return (error);
++}
++
++static void
++ipsecmb_stop_workers(struct ipsecmb_softc *sc)
++{
++	struct ipsecmb_worker *w;
++	int i;
++
++	if (sc->workers == NULL)
++		return;
++	for (i = 0; i < sc->nworkers; i++) {
++		w = &sc->workers[i];
++		if (!mtx_initialized(&w->mtx))
++			continue;
++		mtx_lock(&w->mtx);
++		w->stop = true;
++		wakeup(w);
++		while (w->td != NULL)
++			msleep(&w->td, &w->mtx, 0, "imbstop", 0);
++		mtx_unlock(&w->mtx);
++		mtx_destroy(&w->mtx);
++	}
++	free(sc->workers, M_IPSECMB);
++	sc->workers = NULL;
++}
++
++static int
++ipsecmb_detach(device_t dev)
++{
++	struct ipsecmb_softc *sc = device_get_softc(dev);
++
++	crypto_unregister_all(sc->cid);
++	ipsecmb_stop_workers(sc);
++	ipsecmb_mgr_free(sc->setup_mem);
++	sc->setup_mem = NULL;
++	uma_zdestroy(sc->req_zone);
++	counter_u64_free(sc->jobs);
++	counter_u64_free(sc->flushes);
++	counter_u64_free(sc->bounces);
++	counter_u64_free(sc->errors);
++	counter_u64_free(sc->enomem);
++	counter_u64_free(sc->auth_failures);
++	mtx_destroy(&sc->setup_mtx);
++	return (0);
++}
++
++/* alloc.c's free_mb_mgr() is never called: the managers live in driver memory. */
++void ipsecmb_lib_free(void *ptr);
++void *ipsecmb_lib_memalign(size_t align, size_t size);
++
++void
++ipsecmb_lib_free(void *ptr)
++{
++	panic("ipsecmb: library free() called");
++}
++
++void *
++ipsecmb_lib_memalign(size_t align, size_t size)
++{
++	return (NULL);
++}
++
++static device_method_t ipsecmb_methods[] = {
++	DEVMETHOD(device_identify,	ipsecmb_identify),
++	DEVMETHOD(device_probe,		ipsecmb_probe),
++	DEVMETHOD(device_attach,	ipsecmb_attach),
++	DEVMETHOD(device_detach,	ipsecmb_detach),
++
++	DEVMETHOD(cryptodev_probesession, ipsecmb_probesession),
++	DEVMETHOD(cryptodev_newsession,	ipsecmb_newsession),
++	DEVMETHOD(cryptodev_freesession, ipsecmb_freesession),
++	DEVMETHOD(cryptodev_process,	ipsecmb_process),
++
++	DEVMETHOD_END
++};
++
++static driver_t ipsecmb_driver = {
++	"ipsecmb",
++	ipsecmb_methods,
++	sizeof(struct ipsecmb_softc)
++};
++
++DRIVER_MODULE(ipsecmb, nexus, ipsecmb_driver, NULL, NULL);
++MODULE_VERSION(ipsecmb, 1);
++MODULE_DEPEND(ipsecmb, crypto, 1, 1, 1);
+diff --git a/sys/modules/ipsecmb/Makefile b/sys/modules/ipsecmb/Makefile
+new file mode 100644
+index 0000000..e0fad31
+--- /dev/null
++++ b/sys/modules/ipsecmb/Makefile
+@@ -0,0 +1,64 @@
++# ipsecmb(4): an OpenCrypto driver on Intel's multi-buffer crypto library.
++#
++# The library (sys/contrib/intel-ipsec-mb, fetched at a pinned commit by
++# freesense-os-base apply.sh) is built into the module: its NASM sources with
++# nasm, its C sources with the kernel flags minus the ones that forbid SIMD.
++# All library code runs only in an FPU context (the worker threads use
++# fpu_kern_thread(), key setup uses fpu_kern_enter()), so SIMD is safe there.
++# sources.mk lists the library's own objects (generated from its lib/Makefile).
++
++.PATH:	${SRCTOP}/sys/crypto/ipsecmb
++
++KMOD=	ipsecmb
++SRCS=	bus_if.h cryptodev_if.h device_if.h ipsecmb.c
++
++IPSECMB_LIB?=	${SRCTOP}/sys/contrib/intel-ipsec-mb/lib
++IPSECMB_COMPAT=	${SRCTOP}/sys/crypto/ipsecmb/compat
++# freesense-os-base scripts/kernel-contrib.sh builds the pinned nasm here.
++.if exists(${IPSECMB_LIB}/../.nasm/nasm)
++IPSECMB_NASM?=	${IPSECMB_LIB}/../.nasm/nasm
++.else
++IPSECMB_NASM?=	nasm
++.endif
++
++.include "${.CURDIR}/sources.mk"
++
++CFLAGS+=	-I${IPSECMB_LIB} -I${IPSECMB_COMPAT}
++
++# The library's own build options (lib/Makefile): all safety options on.
++IPSECMB_DEFS=	-DLINUX -DSAFE_DATA -DSAFE_PARAM -DSAFE_LOOKUP
++IPSECMB_NASMFLAGS= -Werror -felf64 -Xgnu -D__linux__ ${IPSECMB_DEFS} -I${IPSECMB_LIB}/
++IPSECMB_CFLAGS=	${CFLAGS:N-mno-mmx:N-mno-sse:N-msoft-float:N-mno-aes:N-mno-avx:N-Werror:N-Wmissing-prototypes:N-Wstrict-prototypes:N-Wcast-qual:N-Wundef} \
++		${IPSECMB_DEFS} -DAVX_IFMA -DSMX_NI \
++		-I${IPSECMB_LIB}/include -isystem ${:!${CC} -print-resource-dir!}/include \
++		-Wno-unused-parameter -Wno-sign-compare -Wno-unused-function -Wno-unused-variable
++
++IPSECMB_OPT_X86_64=	-msse4.2
++IPSECMB_OPT_SSE_T1=	-march=nehalem -maes -mpclmul
++IPSECMB_OPT_SSE_T2=	${IPSECMB_OPT_SSE_T1}
++IPSECMB_OPT_SSE_T3=	${IPSECMB_OPT_SSE_T1}
++IPSECMB_OPT_AVX2_T1=	-march=haswell -maes -mpclmul
++IPSECMB_OPT_AVX2_T2=	${IPSECMB_OPT_AVX2_T1}
++IPSECMB_OPT_AVX2_T3=	${IPSECMB_OPT_AVX2_T1}
++IPSECMB_OPT_AVX2_T4=	${IPSECMB_OPT_AVX2_T1}
++IPSECMB_OPT_AVX512_T1=	-march=broadwell -maes -mpclmul
++IPSECMB_OPT_AVX512_T2=	${IPSECMB_OPT_AVX512_T1}
++
++# free_mb_mgr()/alloc_mb_mgr() in alloc.c are never called; see ipsecmb.c.
++IPSECMB_CFLAGS.alloc.c=	-Dfree=ipsecmb_lib_free -Dmemalign=ipsecmb_lib_memalign -Wno-macro-redefined
++
++.for _d in X86_64 SSE_T1 SSE_T2 SSE_T3 AVX2_T1 AVX2_T2 AVX2_T3 AVX2_T4 AVX512_T1 AVX512_T2
++.for _s in ${IPSECMB_ASM_${_d}}
++${_s:T:R}.o: ${IPSECMB_LIB}/${_s}
++	${IPSECMB_NASM} ${IPSECMB_NASMFLAGS} -o ${.TARGET} ${IPSECMB_LIB}/${_s}
++OBJS+=	${_s:T:R}.o
++.endfor
++.for _s in ${IPSECMB_C_${_d}}
++${_s:T:R}.o: ${IPSECMB_LIB}/${_s}
++	${CC} -c ${IPSECMB_CFLAGS} ${IPSECMB_OPT_${_d}} ${IPSECMB_CFLAGS.${_s:T}} \
++	    -o ${.TARGET} ${IPSECMB_LIB}/${_s}
++OBJS+=	${_s:T:R}.o
++.endfor
++.endfor
++
++.include <bsd.kmod.mk>
+diff --git a/sys/modules/ipsecmb/sources.mk b/sys/modules/ipsecmb/sources.mk
+new file mode 100644
+index 0000000..d32c19b
+--- /dev/null
++++ b/sys/modules/ipsecmb/sources.mk
+@@ -0,0 +1,368 @@
++# Generated by ipsecmb_sources.py from intel-ipsec-mb lib/Makefile; do not edit.
++# 346 objects.
++IPSECMB_ASM_X86_64= \
++	x86_64/aes128_ecbenc_x3.asm \
++	x86_64/aes_cmac_subkey_gen.asm \
++	x86_64/aes_keyexp_128.asm \
++	x86_64/aes_keyexp_192.asm \
++	x86_64/aes_keyexp_256.asm \
++	x86_64/atomic.asm \
++	x86_64/clear_regs_mem_fns.asm \
++	x86_64/const.asm \
++	x86_64/constant_lookup_fns.asm \
++	x86_64/crc32_const.asm \
++	x86_64/crc32_refl_const.asm \
++	x86_64/mbcpuid.asm \
++	x86_64/poly1305.asm \
++	x86_64/save_xmms.asm \
++	x86_64/wireless_common.asm \
++	x86_64/zuc_common.asm
++IPSECMB_C_X86_64= \
++	x86_64/aes_xcbc_expand_key.c \
++	x86_64/alloc.c \
++	x86_64/capabilities.c \
++	x86_64/chacha20_poly1305.c \
++	x86_64/cipher_suite_id.c \
++	x86_64/cpu_feature.c \
++	x86_64/des_basic.c \
++	x86_64/des_key.c \
++	x86_64/error.c \
++	x86_64/gcm.c \
++	x86_64/hmac_ipad_opad.c \
++	x86_64/kasumi_iv.c \
++	x86_64/mb_mgr_auto.c \
++	x86_64/md5_one_block.c \
++	x86_64/ooo_mgr_reset.c \
++	x86_64/quic_aes_gcm.c \
++	x86_64/quic_chacha20_poly1305.c \
++	x86_64/quic_hp_aes_ecb.c \
++	x86_64/quic_hp_chacha20.c \
++	x86_64/self_test.c \
++	x86_64/sm4_gcm.c \
++	x86_64/snow3g_iv.c \
++	x86_64/snow3g_tables.c \
++	x86_64/version.c \
++	x86_64/zuc_iv.c
++IPSECMB_ASM_SSE_T1= \
++	sse_t1/aes128_cbc_dec_by8_sse.asm \
++	sse_t1/aes128_cbc_enc_x8_sse.asm \
++	sse_t1/aes128_cbc_mac_x8_sse.asm \
++	sse_t1/aes128_cbcs_1_9_dec_by4_sse.asm \
++	sse_t1/aes128_cbcs_1_9_enc_x4_sse.asm \
++	sse_t1/aes128_cntr_by8_sse.asm \
++	sse_t1/aes128_cntr_ccm_by8_sse.asm \
++	sse_t1/aes128_ecb_by8_sse.asm \
++	sse_t1/aes128_xcbc_mac_x4_sse.asm \
++	sse_t1/aes192_cbc_dec_by8_sse.asm \
++	sse_t1/aes192_cbc_enc_x8_sse.asm \
++	sse_t1/aes192_cntr_by8_sse.asm \
++	sse_t1/aes192_ecb_by8_sse.asm \
++	sse_t1/aes256_cbc_dec_by8_sse.asm \
++	sse_t1/aes256_cbc_enc_x8_sse.asm \
++	sse_t1/aes256_cbc_mac_x8_sse.asm \
++	sse_t1/aes256_cntr_by8_sse.asm \
++	sse_t1/aes256_cntr_ccm_by8_sse.asm \
++	sse_t1/aes256_ecb_by8_sse.asm \
++	sse_t1/aes_cfb_enc_dec_x1_sse.asm \
++	sse_t1/aes_cfb_sse.asm \
++	sse_t1/aes_ecb_quic_x8_sse.asm \
++	sse_t1/chacha20_sse.asm \
++	sse_t1/crc16_x25_sse.asm \
++	sse_t1/crc32_by8_sse.asm \
++	sse_t1/crc32_fp_sse.asm \
++	sse_t1/crc32_iuup_sse.asm \
++	sse_t1/crc32_lte_sse.asm \
++	sse_t1/crc32_refl_by8_sse.asm \
++	sse_t1/crc32_sctp_sse.asm \
++	sse_t1/crc32_wimax_sse.asm \
++	sse_t1/ethernet_fcs_sse.asm \
++	sse_t1/gcm128_api_by8_sse.asm \
++	sse_t1/gcm128_gmac_api_by8_sse.asm \
++	sse_t1/gcm128_sgl_api_by8_sse.asm \
++	sse_t1/gcm192_api_by8_sse.asm \
++	sse_t1/gcm192_gmac_api_by8_sse.asm \
++	sse_t1/gcm192_sgl_api_by8_sse.asm \
++	sse_t1/gcm256_api_by8_sse.asm \
++	sse_t1/gcm256_gmac_api_by8_sse.asm \
++	sse_t1/gcm256_sgl_api_by8_sse.asm \
++	sse_t1/mb_mgr_aes128_cbc_enc_flush_x8_sse.asm \
++	sse_t1/mb_mgr_aes128_cbc_enc_submit_x8_sse.asm \
++	sse_t1/mb_mgr_aes128_cbcs_1_9_flush_sse.asm \
++	sse_t1/mb_mgr_aes128_cbcs_1_9_submit_sse.asm \
++	sse_t1/mb_mgr_aes128_xcbc_flush_x4_sse.asm \
++	sse_t1/mb_mgr_aes128_xcbc_submit_x4_sse.asm \
++	sse_t1/mb_mgr_aes192_cbc_enc_flush_x8_sse.asm \
++	sse_t1/mb_mgr_aes192_cbc_enc_submit_x8_sse.asm \
++	sse_t1/mb_mgr_aes256_cbc_enc_flush_x8_sse.asm \
++	sse_t1/mb_mgr_aes256_cbc_enc_submit_x8_sse.asm \
++	sse_t1/mb_mgr_aes_ccm_auth_submit_flush_x8_sse.asm \
++	sse_t1/mb_mgr_aes_cmac_submit_flush_x8_sse.asm \
++	sse_t1/mb_mgr_hmac_md5_flush_sse.asm \
++	sse_t1/mb_mgr_hmac_md5_submit_sse.asm \
++	sse_t1/mb_mgr_hmac_sha1_flush_sse.asm \
++	sse_t1/mb_mgr_hmac_sha1_submit_sse.asm \
++	sse_t1/mb_mgr_hmac_sha224_flush_sse.asm \
++	sse_t1/mb_mgr_hmac_sha224_submit_sse.asm \
++	sse_t1/mb_mgr_hmac_sha256_flush_sse.asm \
++	sse_t1/mb_mgr_hmac_sha256_submit_sse.asm \
++	sse_t1/mb_mgr_hmac_sha384_flush_sse.asm \
++	sse_t1/mb_mgr_hmac_sha384_submit_sse.asm \
++	sse_t1/mb_mgr_hmac_sha512_flush_sse.asm \
++	sse_t1/mb_mgr_hmac_sha512_submit_sse.asm \
++	sse_t1/mb_mgr_snow3g_uea2_submit_flush_x4_sse.asm \
++	sse_t1/mb_mgr_snow3g_uia2_submit_flush_x4_sse.asm \
++	sse_t1/mb_mgr_zuc_submit_flush_sse.asm \
++	sse_t1/md5_x4x2_sse.asm \
++	sse_t1/memcpy_sse.asm \
++	sse_t1/pon_by8_sse.asm \
++	sse_t1/sha1_one_block_sse.asm \
++	sse_t1/sha1_x4_sse.asm \
++	sse_t1/sha224_one_block_sse.asm \
++	sse_t1/sha256_mult_sse.asm \
++	sse_t1/sha256_one_block_sse.asm \
++	sse_t1/sha384_one_block_sse.asm \
++	sse_t1/sha512_one_block_sse.asm \
++	sse_t1/sha512_x2_sse.asm \
++	sse_t1/sm3_base_hmac_sse.asm \
++	sse_t1/sm3_base_init_sse.asm \
++	sse_t1/sm3_base_msg_sse.asm \
++	sse_t1/sm3_base_one_block_sse.asm \
++	sse_t1/sm3_base_update_sse.asm \
++	sse_t1/sm4_sse.asm \
++	sse_t1/snow3g_uia2_by4_sse.asm \
++	sse_t1/snow_v_sse.asm \
++	sse_t1/zuc_x4_sse.asm
++IPSECMB_C_SSE_T1= \
++	sse_t1/kasumi_sse.c \
++	sse_t1/mb_mgr_sse.c \
++	sse_t1/mb_mgr_sse_t1.c \
++	sse_t1/sha_mb_sse.c \
++	sse_t1/sha_sse.c \
++	sse_t1/snow3g_sse.c \
++	sse_t1/zuc_top_sse.c
++IPSECMB_ASM_SSE_T2= \
++	sse_t2/mb_mgr_hmac_sha1_flush_ni_sse.asm \
++	sse_t2/mb_mgr_hmac_sha1_submit_ni_sse.asm \
++	sse_t2/mb_mgr_hmac_sha224_flush_ni_sse.asm \
++	sse_t2/mb_mgr_hmac_sha224_submit_ni_sse.asm \
++	sse_t2/mb_mgr_hmac_sha256_flush_ni_sse.asm \
++	sse_t2/mb_mgr_hmac_sha256_submit_ni_sse.asm \
++	sse_t2/sha1_ni_one_block_sse.asm \
++	sse_t2/sha1_ni_x1_sse.asm \
++	sse_t2/sha1_ni_x2_sse.asm \
++	sse_t2/sha256_ni_one_block_sse.asm \
++	sse_t2/sha256_ni_x1_sse.asm \
++	sse_t2/sha256_ni_x2_sse.asm
++IPSECMB_C_SSE_T2= \
++	sse_t2/mb_mgr_sse_t2.c \
++	sse_t2/sha_ni_mb_sse.c \
++	sse_t2/sha_ni_sse.c
++IPSECMB_ASM_SSE_T3= \
++	sse_t3/mb_mgr_zuc_submit_flush_gfni_sse.asm \
++	sse_t3/zuc_x4_gfni_sse.asm
++IPSECMB_C_SSE_T3= \
++	sse_t3/mb_mgr_sse_t3.c
++IPSECMB_ASM_AVX2_T1= \
++	avx2_t1/aes128_cbc_dec_by8_avx.asm \
++	avx2_t1/aes128_cbc_enc_x8_avx.asm \
++	avx2_t1/aes128_cbc_mac_x8_avx.asm \
++	avx2_t1/aes128_cbcs_1_9_dec_by8_avx.asm \
++	avx2_t1/aes128_cbcs_1_9_enc_x8_avx.asm \
++	avx2_t1/aes128_cntr_by8_avx.asm \
++	avx2_t1/aes128_cntr_ccm_by8_avx.asm \
++	avx2_t1/aes128_ecb_by8_avx.asm \
++	avx2_t1/aes128_gcm_by8_avx2.asm \
++	avx2_t1/aes128_xcbc_mac_x8_avx.asm \
++	avx2_t1/aes192_cbc_dec_by8_avx.asm \
++	avx2_t1/aes192_cbc_enc_x8_avx.asm \
++	avx2_t1/aes192_cntr_by8_avx.asm \
++	avx2_t1/aes192_ecb_by8_avx.asm \
++	avx2_t1/aes192_gcm_by8_avx2.asm \
++	avx2_t1/aes256_cbc_dec_by8_avx.asm \
++	avx2_t1/aes256_cbc_enc_x8_avx.asm \
++	avx2_t1/aes256_cbc_mac_x8_avx.asm \
++	avx2_t1/aes256_cntr_by8_avx.asm \
++	avx2_t1/aes256_cntr_ccm_by8_avx.asm \
++	avx2_t1/aes256_ecb_by8_avx.asm \
++	avx2_t1/aes256_gcm_by8_avx2.asm \
++	avx2_t1/aes_cfb_avx.asm \
++	avx2_t1/aes_ecb_quic_x8_avx.asm \
++	avx2_t1/aes_gcm_by8_avx2.asm \
++	avx2_t1/chacha20_avx2.asm \
++	avx2_t1/crc16_x25_avx.asm \
++	avx2_t1/crc32_by8_avx.asm \
++	avx2_t1/crc32_fp_avx.asm \
++	avx2_t1/crc32_iuup_avx.asm \
++	avx2_t1/crc32_lte_avx.asm \
++	avx2_t1/crc32_refl_by8_avx.asm \
++	avx2_t1/crc32_sctp_avx.asm \
++	avx2_t1/crc32_wimax_avx.asm \
++	avx2_t1/ethernet_fcs_avx.asm \
++	avx2_t1/ghash_by8_avx2.asm \
++	avx2_t1/mb_mgr_aes128_cbc_enc_flush_avx.asm \
++	avx2_t1/mb_mgr_aes128_cbc_enc_submit_avx.asm \
++	avx2_t1/mb_mgr_aes128_cbcs_1_9_flush_avx.asm \
++	avx2_t1/mb_mgr_aes128_cbcs_1_9_submit_avx.asm \
++	avx2_t1/mb_mgr_aes128_ccm_auth_submit_flush_x8_avx.asm \
++	avx2_t1/mb_mgr_aes128_cmac_submit_flush_x8_avx.asm \
++	avx2_t1/mb_mgr_aes128_xcbc_flush_x8_avx.asm \
++	avx2_t1/mb_mgr_aes128_xcbc_submit_x8_avx.asm \
++	avx2_t1/mb_mgr_aes192_cbc_enc_flush_avx.asm \
++	avx2_t1/mb_mgr_aes192_cbc_enc_submit_avx.asm \
++	avx2_t1/mb_mgr_aes256_cbc_enc_flush_avx.asm \
++	avx2_t1/mb_mgr_aes256_cbc_enc_submit_avx.asm \
++	avx2_t1/mb_mgr_aes256_ccm_auth_submit_flush_x8_avx.asm \
++	avx2_t1/mb_mgr_aes256_cmac_submit_flush_x8_avx.asm \
++	avx2_t1/mb_mgr_hmac_md5_flush_avx2.asm \
++	avx2_t1/mb_mgr_hmac_md5_submit_avx2.asm \
++	avx2_t1/mb_mgr_hmac_sha1_flush_avx2.asm \
++	avx2_t1/mb_mgr_hmac_sha1_submit_avx2.asm \
++	avx2_t1/mb_mgr_hmac_sha224_flush_avx2.asm \
++	avx2_t1/mb_mgr_hmac_sha224_submit_avx2.asm \
++	avx2_t1/mb_mgr_hmac_sha256_flush_avx2.asm \
++	avx2_t1/mb_mgr_hmac_sha256_submit_avx2.asm \
++	avx2_t1/mb_mgr_hmac_sha384_flush_avx2.asm \
++	avx2_t1/mb_mgr_hmac_sha384_submit_avx2.asm \
++	avx2_t1/mb_mgr_hmac_sha512_flush_avx2.asm \
++	avx2_t1/mb_mgr_hmac_sha512_submit_avx2.asm \
++	avx2_t1/mb_mgr_zuc_submit_flush_avx2.asm \
++	avx2_t1/md5_x8x2_avx2.asm \
++	avx2_t1/memcpy_avx.asm \
++	avx2_t1/pon_by8_avx.asm \
++	avx2_t1/sha1_x8_avx2.asm \
++	avx2_t1/sha256_oct_avx2.asm \
++	avx2_t1/sha512_x4_avx2.asm \
++	avx2_t1/snow3g_uia2_by4_avx.asm \
++	avx2_t1/snow_v_avx.asm \
++	avx2_t1/zuc_x8_avx2.asm
++IPSECMB_C_AVX2_T1= \
++	avx2_t1/mb_mgr_avx2.c \
++	avx2_t1/mb_mgr_avx2_t1.c \
++	avx2_t1/sha_avx2.c \
++	avx2_t1/sha_mb_avx2.c \
++	avx2_t1/snow3g_avx2.c \
++	avx2_t1/zuc_top_avx2.c
++IPSECMB_ASM_AVX2_T2= \
++	avx2_t2/aes128_cntr_vaes_avx2.asm \
++	avx2_t2/aes128_ecb_vaes_avx2.asm \
++	avx2_t2/aes128_gcm_vaes_avx2.asm \
++	avx2_t2/aes192_cntr_vaes_avx2.asm \
++	avx2_t2/aes192_ecb_vaes_avx2.asm \
++	avx2_t2/aes192_gcm_vaes_avx2.asm \
++	avx2_t2/aes256_cntr_vaes_avx2.asm \
++	avx2_t2/aes256_ecb_vaes_avx2.asm \
++	avx2_t2/aes256_gcm_vaes_avx2.asm \
++	avx2_t2/aes_gcm_vaes_avx2.asm \
++	avx2_t2/ghash_vaes_avx2.asm \
++	avx2_t2/mb_mgr_zuc_submit_flush_gfni_avx2.asm \
++	avx2_t2/zuc_x8_gfni_avx2.asm
++IPSECMB_C_AVX2_T2= \
++	avx2_t2/mb_mgr_avx2_t2.c
++IPSECMB_ASM_AVX2_T3= \
++	avx2_t3/poly_fma_avx2.asm
++IPSECMB_C_AVX2_T3= \
++	avx2_t3/mb_mgr_avx2_t3.c
++IPSECMB_ASM_AVX2_T4= \
++	avx2_t4/mb_mgr_hmac_sha384_flush_ni_avx2.asm \
++	avx2_t4/mb_mgr_hmac_sha384_submit_ni_avx2.asm \
++	avx2_t4/mb_mgr_hmac_sha512_flush_ni_avx2.asm \
++	avx2_t4/mb_mgr_hmac_sha512_submit_ni_avx2.asm \
++	avx2_t4/sha512_x1_ni_avx2.asm \
++	avx2_t4/sha512_x2_ni_avx2.asm \
++	avx2_t4/sm3_hmac_avx2.asm \
++	avx2_t4/sm3_msg_avx2.asm \
++	avx2_t4/sm3_ni_x1_avx2.asm \
++	avx2_t4/sm4_ni_avx2.asm
++IPSECMB_C_AVX2_T4= \
++	avx2_t4/mb_mgr_avx2_t4.c \
++	avx2_t4/sha_ni_avx2.c
++IPSECMB_ASM_AVX512_T1= \
++	avx512_t1/aes_docsis_dec_avx512.asm \
++	avx512_t1/aes_docsis_enc_avx512.asm \
++	avx512_t1/chacha20_avx512.asm \
++	avx512_t1/des_common_avx512.asm \
++	avx512_t1/des_x16_avx512.asm \
++	avx512_t1/mb_mgr_des_avx512.asm \
++	avx512_t1/mb_mgr_hmac_sha1_flush_avx512.asm \
++	avx512_t1/mb_mgr_hmac_sha1_submit_avx512.asm \
++	avx512_t1/mb_mgr_hmac_sha224_flush_avx512.asm \
++	avx512_t1/mb_mgr_hmac_sha224_submit_avx512.asm \
++	avx512_t1/mb_mgr_hmac_sha256_flush_avx512.asm \
++	avx512_t1/mb_mgr_hmac_sha256_submit_avx512.asm \
++	avx512_t1/mb_mgr_hmac_sha384_flush_avx512.asm \
++	avx512_t1/mb_mgr_hmac_sha384_submit_avx512.asm \
++	avx512_t1/mb_mgr_hmac_sha512_flush_avx512.asm \
++	avx512_t1/mb_mgr_hmac_sha512_submit_avx512.asm \
++	avx512_t1/mb_mgr_zuc_submit_flush_avx512.asm \
++	avx512_t1/poly_avx512.asm \
++	avx512_t1/sha1_x16_avx512.asm \
++	avx512_t1/sha256_x16_avx512.asm \
++	avx512_t1/sha512_x8_avx512.asm \
++	avx512_t1/zuc_x16_avx512.asm
++IPSECMB_C_AVX512_T1= \
++	avx512_t1/mb_mgr_avx512.c \
++	avx512_t1/mb_mgr_avx512_t1.c \
++	avx512_t1/sha_avx512.c \
++	avx512_t1/sha_mb_avx512.c \
++	avx512_t1/snow3g_avx512.c \
++	avx512_t1/zuc_top_avx512.c
++IPSECMB_ASM_AVX512_T2= \
++	avx512_t2/aes128_gcm_api_vaes_avx512.asm \
++	avx512_t2/aes128_gcm_sgl_api_vaes_avx512.asm \
++	avx512_t2/aes192_gcm_api_vaes_avx512.asm \
++	avx512_t2/aes192_gcm_sgl_api_vaes_avx512.asm \
++	avx512_t2/aes256_gcm_api_vaes_avx512.asm \
++	avx512_t2/aes256_gcm_sgl_api_vaes_avx512.asm \
++	avx512_t2/aes_cbc_dec_by16_vaes_avx512.asm \
++	avx512_t2/aes_cbc_enc_vaes_avx512.asm \
++	avx512_t2/aes_cbcs_dec_by16_vaes_avx512.asm \
++	avx512_t2/aes_cbcs_enc_vaes_avx512.asm \
++	avx512_t2/aes_cfb_dec_by16_vaes_avx512.asm \
++	avx512_t2/aes_cfb_enc_vaes_avx512.asm \
++	avx512_t2/aes_cntr_api_by16_vaes_avx512.asm \
++	avx512_t2/aes_cntr_bit_api_by16_vaes_avx512.asm \
++	avx512_t2/aes_cntr_ccm_api_by16_vaes_avx512.asm \
++	avx512_t2/aes_cntr_pon_api_by16_vaes_avx512.asm \
++	avx512_t2/aes_docsis_dec_vaes_avx512.asm \
++	avx512_t2/aes_docsis_enc_vaes_avx512.asm \
++	avx512_t2/aes_ecb_quic_vaes_avx512.asm \
++	avx512_t2/aes_ecb_vaes_avx512.asm \
++	avx512_t2/crc16_x25_avx512.asm \
++	avx512_t2/crc32_by16_vclmul_avx512.asm \
++	avx512_t2/crc32_fp_avx512.asm \
++	avx512_t2/crc32_iuup_avx512.asm \
++	avx512_t2/crc32_lte_avx512.asm \
++	avx512_t2/crc32_refl_by16_vclmul_avx512.asm \
++	avx512_t2/crc32_sctp_avx512.asm \
++	avx512_t2/crc32_wimax_avx512.asm \
++	avx512_t2/ethernet_fcs_avx512.asm \
++	avx512_t2/ghash_api_vaes_avx512.asm \
++	avx512_t2/gmac_api_vaes_avx512.asm \
++	avx512_t2/mb_mgr_aes128_cbc_enc_flush_avx512.asm \
++	avx512_t2/mb_mgr_aes128_cbc_enc_submit_avx512.asm \
++	avx512_t2/mb_mgr_aes128_cbcs_1_9_flush_avx512.asm \
++	avx512_t2/mb_mgr_aes128_cbcs_1_9_submit_avx512.asm \
++	avx512_t2/mb_mgr_aes128_ccm_auth_submit_flush_x16_vaes_avx512.asm \
++	avx512_t2/mb_mgr_aes128_cfb_enc_flush_vaes_avx512.asm \
++	avx512_t2/mb_mgr_aes128_cfb_enc_submit_vaes_avx512.asm \
++	avx512_t2/mb_mgr_aes128_cmac_submit_flush_x16_vaes_avx512.asm \
++	avx512_t2/mb_mgr_aes128_xcbc_submit_flush_x16_vaes_avx512.asm \
++	avx512_t2/mb_mgr_aes192_cbc_enc_flush_avx512.asm \
++	avx512_t2/mb_mgr_aes192_cbc_enc_submit_avx512.asm \
++	avx512_t2/mb_mgr_aes192_cfb_enc_flush_vaes_avx512.asm \
++	avx512_t2/mb_mgr_aes192_cfb_enc_submit_vaes_avx512.asm \
++	avx512_t2/mb_mgr_aes256_cbc_enc_flush_avx512.asm \
++	avx512_t2/mb_mgr_aes256_cbc_enc_submit_avx512.asm \
++	avx512_t2/mb_mgr_aes256_ccm_auth_submit_flush_x16_vaes_avx512.asm \
++	avx512_t2/mb_mgr_aes256_cfb_enc_flush_vaes_avx512.asm \
++	avx512_t2/mb_mgr_aes256_cfb_enc_submit_vaes_avx512.asm \
++	avx512_t2/mb_mgr_aes256_cmac_submit_flush_x16_vaes_avx512.asm \
++	avx512_t2/mb_mgr_snow3g_uea2_submit_flush_vaes_avx512.asm \
++	avx512_t2/mb_mgr_snow3g_uia2_submit_flush_vaes_avx512.asm \
++	avx512_t2/mb_mgr_zuc_submit_flush_gfni_avx512.asm \
++	avx512_t2/poly_fma_avx512.asm \
++	avx512_t2/pon_vaes_avx512.asm \
++	avx512_t2/snow3g_uia2_by32_vaes_avx512.asm \
++	avx512_t2/zuc_x16_vaes_avx512.asm
++IPSECMB_C_AVX512_T2= \
++	avx512_t2/mb_mgr_avx512_t2.c

@@ -487,7 +487,8 @@ def main() -> int:
     # is not part of any recipe: it only fetches inputs pinned elsewhere -- the
     # worker-tools hash, commits, inputs/sha256 objects -- and fails unless they
     # match, so changing it cannot change what is built.
-    patch_files = [ROOT / "apply.sh", ROOT / "manifest.env", *sorted((ROOT / "patches").glob("*.patch"))]
+    patch_files = [ROOT / "apply.sh", ROOT / "manifest.env", *sorted((ROOT / "patches").glob("*.patch")),
+                   ROOT / "scripts/kernel-contrib.sh", ROOT / "config/kernel-contrib.json"]
     platform_recipe = recipe_digest([
         ROOT / "scripts/runner/worker-common.sh",
             ROOT / "scripts/runner/stages/system.sh",

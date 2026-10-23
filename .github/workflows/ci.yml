@@ -49,7 +49,7 @@ jobs:
           bash -n scripts/publish_iso.sh
           bash -n scripts/pin-worker-tools.sh
           bash -n scripts/verify-release.sh
-          for script in scripts/runner/install-worker-tools.sh scripts/runner/probe.sh apply.sh; do
+          for script in scripts/runner/install-worker-tools.sh scripts/runner/probe.sh apply.sh scripts/kernel-contrib.sh; do
             sh -n "${script}"
           done
           render_dir=$(mktemp -d)

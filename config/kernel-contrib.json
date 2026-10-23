@@ -1,0 +1,21 @@
+{
+  "schema_version": "freesense.kernel-contrib/v1",
+  "comment": "Third-party sources that FreeSense kernel modules build from. apply.sh fetches them into the freebsd-src checkout after the patches (scripts/kernel-contrib.sh). Each source is pinned by commit or sha256; a mismatch fails the build.",
+  "intel-ipsec-mb": {
+    "version": "2.0.3",
+    "url": "https://github.com/intel/intel-ipsec-mb.git",
+    "commit": "1ef14617d9415ac79d261c06b7ec98143e43ad42",
+    "license": "BSD-3-Clause (some files Apache-2.0, from OpenSSL)",
+    "destination": "sys/contrib/intel-ipsec-mb",
+    "used_by": "sys/modules/ipsecmb (patches/0010-crypto-ipsecmb.patch), amd64 only"
+  },
+  "nasm": {
+    "version": "2.16.03",
+    "url": "https://www.nasm.us/pub/nasm/releasebuilds/2.16.03/nasm-2.16.03.tar.xz",
+    "mirror": "https://mirror.sobukus.de/files/src/nasm/nasm-2.16.03.tar.xz",
+    "sha256": "1412a1c760bbd05db026b6c0d1657affd6631cd0a63cddb6f73cc6d4aa616148",
+    "license": "BSD-2-Clause",
+    "destination": "sys/contrib/intel-ipsec-mb/.nasm",
+    "used_by": "assembles intel-ipsec-mb for sys/modules/ipsecmb; built from source so the worker tools and the FreeBSD pin stay unchanged"
+  }
+}

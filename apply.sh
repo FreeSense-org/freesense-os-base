@@ -58,3 +58,7 @@ for p in "${here}"/patches/*.patch; do
 	n=$((n + 1))
 done
 echo ">>> Done: ${n} patches applied."
+
+# Third-party sources some kernel modules build from (config/kernel-contrib.json),
+# such as intel-ipsec-mb for sys/modules/ipsecmb.
+sh "${here}/scripts/kernel-contrib.sh" "${dir}"

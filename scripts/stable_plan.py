@@ -86,7 +86,8 @@ def main() -> int:
         "runner_recipe": runner_recipe, "signing_public_key": signing_key,
         "recipe": recipe_digest([ROOT / "scripts/runner/install-worker-tools.sh",
             ROOT / "scripts/runner/worker-common.sh", ROOT / "scripts/runner/stages/system.sh",
-            ROOT / "apply.sh", ROOT / "manifest.env", *sorted((ROOT / "patches").glob("*.patch"))]),
+            ROOT / "apply.sh", ROOT / "manifest.env", *sorted((ROOT / "patches").glob("*.patch")),
+            ROOT / "scripts/kernel-contrib.sh", ROOT / "config/kernel-contrib.json"]),
     })
     system = fingerprint({
         "schema": 3, "kind": "system", "platform": platform, "release": lock["release"],
