@@ -66,11 +66,11 @@
   "source_archives": {
     "2208b8828a2c4683ef0d87f4a8d2785324faefba": {
       "format": "freesense.git-bare-shallow-tar/v1",
-      "object": "inputs/sha256/4159db80ef99b02be8c4f76dac442bab0a12e197261885462490e9c2e037589a",
+      "object": "inputs/sha256/b5cd14550fc776e8a7a2fcc748dcc02235c1e0e670bf01981d4b059d095b3485",
       "ref": "refs/heads/main",
       "repository": "freebsd/freebsd-ports",
-      "sha256": "4159db80ef99b02be8c4f76dac442bab0a12e197261885462490e9c2e037589a",
-      "size": 120647680
+      "sha256": "b5cd14550fc776e8a7a2fcc748dcc02235c1e0e670bf01981d4b059d095b3485",
+      "size": 120698880
     },
     "2e67f384802ff04abd34e706fb098e4cd999e7e6": {
       "format": "freesense.git-bare-shallow-tar/v1",
@@ -82,11 +82,11 @@
     },
     "792be2623dc0ef1ac471fb80d4bb242b10b1bdde": {
       "format": "freesense.git-bare-shallow-tar/v1",
-      "object": "inputs/sha256/eb793d98cd206444f1b9f53695bf3b4de58a58e83ce38a3b0e7ac578966bcb51",
+      "object": "inputs/sha256/6ac1798a204bd52d32c1ab34f1644c3654e0eef9192e8aafd30d8b008d92f4c3",
       "ref": "refs/heads/main",
       "repository": "freebsd/freebsd-ports",
-      "sha256": "eb793d98cd206444f1b9f53695bf3b4de58a58e83ce38a3b0e7ac578966bcb51",
-      "size": 120412160
+      "sha256": "6ac1798a204bd52d32c1ab34f1644c3654e0eef9192e8aafd30d8b008d92f4c3",
+      "size": 120504320
     },
     "a52c50b4b7c2652954ef1bd34710a4b1fc8ef391": {
       "format": "freesense.git-bare-shallow-tar/v1",
@@ -457,8 +457,8 @@
         "size": 175329196
       },
       "mirror": {
-        "fingerprint": "9fc7e3b58a1b0cb33edb73c08ab46d7dbed340c7ab9695a980ca6f1d92f069bb",
-        "object": "inputs/sha256/cec8e58affda4acbeef14d0d482af91e7c8eabea9eab79635afb18afcb3bd8e3",
+        "fingerprint": "907b84734264437995af613847904c4b9fd7cb917d9996f363ca7bf0211a3830",
+        "object": "inputs/sha256/6a7cd4873eb7ecea07382bdc6f8b8ddd25a8cb06fe332441718c04edcc92f500",
         "overlay_origins": [
           "devel/FreeSense-composer-deps",
           "devel/php-FreeSense-module",
@@ -547,8 +547,8 @@
       "ready": true,
       "train_mirrors": {
         "1.1": {
-          "fingerprint": "65ca2aad9c9033e652f1f06b6390720620ce955875828d325bd6f1046aa29757",
-          "object": "inputs/sha256/b5f9d118b33ef0cedc4bd05b710acef2dab6f21356908f705f0508ab92c2629a",
+          "fingerprint": "84b1a5815bfd249ab48a89f2be8df67f391abe12eb99cd36d82d60b036465467",
+          "object": "inputs/sha256/607d212670a8fd1aeb27efc9fef0aa6a3b9f7c2f00ad9fb66602a470e932308a",
           "overlay_origins": [
             "devel/FreeSense-composer-deps",
             "devel/php-FreeSense-module",
