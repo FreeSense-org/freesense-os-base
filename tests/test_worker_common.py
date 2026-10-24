@@ -623,3 +623,22 @@ pkg() {
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertNotEqual(tampered.returncode, 0)
         self.assertIn("checksum does not match", tampered.stderr)
+
+    def test_only_a_non_amd64_binary_seed_must_carry_rust(self) -> None:
+        if shutil.which("jq") is None:
+            self.skipTest("jq is unavailable")
+        source = (ROOT / "scripts/runner/worker-common.sh").read_text(encoding="utf-8")
+        start = source.index("load_binary_seed() {")
+        start = source.index("jq -e --arg abi \"${ABI}\" '", start) + len("jq -e --arg abi \"${ABI}\" '")
+        program = source[start:source.index("' /root/binary-seed/provenance.json", start)]
+
+        def accepted(abi: str, names: list[str]) -> bool:
+            packages = [{"name": name, "origin": f"lang/{name}", "abi": abi,
+                         "file": f"All/{name}-1.pkg", "sha256": "0" * 64} for name in names]
+            seed = {"schema_version": "freesense.binary-seed/v1", "abi": abi, "packages": packages}
+            return subprocess.run(["jq", "-e", "--arg", "abi", abi, program], input=json.dumps(seed),
+                                  text=True, capture_output=True, check=False).returncode == 0
+
+        self.assertTrue(accepted("FreeBSD:16:amd64", ["perl5"]))
+        self.assertFalse(accepted("FreeBSD:16:aarch64", ["perl5"]))
+        self.assertTrue(accepted("FreeBSD:16:aarch64", ["perl5", "rust"]))
