@@ -30,7 +30,10 @@ PIN = json.loads((ROOT / "config/freebsd-16.json").read_text(encoding="utf-8"))
 START = datetime.fromisoformat(PIN["valid_from"].replace("Z", "+00:00"))
 END = datetime.fromisoformat(PIN["valid_until"].replace("Z", "+00:00"))
 MIDDLE = START + (END - START) / 2
-LOCK = json.loads((ROOT / "config/releases/1.1.1.json").read_text(encoding="utf-8"))
+# 1.1.1 was sealed under an older pin; give it the active pin's values so the
+# fixture keeps matching after every 14-day rotation.
+LOCK = {**json.loads((ROOT / "config/releases/1.1.1.json").read_text(encoding="utf-8")),
+        **refresh.pin_values(PIN, POLICY, MIDDLE)}
 HEADS = {"freesense": LOCK["source_sha"], "freesense-system-ports": LOCK["system_ports_sha"],
          "freesense-packages": LOCK["packages_sha"]}
 
