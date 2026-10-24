@@ -643,15 +643,17 @@ class RetentionPlanTests(unittest.TestCase):
             grace=timedelta(days=7),
         )
         candidate_prefixes = {item["prefix"] for item in report["candidates"]}
-        for marker in packages[:-1]:
+        # The newest four Packages builds stay (keep_devel), older ones go.
+        for marker in packages[:-4]:
             self.assertIn(
                 f"v1/artifacts/packages/1.1/{marker['fingerprint']}/",
                 candidate_prefixes,
             )
-        self.assertNotIn(
-            f"v1/artifacts/packages/1.1/{packages[-1]['fingerprint']}/",
-            candidate_prefixes,
-        )
+        for marker in packages[-4:]:
+            self.assertNotIn(
+                f"v1/artifacts/packages/1.1/{marker['fingerprint']}/",
+                candidate_prefixes,
+            )
 
     def test_legacy_retained_iso_conservatively_protects_all_development_packages(self):
         build = inventory("build", "builds")
@@ -1371,6 +1373,161 @@ class RetentionPlanTests(unittest.TestCase):
                 grace=timedelta(days=7),
             )
 
+
+
+def built_from(marker: dict, *, source: str = "", packages: str = "", freebsd: str = "f" * 40,
+               architecture: str | None = None) -> dict:
+    """A System or Packages marker with the commits it was built from."""
+    marker = copy.deepcopy(marker)
+    marker["inputs"]["freebsd"] = freebsd
+    if source:
+        marker["inputs"]["source"] = source
+    if packages:
+        marker["inputs"]["packages"] = packages
+    if architecture:
+        marker["architecture"] = architecture
+    return marker
+
+
+def lock(release: str, source: str, packages: str, freebsd: str = "f" * 40) -> dict:
+    return {"release": release, "source_sha": source, "packages_sha": packages,
+            "freebsd_source_sha": freebsd}
+
+
+class StableTrainAndKeepThreeTests(unittest.TestCase):
+    MANIFEST = {"channels": {"stable": {"package_train": "1.1"}, "devel": {"package_train": "1.2"}}}
+
+    def plan(self, build, downloads=None, locks=None, keep=3):
+        return retention.plan_retention(
+            build, downloads or inventory("downloads", "downloads"), self.MANIFEST, set(), NOW,
+            keep_devel=keep, grace=timedelta(days=7), stable_train="1.1", development_train="1.2",
+            release_locks=locks or [])
+
+    def test_testing_builds_on_the_stable_train_keep_only_the_newest(self):
+        build = inventory("build", "builds")
+        for generation in range(1, 6):
+            system = built_from(system_marker(100 + generation, generation, "1.1"), source="a" * 39 + str(generation))
+            add_artifact(build, f"v1/artifacts/system/{system['fingerprint']}", system)
+            packages = built_from(packages_marker(200 + generation, generation, system["fingerprint"], "1.1"),
+                                  packages="b" * 39 + str(generation))
+            add_artifact(build, f"v1/artifacts/packages/1.1/{packages['fingerprint']}", packages)
+        candidates = {item["prefix"] for item in self.plan(build)["candidates"]}
+        for generation in (1, 2):
+            self.assertIn(f"v1/artifacts/system/{fingerprint(100 + generation)}/", candidates)
+            self.assertIn(f"v1/artifacts/packages/1.1/{fingerprint(200 + generation)}/", candidates)
+        for generation in (3, 4, 5):
+            self.assertNotIn(f"v1/artifacts/system/{fingerprint(100 + generation)}/", candidates)
+            self.assertNotIn(f"v1/artifacts/packages/1.1/{fingerprint(200 + generation)}/", candidates)
+
+    def test_a_released_build_is_kept_forever_and_a_withdrawn_one_is_not(self):
+        build = inventory("build", "builds")
+        released = built_from(system_marker(1, 1, "1.1"), source="1" * 40)
+        released_packages = built_from(packages_marker(2, 1, released["fingerprint"], "1.1"), packages="2" * 40)
+        withdrawn = built_from(system_marker(3, 2, "1.1"), source="3" * 40)
+        add_artifact(build, f"v1/artifacts/system/{released['fingerprint']}", released)
+        add_artifact(build, f"v1/artifacts/packages/1.1/{released_packages['fingerprint']}", released_packages)
+        add_artifact(build, f"v1/artifacts/system/{withdrawn['fingerprint']}", withdrawn)
+        for generation in range(10, 14):  # newer Testing builds push both out of the newest three
+            testing = built_from(system_marker(generation, generation, "1.1"), source="9" * 40)
+            add_artifact(build, f"v1/artifacts/system/{testing['fingerprint']}", testing)
+        # The withdrawn release's lock is not passed: release_locks() leaves it out.
+        candidates = {item["prefix"] for item in self.plan(
+            build, locks=[lock("1.1.5", "1" * 40, "2" * 40)])["candidates"]}
+        self.assertNotIn(f"v1/artifacts/system/{fingerprint(1)}/", candidates)
+        self.assertNotIn(f"v1/artifacts/packages/1.1/{fingerprint(2)}/", candidates)
+        self.assertIn(f"v1/artifacts/system/{fingerprint(3)}/", candidates)
+
+    def test_a_lock_only_matches_builds_on_its_own_freebsd_pin(self):
+        build = inventory("build", "builds")
+        other_pin = built_from(system_marker(1, 1, "1.1"), source="1" * 40, freebsd="e" * 40)
+        add_artifact(build, f"v1/artifacts/system/{other_pin['fingerprint']}", other_pin)
+        for generation in range(10, 13):
+            testing = built_from(system_marker(generation, generation, "1.1"), source="9" * 40)
+            add_artifact(build, f"v1/artifacts/system/{testing['fingerprint']}", testing)
+        candidates = {item["prefix"] for item in self.plan(
+            build, locks=[lock("1.1.5", "1" * 40, "2" * 40)])["candidates"]}
+        self.assertIn(f"v1/artifacts/system/{fingerprint(1)}/", candidates)
+
+    def test_development_keeps_three_per_architecture(self):
+        build = inventory("build", "builds")
+        for architecture, base in (("amd64", 100), ("arm64", 200)):
+            for generation in range(1, 6):
+                system = built_from(system_marker(base + generation, generation, "1.2"),
+                                    source="a" * 40, architecture=architecture)
+                add_artifact(build, f"v1/artifacts/system/{system['fingerprint']}", system)
+                packages = built_from(packages_marker(base + 50 + generation, generation, system["fingerprint"], "1.2"),
+                                      packages="b" * 40, architecture=architecture)
+                add_artifact(build, f"v1/artifacts/packages/1.2/{packages['fingerprint']}", packages)
+        candidates = {item["prefix"] for item in self.plan(build)["candidates"]}
+        for base in (100, 200):
+            for generation in (1, 2):
+                self.assertIn(f"v1/artifacts/system/{fingerprint(base + generation)}/", candidates)
+                self.assertIn(f"v1/artifacts/packages/1.2/{fingerprint(base + 50 + generation)}/", candidates)
+            for generation in (3, 4, 5):
+                self.assertNotIn(f"v1/artifacts/system/{fingerprint(base + generation)}/", candidates)
+                self.assertNotIn(f"v1/artifacts/packages/1.2/{fingerprint(base + 50 + generation)}/", candidates)
+
+    def test_an_older_train_is_frozen_and_kept_without_a_warning(self):
+        build = inventory("build", "builds")
+        frozen = system_marker(1, 1, "1.0")
+        frozen_packages = packages_marker(2, 1, frozen["fingerprint"], "1.0")
+        add_artifact(build, f"v1/artifacts/system/{frozen['fingerprint']}", frozen)
+        add_artifact(build, f"v1/artifacts/packages/1.0/{frozen_packages['fingerprint']}", frozen_packages)
+        report = self.plan(build)
+        candidates = {item["prefix"] for item in report["candidates"]}
+        self.assertNotIn(f"v1/artifacts/system/{fingerprint(1)}/", candidates)
+        self.assertNotIn(f"v1/artifacts/packages/1.0/{fingerprint(2)}/", candidates)
+        self.assertEqual(report["warnings"], [])
+
+    def test_an_old_legacy_iso_ages_out_behind_newer_bundles(self):
+        build = inventory("build", "builds")
+        system = system_marker(10, 10, "1.2")
+        add_artifact(build, f"v1/artifacts/system/{system['fingerprint']}", system)
+        old_packages = packages_marker(20, 1, system["fingerprint"], "1.2")
+        add_artifact(build, f"v1/artifacts/packages/1.2/{old_packages['fingerprint']}", old_packages)
+        legacy = iso_marker(30, 1, system["fingerprint"], legacy=True)
+        add_artifact(build, f"v1/artifacts/iso/{legacy['fingerprint']}", legacy)
+        for generation in range(2, 6):
+            packages = packages_marker(20 + generation, generation, system["fingerprint"], "1.2")
+            add_artifact(build, f"v1/artifacts/packages/1.2/{packages['fingerprint']}", packages)
+            iso = iso_marker(30 + generation, generation, system["fingerprint"], packages=packages["fingerprint"])
+            iso["bundle_fingerprint"] = fingerprint(5000 + generation)
+            add_artifact(build, f"v1/artifacts/iso/{iso['fingerprint']}", iso)
+        report = self.plan(build)
+        candidates = {item["prefix"] for item in report["candidates"]}
+        self.assertIn(f"v1/artifacts/iso/{fingerprint(30)}/", candidates)
+        self.assertIn(f"v1/artifacts/iso/{fingerprint(32)}/", candidates)  # bundle generation 2 of 2..5
+        self.assertNotIn(f"v1/artifacts/iso/{fingerprint(35)}/", candidates)
+        self.assertIn(f"v1/artifacts/packages/1.2/{fingerprint(20)}/", candidates)
+        self.assertFalse(any("legacy Development ISO" in warning for warning in report["warnings"]))
+
+    def test_downloads_of_an_earlier_development_train_are_not_kept(self):
+        build = inventory("build", "builds")
+        downloads = inventory("downloads", "downloads")
+        for release in ("1.1.0-g1791117319", "1.1.0-g1791149440", "1.2.0-dev.20261017.1791149441",
+                        "1.2.0-dev.20261018.1792476713"):
+            downloads["objects"].append(object_record(f"v1/releases/devel/{release}/FreeSense.iso"))
+        candidates = {item["prefix"] for item in self.plan(build, downloads)["candidates"]}
+        self.assertIn("v1/releases/devel/1.1.0-g1791117319/", candidates)
+        self.assertIn("v1/releases/devel/1.1.0-g1791149440/", candidates)
+        self.assertNotIn("v1/releases/devel/1.2.0-dev.20261017.1791149441/", candidates)
+        self.assertNotIn("v1/releases/devel/1.2.0-dev.20261018.1792476713/", candidates)
+
+    def test_withdrawn_locks_are_neither_releases_nor_pinned_inputs(self):
+        with tempfile.TemporaryDirectory() as directory:
+            config = Path(directory)
+            (config / "releases").mkdir()
+            kept, dropped = fingerprint(41), fingerprint(42)
+            (config / "releases" / "1.1.5.json").write_text(json.dumps(
+                {**lock("1.1.5", "1" * 40, "2" * 40), "worker_image_sha256": kept}))
+            (config / "releases" / "1.1.6.json").write_text(json.dumps(
+                {**lock("1.1.6", "3" * 40, "4" * 40), "worker_image_sha256": dropped}))
+            (config / "releases" / "withdrawn.json").write_text(json.dumps(
+                {"schema_version": "freesense.withdrawn-releases/v1", "withdrawn": [{"release": "1.1.6"}]}))
+            self.assertEqual([item["release"] for item in retention.release_locks(config)], ["1.1.5"])
+            pinned = retention.pinned_inputs(config)
+            self.assertIn(kept, pinned)
+            self.assertNotIn(dropped, pinned)
 
 
 class DevelopmentDownloadIdTests(unittest.TestCase):

@@ -141,7 +141,7 @@ require("cron: '0 1 * * *'" in multiarch_workflow,
         "the daily multiarch cycle is not fixed at 01:00 UTC")
 retention_workflow = read(".github/workflows/retention.yml")
 for value in ('cron: "30 4 * * *"', "scripts/r2_retention.py",
-              "--keep-devel 4", "--keep-mirrors 4", "--orphan-grace-hours 168",
+              "--keep-devel 3", "--keep-mirrors 4", "--orphan-grace-hours 168",
               "--completed-grace-hours 0", "--keep-smoke 1",
               "--role retention-build-reader",
               "--role retention-download-reader",
@@ -160,7 +160,9 @@ for value in ("minimum_interval: timedelta = timedelta(hours=20)",
               '"/stable/" in key', "superseded broker smoke marker",
               'for entry in devel["iso"] + devel["cloud"]',
               'inputs.get("packages")',
-              "retained legacy Development ISO has no Packages fingerprint"):
+              "retained legacy Development ISO has no Packages fingerprint",
+              "release_locks=release_locks(args.config)",
+              "if path.name == \"withdrawn.json\" or path.stem in withdrawn:"):
     require(value in retention_source,
             f"R2 retention safety boundary is missing {value!r}")
 stable_workflow = read(".github/workflows/stable.yml")

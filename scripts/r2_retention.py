@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """Inventory R2 and plan conservative FreeSense retention.
 
-This first implementation is deliberately report-only. It computes exact
-candidate keys but never issues a delete request.
+Released Stable builds and Stable images are kept forever. Development keeps
+its newest builds per architecture (System, Packages, image sets, downloads),
+and so do Testing and unreleased candidate builds on the Stable train.
+Deletion needs two matching daily observations (see confirmation()).
 """
 
 from __future__ import annotations
@@ -458,6 +460,49 @@ def collect_sha256(value: Any, output: set[str]) -> None:
             collect_sha256(item, output)
 
 
+def train_key(train: Any) -> tuple[int, int] | None:
+    if not isinstance(train, str) or not re.fullmatch(r"[0-9]+\.[0-9]+", train):
+        return None
+    major, minor = train.split(".")
+    return int(major), int(minor)
+
+
+def release_train(release: str) -> str:
+    return ".".join(release.split(".")[:2])
+
+
+def lock_identities(locks: list[dict[str, Any]]) -> tuple[set[tuple[str, str]], set[tuple[str, str]]]:
+    """The (source, FreeBSD) and (packages, FreeBSD) commits of release locks.
+
+    A Stable-train System or Packages artifact built from exactly these
+    commits is that release: sealed, or a candidate still waiting for its
+    seal. Everything else on the Stable train is a Testing build.
+    """
+    systems: set[tuple[str, str]] = set()
+    packages: set[tuple[str, str]] = set()
+    for lock in locks:
+        freebsd = lock.get("freebsd_source_sha")
+        source = lock.get("source_sha")
+        packages_sha = lock.get("packages_sha")
+        for value in (freebsd, source, packages_sha):
+            if not isinstance(value, str) or not PORTS_COMMIT.fullmatch(value):
+                fail(f"release lock {lock.get('release')!r} has an invalid commit")
+        systems.add((source, freebsd))
+        packages.add((packages_sha, freebsd))
+    return systems, packages
+
+
+def keep_newest_per_architecture(entries: list[dict[str, Any]], keep: int) -> set[str]:
+    by_architecture: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for entry in entries:
+        by_architecture[entry["marker"].get("architecture") or "amd64"].append(entry)
+    kept: set[str] = set()
+    for items in by_architecture.values():
+        items.sort(key=lambda item: (item["generation"], item["prefix"]), reverse=True)
+        kept.update(item["prefix"] for item in items[:keep])
+    return kept
+
+
 def component_prefix(component: Any, kind: str, package_train: str) -> str | None:
     if not isinstance(component, dict):
         return None
@@ -620,6 +665,7 @@ def plan_retention(
     release_documents: dict[str, Any] | None = None,
     development_cycle: dict[str, Any] | None = None,
     keep_mirrors: int = 2,
+    release_locks: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     if keep_devel < 1:
         fail("Development retention must keep at least one completed build")
@@ -695,30 +741,39 @@ def plan_retention(
                     if not isinstance(fingerprint, str) or not SHA256.fullmatch(fingerprint):
                         fail(f"active Development cycle has invalid {arch} {component} identity")
                     protected_prefixes.add(prefix + fingerprint)
+    # Stable-train System and Packages are kept forever only when they are a
+    # release (they match a lock that is not withdrawn). Testing builds and the
+    # candidates of withdrawn releases share the train but are rolling, like
+    # Development. Older trains are frozen lines whose devices still use them.
+    lock_systems, lock_packages = lock_identities(release_locks or [])
+    stable_rolling: dict[str, list[dict[str, Any]]] = defaultdict(list)
+
+    def frozen(train: Any) -> bool:
+        current = train_key(stable_train)
+        return current is not None and train_key(train) is not None and train_key(train) < current
+
     devel: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for entry in markers.values():
         inputs = entry["marker"]["inputs"]
-        if entry["kind"] == "system":
-            train = inputs.get("package_train")
+        if entry["kind"] in {"system", "packages"}:
+            kind = entry["kind"]
+            train = inputs.get("package_train") if kind == "system" else entry["train"]
+            identity = (inputs.get("source") if kind == "system" else inputs.get("packages"),
+                        inputs.get("freebsd"))
             if train == stable_train:
-                protected_prefixes.add(entry["prefix"])
+                if identity in (lock_systems if kind == "system" else lock_packages):
+                    protected_prefixes.add(entry["prefix"])
+                else:
+                    stable_rolling[kind].append(entry)
             elif train == development_train:
-                devel["system"].append(entry)
+                devel[kind].append(entry)
+            elif frozen(train):
+                protected_prefixes.add(entry["prefix"])
             else:
                 protected_prefixes.add(entry["prefix"])
-                warnings.append(
-                    f"protected System artifact with unknown package train at {entry['prefix']}"
-                )
-        elif entry["kind"] == "packages":
-            if entry["train"] == stable_train:
-                protected_prefixes.add(entry["prefix"])
-            elif entry["train"] == development_train:
-                devel["packages"].append(entry)
-            else:
-                protected_prefixes.add(entry["prefix"])
-                warnings.append(
-                    f"protected Packages artifact with unknown train at {entry['prefix']}"
-                )
+                label = "System artifact with unknown package train" if kind == "system" \
+                    else "Packages artifact with unknown train"
+                warnings.append(f"protected {label} at {entry['prefix']}")
         elif inputs.get("channel") == "stable":
             protected_prefixes.add(entry["prefix"])
         elif entry["kind"] == "mirror":
@@ -768,9 +823,11 @@ def plan_retention(
                     if stage and fp and SHA256.fullmatch(str(fp)):
                         protected_prefixes.add(f"v1/artifacts/{stage}/{fp}")
 
-    entries = devel["system"]
-    entries.sort(key=lambda item: (item["generation"], item["prefix"]), reverse=True)
-    protected_prefixes.update(item["prefix"] for item in entries[:keep_devel])
+    # The newest builds of each architecture: Development System and Packages,
+    # and the Testing (or unreleased candidate) builds on the Stable train.
+    for entries in (devel["system"], devel["packages"],
+                    stable_rolling["system"], stable_rolling["packages"]):
+        protected_prefixes.update(keep_newest_per_architecture(entries, keep_devel))
 
     by_architecture: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for entry in devel["mirror"]:
@@ -781,14 +838,13 @@ def plan_retention(
 
     # Installer, cloud, and board appliance results form one release bundle.
     # Retain complete generations as a unit instead of counting cloud variants
-    # independently.
+    # independently. An image from before bundles is a unit of its own and
+    # competes on generation, so old ones age out once newer bundles exist.
     bundles: dict[str, dict[str, Any]] = {}
-    legacy_images = []
     for entry in devel["iso"] + devel["cloud"] + devel["appliance"]:
         bundle = entry["marker"].get("bundle_fingerprint")
         if not isinstance(bundle, str) or not SHA256.fullmatch(bundle):
-            legacy_images.append(entry)
-            continue
+            bundle = "legacy:" + entry["prefix"]
         group = bundles.setdefault(bundle, {
             "generation": entry["generation"], "entries": [],
         })
@@ -804,12 +860,6 @@ def plan_retention(
     )
     for group in ordered_bundles[:keep_devel]:
         protected_prefixes.update(entry["prefix"] for entry in group["entries"])
-    legacy_images.sort(
-        key=lambda item: (item["generation"], item["prefix"]), reverse=True
-    )
-    protected_prefixes.update(
-        item["prefix"] for item in legacy_images[:keep_devel]
-    )
 
     channels = manifest.get("channels")
     if not isinstance(channels, dict):
@@ -928,7 +978,10 @@ def plan_retention(
         if match:
             prefix = f"v1/releases/devel/{match['release']}/"
             download_groups[prefix].append(item)
-            download_generations[prefix] = int(match["generation"])
+            # Downloads of an earlier Development train (1.1.0-g… once 1.1
+            # is Stable) never count toward the newest Development downloads.
+            current = development_train is None or release_train(match["release"]) == development_train
+            download_generations[prefix] = int(match["generation"]) if current else -1
         elif key.startswith("v1/releases/devel/"):
             protected_downloads.add(key)
             warnings.append(f"protected unrecognized Development download object {key}")
@@ -942,7 +995,9 @@ def plan_retention(
         key=lambda prefix: (download_generations[prefix], prefix),
         reverse=True,
     )
-    protected_downloads.update(ordered_downloads[:keep_devel])
+    protected_downloads.update(
+        prefix for prefix in ordered_downloads[:keep_devel] if download_generations[prefix] >= 0
+    )
     for release_key in ("v1/releases/devel.json", "v1/releases/devel.amd64.json", "v1/releases/devel.arm64.json"):
         devel_release = build["documents"].get(release_key)
         if devel_release is None:
@@ -1019,6 +1074,7 @@ def plan_retention(
         "policy": {
             "stable": "keep forever",
             "development_completed_per_component": keep_devel,
+            "stable_train": "released builds forever; Testing and unreleased builds like Development",
             "mirrors_per_architecture": keep_mirrors,
             "completed_candidate_age_hours": int(
                 completed_grace.total_seconds() // 3600
@@ -1208,9 +1264,40 @@ def load_json(path: Path) -> Any:
         fail(f"cannot read JSON from {path}: {error}")
 
 
+def withdrawn_releases(config: Path) -> set[str]:
+    path = config / "releases" / "withdrawn.json"
+    if not path.exists():
+        return set()
+    document = load_json(path)
+    entries = document.get("withdrawn") if isinstance(document, dict) else None
+    if not isinstance(entries, list) or any(
+        not isinstance(item, dict) or not isinstance(item.get("release"), str) for item in entries
+    ):
+        fail("withdrawn.json has an invalid release list")
+    return {item["release"] for item in entries}
+
+
+def release_locks(config: Path) -> list[dict[str, Any]]:
+    """Every release lock that is not withdrawn."""
+    withdrawn = withdrawn_releases(config)
+    locks = []
+    for path in sorted((config / "releases").glob("*.json")):
+        if path.name == "withdrawn.json" or path.stem in withdrawn:
+            continue
+        lock = load_json(path)
+        if not isinstance(lock, dict) or lock.get("release") != path.stem:
+            fail(f"release lock {path.name} does not name its own release")
+        locks.append(lock)
+    return locks
+
+
 def pinned_inputs(config: Path) -> set[str]:
+    # A withdrawn lock is never built again, so its inputs are not pinned.
+    withdrawn = {config / "releases" / f"{release}.json" for release in withdrawn_releases(config)}
     values: set[str] = set()
     for path in sorted(config.rglob("*.json")):
+        if path in withdrawn:
+            continue
         collect_sha256(load_json(path), values)
     return values
 
@@ -1377,6 +1464,7 @@ def main() -> None:
         release_documents=release_documents,
         development_cycle=documents.get("v1/state/development-cycle.json"),
         keep_mirrors=args.keep_mirrors,
+        release_locks=release_locks(args.config),
     )
     args.output.write_text(
         json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8"
