@@ -46,6 +46,7 @@ jobs:
     timeout-minutes: 180
     env:
       ARCH: ${{ inputs.architecture }}
+      PORTS_COMMIT: ${{ inputs.ports_commit }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
@@ -63,7 +64,7 @@ jobs:
           python3 scripts/observe_catalogue.py --catalog "${target}/packagesite.pkg" \
             --trusted-key-sha256 "${key}" --architecture "${ARCH}" \
             --output "${target}/observed.json"
-          commit="${{ inputs.ports_commit }}"
+          commit="${PORTS_COMMIT}"
           [[ -n ${commit} ]] || commit=$(jq -er .ports_commit "${target}/observed.json")
           [[ ${commit} =~ ^[0-9a-f]{40}$ ]]
           echo "commit=${commit}" >>"${GITHUB_OUTPUT}"

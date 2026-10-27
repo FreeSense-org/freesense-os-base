@@ -99,6 +99,14 @@ jobs:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with: {go-version-file: go.mod, cache: false}
+      # The release name is free text that later steps and jobs put into shell
+      # scripts; every job needs this one, so nothing runs until it is checked.
+      - name: Check the release name
+        env: {RELEASE: "${{ inputs.release }}"}
+        run: |
+          [[ -z "${RELEASE}" || "${RELEASE}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
+            echo "release must be empty or a version like 1.1.9" >&2; exit 1;
+          }
       - id: plan
         env: {GITHUB_TOKEN: "${{ github.token }}"}
         run: |

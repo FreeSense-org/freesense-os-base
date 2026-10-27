@@ -60,8 +60,19 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # workflow_run matches System and Optional packages by name only; a pull
+  # request could add (or edit) a same-named workflow. Only a run of this
+  # repository's own workflow files on main, not started by a pull request,
+  # may start an image release.
   release_gate:
-    if: github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success'
+    if: >-
+      github.event_name == 'workflow_run' &&
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.head_branch == 'main' &&
+      github.event.workflow_run.head_repository.full_name == github.repository &&
+      (github.event.workflow_run.path == '.github/workflows/system.yml' ||
+       github.event.workflow_run.path == '.github/workflows/packages.yml') &&
+      !startsWith(github.event.workflow_run.event, 'pull_request')
     runs-on: ubuntu-24.04
     permissions: {contents: read, actions: read}
     outputs:
@@ -281,6 +292,8 @@ jobs:
       - name: Read signed selected channel
         env:
           SELECTED_CHANNEL: ${{ inputs.operation == 'retry-stable-bundle' && 'stable' || (github.event_name != 'workflow_run' && inputs.channel || 'devel') }}
+          SYSTEM_FINGERPRINT: ${{ inputs.system_fingerprint }}
+          PACKAGES_FINGERPRINT: ${{ inputs.packages_fingerprint }}
         run: |
           target="${{ github.event_name != 'workflow_run' && inputs.target || needs.release_gate.outputs.target }}"
           if [[ "${SELECTED_CHANNEL}" == stable && "${{ inputs.suppress_publication }}" == true ]]; then
@@ -290,7 +303,7 @@ jobs:
             [[ "${SELECTED_CHANNEL}" == devel ]] || {
               echo "ARM64 is Development-only until a separate Stable promotion" >&2; exit 1;
             }
-            system="${{ inputs.system_fingerprint }}"; packages="${{ inputs.packages_fingerprint }}"
+            system="${SYSTEM_FINGERPRINT}"; packages="${PACKAGES_FINGERPRINT}"
             [[ "${system}" =~ ^[0-9a-f]{64}$ && "${packages}" =~ ^[0-9a-f]{64}$ ]] || {
               echo "ARM64 image builds require exact System and Packages fingerprints" >&2; exit 1;
             }
