@@ -1496,10 +1496,12 @@ load_binary_seed() {
   [ "$(sha256 -q /root/binary-seed/provenance.json)" = "${BINARY_SEED_PROVENANCE_SHA256}" ] || {
     echo "binary seed provenance hash mismatch" >&2; return 1;
   }
+  # An amd64 seed need not carry lang/rust: amd64 builds it from source when the
+  # official package does not match the pinned ports tree (pin 2026-10-24).
   jq -e --arg abi "${ABI}" '
     .schema_version == "freesense.binary-seed/v1" and .abi == $abi and
     (.packages | type == "array" and length > 0) and
-    any(.packages[]; .name == "rust" and .origin == "lang/rust") and
+    (($abi | endswith(":amd64")) or any(.packages[]; .name == "rust" and .origin == "lang/rust")) and
     all(.packages[]; .abi == $abi and
       (.file | test("^All/[A-Za-z0-9][A-Za-z0-9+,.@_~-]*[.]pkg$")) and
       (.sha256 | test("^[0-9a-f]{64}$")))
@@ -1522,9 +1524,8 @@ record_upstream_provenance() {
   # Which packages in the published repository came from upstream rather than
   # from us, and what proves it. With a mirror that proof is the mirror's own
   # record of the signed catalogue it was cut from; the pin-time binary seed is
-  # not consulted, and must not be -- load_binary_seed asserts the seed carries
-  # lang/rust, which an amd64 seed need not, and it fails silently because its
-  # jq output goes to /dev/null.
+  # not consulted, and must not be -- load_binary_seed validates the seed's own
+  # shape, and it fails silently because its jq output goes to /dev/null.
   if [ -n "${MIRROR_PLAN_OBJECT}" ]; then
     upstream_provenance=/root/mirror-repo/mirror-provenance.json
     [ -s "${upstream_provenance}" ] || {
