@@ -6,6 +6,19 @@ WATCHDOG_SECONDS = 330 * 60
 STANDARD_RUNNER_LIMIT = 20
 
 
+def _instant(value: str) -> datetime:
+    instant = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    if instant.tzinfo is None:
+        raise ValueError("job timing evidence must include timezones")
+    return instant
+
+
+def _first_step_start(job: dict) -> datetime | None:
+    starts = [_instant(step["started_at"]) for step in job.get("steps") or []
+              if step.get("started_at")]
+    return min(starts) if starts else None
+
+
 def verify(pages: list[dict], run_id: int, run_attempt: int | None = None) -> dict:
     if not pages or type(run_id) is not int or run_id <= 0:
         raise ValueError("job evidence requires the exact workflow run")
@@ -38,10 +51,14 @@ def verify(pages: list[dict], run_id: int, run_attempt: int | None = None) -> di
             continue
         if job.get("status") != "completed" or not job.get("started_at") or not job.get("completed_at"):
             raise ValueError("build job timing evidence is incomplete")
-        start = datetime.fromisoformat(job["started_at"].replace("Z", "+00:00"))
-        end = datetime.fromisoformat(job["completed_at"].replace("Z", "+00:00"))
-        if start.tzinfo is None or end.tzinfo is None:
-            raise ValueError("job timing evidence must include timezones")
+        start = _instant(job["started_at"])
+        end = _instant(job["completed_at"])
+        if start > end:
+            # GitHub has reported a job started_at later than its completed_at
+            # (2026-11-01: exactly one hour late on a self-hosted build job
+            # whose steps ran normally). The steps carry the real start, so
+            # use the earliest step instead of condemning a good build.
+            start = _first_step_start(job) or start
         duration = (end - start).total_seconds()
         hosted = "self-hosted" not in job.get("labels", [])
         if duration < 0:
