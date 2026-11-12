@@ -249,8 +249,10 @@ new file mode 100644
 index 00000000000..4080df2dee2
 --- /dev/null
 +++ b/sys/arm64/conf/pfSense
-@@ -0,0 +1,187 @@
+@@ -0,0 +1,179 @@
 +include		GENERIC
++# release kernel: GENERIC on main pulls in std.debug (INVARIANTS, WITNESS)
++include		"../../conf/std.nodebug"
 +
 +nooptions	KDB_TRACE
 +
