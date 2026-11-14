@@ -40,11 +40,15 @@ def assemble(common: dict, reports: dict[str, dict]) -> dict:
                    "rust_official": {arch: ("rust" not in (indexed[arch][commit].get("rejected") or {})
                                             and "rust" in (indexed[arch][commit].get("verified_roots") or []))
                                      for arch in ARCHES}}
+            # Every build seeds poudriere from the official pkg package, so a candidate whose pkg
+            # differs from the official catalogue (the port moved on) cannot be built from.
+            row["pkg_official"] = {arch: "pkg" not in (indexed[arch][commit].get("rejected") or {}) for arch in ARCHES}
             evidence.append(row)
-            if all(indexed[arch][commit].get("object") or indexed[arch][commit].get("key") for arch in ARCHES):
+            if (all(indexed[arch][commit].get("object") or indexed[arch][commit].get("key") for arch in ARCHES)
+                    and all(row["pkg_official"].values())):
                 seedable.append(row)
         if not seedable:
-            raise ValueError("no ports candidate produced official binary seeds on every architecture")
+            raise ValueError("no ports candidate produced official binary seeds, with the official pkg bootstrap, on every architecture")
         selected = score_candidates(seedable)
         common["freebsd_ports"] = {"commit": selected["commit"]}
         common["pin_evidence"] = {"schema_version":"freesense.ports-candidate-selection/v1",

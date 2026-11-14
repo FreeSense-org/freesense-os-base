@@ -90,6 +90,27 @@ class AssembleTests(unittest.TestCase):
         candidate = module.assemble(common, reports)
         self.assertEqual(candidate["freebsd_ports"]["commit"], commits[1])
 
+    def test_skips_candidates_whose_pkg_bootstrap_is_not_official(self):
+        common, reports = fixture(); commits = ["1" * 40, "2" * 40]
+        common["ports_candidates"] = [{"commit": commits[0], "committed_at":"2026-09-10T00:00:00Z"},
+                                      {"commit": commits[1], "committed_at":"2026-09-11T00:00:00Z"}]
+        for index, arch in enumerate(module.ARCHES):
+            base = reports[arch].pop("binary_seed")
+            reports[arch]["evidence"].pop("requirements_sha256")
+            reports[arch]["candidates"] = [
+                # more accepted packages, but pkg moved on in the ports tree (2.8.4 vs the official 2.9.0)
+                {**base, "commit":commits[1], "committed_at":"2026-09-11T00:00:00Z", "accepted_count":9, "package_count":9,
+                 "rejected":{"pkg":"name/version/origin/ABI mismatch"}},
+                {**base, "object":"inputs/sha256/" + sha(str(index+5)), "sha256":sha(str(index+5)),
+                 "commit":commits[0], "committed_at":"2026-09-10T00:00:00Z", "accepted_count":8, "package_count":8},
+            ]
+        candidate = module.assemble(common, reports)
+        self.assertEqual(candidate["freebsd_ports"]["commit"], commits[0])
+        for arch in module.ARCHES:
+            reports[arch]["candidates"][1] = {**reports[arch]["candidates"][1], "rejected":{"pkg":"overlay"}}
+        with self.assertRaises(ValueError):
+            module.assemble(common, reports)
+
     def test_requires_both_complete_native_reports(self):
         common, reports = fixture()
         candidate = module.assemble(common, reports)
