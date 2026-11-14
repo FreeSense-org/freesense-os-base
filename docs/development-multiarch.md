@@ -182,3 +182,20 @@ than repeating the shard.
 
 Neither local unit tests nor the presence of workflows establishes native build
 readiness or successful publication.
+
+## Jail seed from pkgbase
+
+FreeBSD stopped publishing `base.txz` (2026-10-18, distribution sets removed; FreeBSD 16 ships
+base as pkgbase). `pin.yml` therefore resolves the dated pkgbase repository tarball
+(`snapshots/PKGBASE-REPOS/16.0-CURRENT/{amd64,aarch64}/<YYYYMMDD>/`) and records its SHA-256
+from the `CHECKSUM.SHA256-<snapshot>` file next to it. The repository is unsigned, so that
+checksum is the trust anchor. Only one dated directory is kept upstream, which is why the pin
+stores the finished seed, not the repository.
+
+`pin-target.yml` (job `jail_seed`) boots the pinned native worker VM and runs
+`scripts/pkgbase_seed.sh` there: it installs every `FreeBSD-*` package except `set-*`, `kernel-*`,
+`src*`, tests, `-dbg` and lib32 into an empty root, normalises timestamps and member order, and packs
+`base.txz` (`xz -6`, single thread). The same repository gives a byte-identical seed. The seed is
+content-addressed like before (`jail_seed` blob, schema v4 unchanged) and carries
+`jail_seed.source` (`kind: pkgbase`, `snapshot`, `repo_url`, `repo_tar_sha256`). The worker
+streams it to the host with `run-vm.sh --receive-file`. Stable pins keep their existing `base.txz` objects.

@@ -19,6 +19,9 @@ minimum_free_gib=80
 serve_dir=""
 serve_port=8765
 http_pid=""
+receive_file=""
+receive_port=8766
+receive_pid=""
 while (($#)); do
   case "$1" in
     --host-architecture) host_architecture=${2:-}; shift 2 ;;
@@ -33,6 +36,8 @@ while (($#)); do
     --serial-output) serial_output=${2:-}; shift 2 ;;
     --serve-dir) serve_dir=${2:-}; shift 2 ;;
     --serve-port) serve_port=${2:-}; shift 2 ;;
+    --receive-file) receive_file=${2:-}; shift 2 ;;
+    --receive-port) receive_port=${2:-}; shift 2 ;;
     *) usage ;;
   esac
 done
@@ -90,7 +95,8 @@ for value in "$timeout_seconds" "$disk_gib" "$minimum_free_gib"; do
 done
 [[ $vcpus == auto || $vcpus =~ ^[1-9][0-9]*$ ]] || usage
 [[ $memory_mib == auto || $memory_mib =~ ^[1-9][0-9]*$ ]] || usage
-[[ $serve_port =~ ^[1-9][0-9]*$ ]] || usage
+[[ $serve_port =~ ^[1-9][0-9]*$ && $receive_port =~ ^[1-9][0-9]*$ ]] || usage
+[[ -z $receive_file || $receive_file == /* ]] || usage
 [[ -z $serve_dir || -d $serve_dir ]] || usage
 : "${RUNNER_TEMP:?RUNNER_TEMP is required}"
 
@@ -179,6 +185,9 @@ cleanup() {
   [[ -z $download ]] || rm -f -- "$download"
   if [[ $http_pid =~ ^[0-9]+$ ]]; then
     kill "$http_pid" 2>/dev/null || true
+  fi
+  if [[ $receive_pid =~ ^[0-9]+$ ]]; then
+    kill "$receive_pid" 2>/dev/null || true
   fi
   return "$status"
 }
@@ -308,6 +317,20 @@ if [[ -n $serve_dir ]]; then
   echo "Serving ${serve_dir} to the guest at http://10.0.2.2:${serve_port}/"
 fi
 
+if [[ -n $receive_file ]]; then
+  # One guest-to-host stream (`nc 10.0.2.2 PORT < file`): the serial console is too slow for large outputs.
+  python3 - "$receive_port" "$receive_file" >/dev/null 2>&1 <<'PY' &
+import socket, sys
+server = socket.create_server(("0.0.0.0", int(sys.argv[1])))
+server.settimeout(float(24 * 3600))
+connection, _ = server.accept()
+with open(sys.argv[2], "wb") as out:
+    while chunk := connection.recv(1 << 20):
+        out.write(chunk)
+PY
+  receive_pid=$!
+fi
+
 touch "$serial"
 "$qemu" \
   -name freesense-${nonce} \
@@ -347,6 +370,7 @@ while true; do
   recent=$(tail -c 1048576 "$serial")
   if grep -Fq "$ok_marker" <<<"$recent"; then
     echo "FreeBSD stage completed successfully"
+    if [[ $receive_pid =~ ^[0-9]+$ ]]; then wait "$receive_pid" 2>/dev/null || true; receive_pid=""; fi
     break
   fi
   if grep -Fq "$fail_marker" <<<"$recent"; then
