@@ -546,6 +546,12 @@ else:
             "FreeBSD lock has no canonical aarch64 inputs")
 
 pin_target_workflow = read(".github/workflows/pin-target.yml")
+require("  jail_seed:" in pin_target_workflow and "--receive-file" in pin_target_workflow
+        and "freebsd-pin-${{ inputs.architecture }}-jail-seed" in pin_target_workflow,
+        "pin-target must build the pkgbase jail seed in the worker VM (FreeBSD no longer publishes base.txz)")
+pin_workflow = read(".github/workflows/pin.yml")
+require("PKGBASE-REPOS/16.0-CURRENT" in pin_workflow and "/MANIFEST" not in pin_workflow,
+        "the FreeBSD pin must resolve the pkgbase repository, not the removed base.txz distribution sets")
 require(r"{commit:\$commit,committed_at:\$committed_at,requirements:\$requirements[0]}" in pin_target_workflow,
         "pin-target guest jq filter must not expand host $commit under set -u")
 require("git clone --bare https://github.com/freebsd/freebsd-ports.git" in pin_workflow,

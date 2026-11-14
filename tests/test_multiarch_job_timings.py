@@ -44,6 +44,20 @@ class TimingTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "negative duration"):
             self.verify([job(1, duration=-1, dedicated=True)])
 
+    def test_job_start_reported_after_completion_falls_back_to_its_steps(self):
+        """2026-11-01: GitHub reported a build job started_at one hour after its
+        completed_at while its steps ran normally; the nightly was blocked."""
+        bad = job(1, start=3600, duration=-2200, dedicated=True)
+        bad["steps"] = [{"name": "Set up job", "started_at": job(9)["started_at"]},
+                        {"name": "Build", "started_at": job(9, start=1)["started_at"]},
+                        {"name": "Skipped step", "started_at": None}]
+        report = self.verify([job(2), bad])
+        self.assertEqual(report["jobs"][1]["seconds"], 1400)
+        # Steps that also end before completion cannot hide a real inversion.
+        bad["steps"] = [{"name": "Build", "started_at": job(9, start=2000)["started_at"]}]
+        with self.assertRaisesRegex(ValueError, "negative duration"):
+            self.verify([bad])
+
     def test_publication_jobs_running_beside_the_verifier_are_not_evidence(self):
         publishing = {"id": 9, "run_id": 123, "name": "publish_amd64 / publish", "status": "in_progress"}
         queued = {"id": 10, "run_id": 123, "name": "publish_arm64 / publish", "status": "queued"}

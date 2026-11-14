@@ -56,12 +56,25 @@ def score_candidates(candidates: list[dict]) -> dict:
     }}
 
 
-def manifest_sha(path: Path, filename: str) -> str:
-    matches = [line.split("\t")[1] for line in path.read_text().splitlines()
-               if line.split("\t", 1)[0] == filename]
-    if len(matches) != 1 or not re.fullmatch(r"[0-9a-f]{64}", matches[0]):
-        raise ValueError(f"manifest has no unique {filename} digest")
-    return matches[0]
+def pkgbase_repo(checksums: Path, directory_url: str, arch: str, package_arch: str,
+                 snapshot: str) -> dict:
+    """The FreeBSD pkgbase repository tarball the jail seed is built from.
+
+    FreeBSD no longer publishes base.txz; the same snapshot is published as a
+    pkgbase repository, `FreeBSD-16.0-CURRENT-<arch>[-<package arch>]-pkgbase-repo-<snapshot>.tar`,
+    with a CHECKSUM.SHA256-<snapshot> file next to it. The repository is unsigned,
+    so that checksum is the only trust anchor.
+    """
+    if not re.fullmatch(r"[0-9]{8}-[0-9a-f]{12}-[0-9]+", snapshot):
+        raise ValueError("invalid pkgbase snapshot identity")
+    name = f"FreeBSD-16.0-CURRENT-{arch}" + (f"-{package_arch}" if arch != "amd64" else "")
+    pattern = re.compile(rf"^SHA256 \(({re.escape(name)}-pkgbase-repo-{re.escape(snapshot)}\.tar)\) = ([0-9a-f]{{64}})$")
+    matches = [pattern.fullmatch(line) for line in checksums.read_text().splitlines()]
+    matches = [match for match in matches if match]
+    if len(matches) != 1:
+        raise ValueError(f"no unique {arch} pkgbase repository for {snapshot}")
+    return {"kind": "pkgbase", "snapshot": snapshot,
+            "url": directory_url.rstrip("/") + "/" + matches[0][1], "sha256": matches[0][2]}
 
 
 def image(checksums: Path, directory_url: str, arch: str, package_arch: str,
@@ -85,6 +98,8 @@ def resolve(previous: dict, directory: Path, metadata: dict, sources: dict,
             or not re.fullmatch(r"[0-9]{8}", str(build_date))
             or not re.fullmatch(r"[0-9a-f]{40}", str(metadata.get("source_commit")))):
         raise ValueError("invalid shared FreeBSD snapshot identity")
+    if metadata.get("pkgbase_snapshot") != f"{build_date}-{revision}-{str(metadata.get('pkgbase_snapshot', '')).rsplit('-', 1)[-1]}":
+        raise ValueError("pkgbase snapshot does not match the shared FreeBSD snapshot identity")
     if any(not re.fullmatch(r"[0-9a-f]{40}", str(value)) for value in sources.values()):
         raise ValueError("project sources must be frozen to full commits")
     reports, ports = {}, {}
@@ -105,10 +120,9 @@ def resolve(previous: dict, directory: Path, metadata: dict, sources: dict,
         reports[arch] = {
             "abi": f"FreeBSD:16:{package_arch}",
             "catalog_ports_commit": ports[arch],
-            "jail_seed": {
-                "url": metadata["dist_urls"][arch].rstrip("/") + "/base.txz",
-                "sha256": manifest_sha(target / "MANIFEST", "base.txz"),
-            },
+            "jail_seed": pkgbase_repo(
+                target / "PKGBASE.SHA256", metadata["pkgbase_urls"][arch], dist_arch,
+                package_arch, metadata["pkgbase_snapshot"]),
             "package_catalog": {
                 "url": f"https://pkg.freebsd.org/FreeBSD:16:{package_arch}/latest/packagesite.pkg",
                 "sha256": catalog_sha,

@@ -174,8 +174,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          DIST_AMD64="https://download.freebsd.org/snapshots/amd64/16.0-CURRENT"
-          DIST_ARM64="https://download.freebsd.org/snapshots/arm64/16.0-CURRENT"
+          # FreeBSD 16 no longer publishes base.txz. The same snapshot is published as a
+          # pkgbase repository tarball in a dated directory; the jail seed is built from it.
+          PKGBASE_AMD64_ROOT="https://download.freebsd.org/snapshots/PKGBASE-REPOS/16.0-CURRENT/amd64"
+          PKGBASE_ARM64_ROOT="https://download.freebsd.org/snapshots/PKGBASE-REPOS/16.0-CURRENT/aarch64"
           VM_AMD64_BASE="https://download.freebsd.org/snapshots/VM-IMAGES/16.0-CURRENT/amd64"
           VM_ARM64_BASE="https://download.freebsd.org/snapshots/VM-IMAGES/16.0-CURRENT/aarch64"
 
@@ -184,8 +186,30 @@ jobs:
 
           retry=(--fail --location --silent --show-error --retry 5 --retry-all-errors --proto '=https')
 
-          curl "${retry[@]}" -o "${downloads}/amd64/MANIFEST" "${DIST_AMD64}/MANIFEST"
-          curl "${retry[@]}" -o "${downloads}/arm64/MANIFEST" "${DIST_ARM64}/MANIFEST"
+          # Exactly one dated directory (never Latest/); its checksum file names the snapshot:
+          # CHECKSUM.SHA256-<YYYYMMDD>-<12 hex revision>-<count>
+          pkgbase_snapshot() {
+            local root=$1 dates
+            dates=$(curl "${retry[@]}" "${root}/" | grep -oE 'href="[0-9]{8}/"' | grep -oE '[0-9]{8}' | sort -u)
+            [[ $(wc -l <<<"${dates}") -eq 1 && -n "${dates}" ]] \
+              || { echo "expected exactly one dated pkgbase directory in ${root}" >&2; return 1; }
+            curl "${retry[@]}" "${root}/${dates}/" \
+              | grep -oE "CHECKSUM\.SHA256-${dates}-[0-9a-f]{12}-[0-9]+" | sort -u
+          }
+          amd_checksum=$(pkgbase_snapshot "${PKGBASE_AMD64_ROOT}")
+          arm_checksum=$(pkgbase_snapshot "${PKGBASE_ARM64_ROOT}")
+          [[ "${amd_checksum}" =~ ^CHECKSUM\.SHA256-[0-9]{8}-[0-9a-f]{12}-[0-9]+$ ]]
+          [[ "${arm_checksum}" =~ ^CHECKSUM\.SHA256-[0-9]{8}-[0-9a-f]{12}-[0-9]+$ ]]
+          amd_snapshot=${amd_checksum#CHECKSUM.SHA256-}
+          arm_snapshot=${arm_checksum#CHECKSUM.SHA256-}
+          if [[ "${amd_snapshot}" != "${arm_snapshot}" ]]; then
+            echo "Snapshot mismatch: amd64 (${amd_snapshot}) vs arm64 (${arm_snapshot})" >&2
+            exit 1
+          fi
+          DIST_AMD64="${PKGBASE_AMD64_ROOT}/${amd_snapshot%%-*}"
+          DIST_ARM64="${PKGBASE_ARM64_ROOT}/${amd_snapshot%%-*}"
+          curl "${retry[@]}" -o "${downloads}/amd64/PKGBASE.SHA256" "${DIST_AMD64}/${amd_checksum}"
+          curl "${retry[@]}" -o "${downloads}/arm64/PKGBASE.SHA256" "${DIST_ARM64}/${arm_checksum}"
 
           curl "${retry[@]}" -o "${downloads}/amd64/CHECKSUM.SHA256" "${VM_AMD64_BASE}/Latest/CHECKSUM.SHA256"
           curl "${retry[@]}" -o "${downloads}/arm64/CHECKSUM.SHA256" "${VM_ARM64_BASE}/Latest/CHECKSUM.SHA256"
@@ -193,18 +217,7 @@ jobs:
           curl "${retry[@]}" -o "${downloads}/amd64/packagesite.pkg" "https://pkg.freebsd.org/FreeBSD:16:amd64/latest/packagesite.pkg"
           curl "${retry[@]}" -o "${downloads}/arm64/packagesite.pkg" "https://pkg.freebsd.org/FreeBSD:16:aarch64/latest/packagesite.pkg"
 
-          amd_revision=$(curl "${retry[@]}" "${DIST_AMD64}/REVISION" | tr -d '\r\n')
-          amd_builddate=$(curl "${retry[@]}" "${DIST_AMD64}/BUILDDATE" | tr -d '\r\n')
-          arm_revision=$(curl "${retry[@]}" "${DIST_ARM64}/REVISION" | tr -d '\r\n')
-          arm_builddate=$(curl "${retry[@]}" "${DIST_ARM64}/BUILDDATE" | tr -d '\r\n')
-
-          if [[ "${amd_revision}" != "${arm_revision}" || "${amd_builddate}" != "${arm_builddate}" ]]; then
-            echo "Snapshot mismatch: amd64 (${amd_revision}, ${amd_builddate}) vs arm64 (${arm_revision}, ${arm_builddate})" >&2
-            exit 1
-          fi
-
-          revision="${amd_revision}"
-          builddate="${amd_builddate}"
+          IFS=- read -r builddate revision _ <<<"${amd_snapshot}"
           [[ "${revision}" =~ ^[0-9a-f]{12}$ ]]
           [[ "${builddate}" =~ ^[0-9]{8}$ ]]
 
@@ -255,6 +268,7 @@ jobs:
             --arg source_commit "${source_sha}" \
             --argjson osversion "${osversion}" \
             --arg trusted_key_sha256 "${trusted_key_sha256}" \
+            --arg pkgbase_snapshot "${amd_snapshot}" \
             --arg dist_amd64 "${DIST_AMD64}" \
             --arg dist_arm64 "${DIST_ARM64}" \
             --arg vm_amd64 "${VM_AMD64_BASE}/${builddate}" \
@@ -262,7 +276,8 @@ jobs:
             --slurpfile candidates "${RUNNER_TEMP}/ports-candidates.json" \
             '{revision: $revision, build_date: $build_date, source_commit: $source_commit,
               osversion: $osversion, trusted_key_sha256: $trusted_key_sha256,
-              dist_urls: {amd64: $dist_amd64, arm64: $dist_arm64},
+              pkgbase_snapshot: $pkgbase_snapshot,
+              pkgbase_urls: {amd64: $dist_amd64, arm64: $dist_arm64},
               vm_urls: {amd64: $vm_amd64, arm64: $vm_arm64},candidate_commits:$candidates[0]}' >"${RUNNER_TEMP}/metadata.json"
 
           jq -n \

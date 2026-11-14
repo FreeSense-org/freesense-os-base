@@ -183,6 +183,22 @@ class MultiarchPinTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             multiarch_pin.worker(pin, "amd64", "github-arm64")
 
+    def test_window_may_move_but_must_stay_exactly_fourteen_days(self):
+        pin = pin_fixture()
+        pin["valid_from"], pin["valid_until"] = "2026-11-14T13:00:00Z", "2026-11-28T13:00:00Z"
+        multiarch_pin.validate(pin, now=datetime(2026, 11, 14, 13, 0, 1, tzinfo=timezone.utc))
+        with self.assertRaisesRegex(ValueError, "outside its active window"):
+            multiarch_pin.validate(pin, now=datetime(2026, 11, 28, 13, 0, 0, tzinfo=timezone.utc))
+        for until in ("2026-11-27T13:00:00Z", "2026-11-29T13:00:00Z"):
+            pin["valid_until"] = until
+            with self.subTest(until=until), self.assertRaisesRegex(ValueError, "exactly 14 days"):
+                multiarch_pin.validate(pin)
+
+    def test_committed_pin_is_valid_in_its_own_window(self):
+        pin = json.loads((Path(__file__).resolve().parents[1] / "config/freebsd-16.json").read_text(encoding="utf-8"))
+        start = datetime.fromisoformat(pin["valid_from"].replace("Z", "+00:00"))
+        multiarch_pin.validate(pin, now=start)
+
     def test_missing_or_incompatible_target_blocks_whole_pin(self):
         for field in ("jail_seed", "package_catalog", "binary_seed", "worker_image", "worker_tools"):
             pin = pin_fixture()
