@@ -696,6 +696,7 @@ seed_poudriere_repository() {
   package_count=0
   pkg_count=0
   pkg_filename=
+  pkg_found=
 
   [ -d "${source_repository}/All" ] || {
     echo "System repository has no package directory" >&2
@@ -722,6 +723,7 @@ seed_poudriere_repository() {
     if [ "${name}" = pkg ]; then
       pkg_count=$((pkg_count + 1))
       pkg_filename=$(basename "${package}")
+      pkg_found="${pkg_found} ${pkg_filename}"
     fi
   done
   [ "${package_count}" -gt 0 ] || {
@@ -729,7 +731,7 @@ seed_poudriere_repository() {
     return 1
   }
   [ "${pkg_count}" -eq 1 ] || {
-    echo "System repository must contain exactly one pkg bootstrap package" >&2
+    echo "System repository must contain exactly one pkg bootstrap package (found ${pkg_count} of ${package_count} packages:${pkg_found:- none})" >&2
     return 1
   }
 
