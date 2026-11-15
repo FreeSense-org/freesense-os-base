@@ -80,7 +80,12 @@ else
   lower=/root/merged-binary-seed
 fi
 for package in /root/system-repo/All/*.pkg "${lower}"/All/*.pkg; do
-  merge_package "${package}" "${combined}/All" "${inventory}" identical
+  merge_rc=0
+  merge_package "${package}" "${combined}/All" "${inventory}" identical || merge_rc=$?
+  case "${package##*/}" in
+    pkg-[0-9]*) echo "pkg merge: ${package} rc=${merge_rc}; composed now holds: $(ls "${combined}/All" | grep -c '^pkg-[0-9]')" ;;
+  esac
+  [ "${merge_rc}" -eq 0 ] || exit "${merge_rc}"
 done
 # net/libzmq4 (ntopng) builds net/norm for its optional NORM multicast
 # transport. FreeBSD 16 renamed IPPROTO_DIVERT to __IPPROTO_DIVERT, which
