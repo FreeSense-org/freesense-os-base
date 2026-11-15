@@ -70,3 +70,9 @@ merge_package first/unrelated.pkg destination inventory {policy}
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("Keeping the System pkg bootstrap", result.stdout)
         self.assertEqual(files, {"pkg.pkg", "unrelated.pkg"})
+
+    def test_binary_seed_preparation_runs_in_a_subshell(self):
+        # merge_package assigns `inventory`; the Optional stage keeps its own
+        # inventory under that name and must not see it repointed.
+        common = (ROOT / "scripts/runner/worker-common.sh").read_text()
+        self.assertIn("prepare_merged_binary_seed() (", common)

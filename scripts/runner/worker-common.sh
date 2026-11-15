@@ -1412,7 +1412,12 @@ write_delta_bulk() {
   cat /tmp/delta-roots
 }
 
-prepare_merged_binary_seed() {
+# Runs in a subshell for the reason given above merge_previous_seed: merge_package
+# assigns inventory as a global, and packages.sh keeps its Optional inventory in
+# a variable of that name. Run in the caller's shell, this left it pointing at
+# the merged seed's inventory, so every lower-layer package, pkg included, looked
+# already supplied and was never copied, and System's own pkg conflicted.
+prepare_merged_binary_seed() (
   load_binary_seed
   load_previous_freesense_seed
   rm -rf /root/merged-binary-seed
@@ -1424,7 +1429,7 @@ prepare_merged_binary_seed() {
     [ -f "${seed_package}" ] || continue
     merge_package "${seed_package}" /root/merged-binary-seed/All "${merged_inventory}" rebuild
   done
-}
+)
 
 # A previous repository that cannot be used (a different pin, or no recorded
 # provenance) must never fail the build: it is only a shortcut. Say so and
