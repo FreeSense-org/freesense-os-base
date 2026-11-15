@@ -731,6 +731,12 @@ seed_poudriere_repository() {
     return 1
   }
   [ "${pkg_count}" -eq 1 ] || {
+    echo "pkg diagnostic: directory entries: $(ls -la "${source_repository}/All" | grep -i ' pkg' | tr '
+' ';')" >&2
+    echo "pkg diagnostic: seed inventory: $(grep -i '^pkg|' "${seed_inventory}" | cut -c1-200 | tr '
+' ';')" >&2
+    echo "pkg diagnostic: composed inventory: $(grep -i '^pkg|' /tmp/optional-farm-seed-inventory 2>/dev/null | cut -c1-200 | tr '
+' ';')" >&2
     for diagnostic in "${source_repository}"/All/pkg-*.pkg; do
       [ -f "${diagnostic}" ] || continue
       echo "pkg candidate: ${diagnostic##*/} -> $(pkg query -F "${diagnostic}" '%n|%v|%o|%q|%Q' 2>&1)" >&2
