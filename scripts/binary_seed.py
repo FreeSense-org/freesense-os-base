@@ -21,6 +21,9 @@ from multiarch_pin import ARCHES, digest
 from resolve_worker_tools import _load_json, _safe_name, _safe_origin, _safe_remote_path, _safe_version, verify_download
 
 FLAGS = ("overlay", "custom_patches", "non_options_knobs", "kernel_sensitive", "base_package")
+# Poudriere starts from the official pkg package. Its version need not match the ports tree (the official
+# catalogues of the architectures move at different times); poudriere rebuilds pkg when it differs.
+BOOTSTRAP_PACKAGES = frozenset({"pkg"})
 
 
 def options(value: object) -> dict[str, bool]:
@@ -110,7 +113,8 @@ def select(requirements: dict, records: list[dict], architecture: str) -> dict:
         if not reason:
             if official is None or name in ambiguous:
                 reason = "missing or ambiguous official package"
-            elif any(official.get(field) != req[field] for field in ("name", "version", "origin", "abi")):
+            elif any(official.get(field) != req[field]
+                     for field in (("name", "origin", "abi") if name in BOOTSTRAP_PACKAGES else ("name", "version", "origin", "abi"))):
                 reason = "name/version/origin/ABI mismatch"
             elif options(official.get("options", {})) != options(req["options"]):
                 reason = "OPTIONS mismatch"
