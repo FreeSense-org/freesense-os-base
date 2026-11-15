@@ -731,6 +731,10 @@ seed_poudriere_repository() {
     return 1
   }
   [ "${pkg_count}" -eq 1 ] || {
+    for diagnostic in "${source_repository}"/All/pkg-*.pkg; do
+      [ -f "${diagnostic}" ] || continue
+      echo "pkg candidate: ${diagnostic##*/} -> $(pkg query -F "${diagnostic}" '%n|%v|%o|%q|%Q' 2>&1)" >&2
+    done
     echo "System repository must contain exactly one pkg bootstrap package (found ${pkg_count} of ${package_count} packages:${pkg_found:- none})" >&2
     return 1
   }
