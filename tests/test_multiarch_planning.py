@@ -53,6 +53,17 @@ class FrozenPlanningTests(unittest.TestCase):
             self.assertEqual(plan.main(), 0)
         return json.loads(rendered.getvalue())
 
+    def test_reused_system_plans_optional_at_the_current_scripts(self):
+        system = self.run_plan("system", "amd64", "github-amd64")
+        current = "9" * 40
+        before = self.run_plan("packages", "amd64", "github-amd64", planning_closure(system))
+        after = self.run_plan("packages", "amd64", "github-amd64",
+                              {**planning_closure(system), "artifact_os_base_sha": current})
+        self.assertEqual(after["os_base_sha"], current)
+        self.assertNotEqual(after["os_base_sha"], before["os_base_sha"])
+        for field in ("system", "source_sha", "system_sha", "freebsd_pin_id"):
+            self.assertEqual(after[field], before[field], field)
+
     def test_system_only_changes_preserve_optional_fingerprint_on_both_architectures(self):
         for arch, host in (("amd64", "github-amd64"), ("arm64", "github-arm64"), ("arm64", "github-amd64"), ("arm64", "dedicated")):
             with self.subTest(arch=arch, host=host):

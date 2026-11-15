@@ -103,7 +103,11 @@ def previous_seed(published: dict, planned: dict) -> str:
 
 
 def resolve(pin: dict, probe: dict, os_base_sha: str, *, force_dedicated: bool = False,
-            all_dedicated: bool = False) -> dict:
+            all_dedicated: bool = False, reuse_system: dict | None = None) -> dict:
+    """Plan both targets. `reuse_system` is an already built amd64 System plan:
+    the Optional plan is then made against that System result but run from the
+    current os-base scripts, so an Optional-stage fix can be tried without
+    rebuilding System. Such a plan can never publish (see development-multiarch.yml)."""
     from plan import current_component_record, remote_sha
     from build_platform import load_policy, manifest_name, target
     validate(pin, now=datetime.now(timezone.utc))
@@ -133,8 +137,12 @@ def resolve(pin: dict, probe: dict, os_base_sha: str, *, force_dedicated: bool =
             system = json.loads(subprocess.check_output([*common, "system"], text=True))
             previous = prior[arch]["system"]
             system["previous_freesense_repository"] = previous_seed(previous, system)
+            closure_document = planning_closure(system)
+            if reuse_system is not None and arch == "amd64":
+                system = reuse_system
+                closure_document = {**planning_closure(system), "artifact_os_base_sha": os_base_sha}
             closure = root / f"{arch}-closure.json"
-            closure.write_text(json.dumps(planning_closure(system)), encoding="utf-8")
+            closure.write_text(json.dumps(closure_document), encoding="utf-8")
             packages = json.loads(subprocess.check_output([*common, "packages", "--system-closure", str(closure)], text=True))
             previous = prior[arch]["packages"]
             packages["previous_freesense_repository"] = previous_seed(previous, packages)
@@ -153,10 +161,13 @@ if __name__ == "__main__":
     parser.add_argument("--github-output", type=Path)
     parser.add_argument("--force-dedicated", action="store_true")
     parser.add_argument("--all-dedicated", action="store_true")
+    parser.add_argument("--reuse-system", type=Path,
+                        help="amd64 System plan to reuse (debug builds that must not publish)")
     args = parser.parse_args()
     pin = json.loads((Path(__file__).resolve().parents[1] / "config/freebsd-16.json").read_text())
     result = resolve(pin, json.loads(args.probe.read_text()), args.os_base_sha,
-                     force_dedicated=args.force_dedicated, all_dedicated=args.all_dedicated)
+                     force_dedicated=args.force_dedicated, all_dedicated=args.all_dedicated,
+                     reuse_system=json.loads(args.reuse_system.read_text()) if args.reuse_system else None)
     args.output.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
     if args.github_output:
         with args.github_output.open("a", encoding="utf-8") as output:

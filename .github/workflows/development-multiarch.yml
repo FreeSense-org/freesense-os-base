@@ -25,6 +25,10 @@ on:
         description: Quick build - build and publish amd64 only (no arm64, no images) so amd64 systems can update from the WebUI
         type: boolean
         default: false
+      reuse_system:
+        description: Debug, quick only - skip the System build and run only the Optional stage against the System repository of the last planned amd64 cycle, using the current scripts. Never publishes.
+        type: boolean
+        default: false
   schedule:
     # 01:00 UTC = 03:00 CEST / 02:00 CET. Unchanged parts reuse their stored output.
     # Every run publishes System and Packages to devices; images and the
@@ -170,11 +174,31 @@ jobs:
           # DEVELOPMENT_BUILD_HOST variable when it is set to github.
           BUILD_HOST: ${{ inputs.build_host || vars.DEVELOPMENT_BUILD_HOST || 'dedicated' }}
           ABANDON_INCOMPLETE_CYCLE: ${{ inputs.abandon_incomplete_cycle || false }}
+          REUSE_SYSTEM: ${{ inputs.reuse_system || false }}
+          QUICK: ${{ inputs.quick || false }}
           R2_BUCKET: ${{ vars.R2_BUILD_BUCKET }}
           FSBUILD_STORE_PREFIX: v1
         run: |
           set -euo pipefail
           "${RUNNER_TEMP}/fsbuild" multiarch cycle-get --output "${RUNNER_TEMP}/cycle-state.json"
+          if [[ "${REUSE_SYSTEM}" == true ]]; then
+            # Debug only: plan the Optional stage against the System result that an
+            # earlier amd64 cycle already built, run from today's scripts. The
+            # cycle is neither superseded nor committed, system_amd64 is skipped,
+            # and every job that verifies or publishes needs it, so nothing is
+            # released from this run.
+            [[ "${QUICK}" == true ]] || { echo "reuse_system needs quick=true" >&2; exit 1; }
+            jq -e '.exists and (.cycle.plan.targets.amd64.system | type == "object")' "${RUNNER_TEMP}/cycle-state.json" >/dev/null               || { echo "no earlier amd64 System plan to reuse" >&2; exit 1; }
+            jq -e '.cycle.plan.targets.amd64.system' "${RUNNER_TEMP}/cycle-state.json" >"${RUNNER_TEMP}/reuse-system.json"
+            echo "Reusing the System plan of cycle generation $(jq -r .cycle.generation "${RUNNER_TEMP}/cycle-state.json") planned at $(jq -r '.cycle.plan.os_base_sha // "unknown"' "${RUNNER_TEMP}/cycle-state.json")"
+            printf '%s' "${ARM_PROBE}" >"${RUNNER_TEMP}/arm-probe.json"
+            args=()
+            if [[ "${FORCE_DEDICATED}" == true ]]; then args+=(--force-dedicated); fi
+            if [[ "${BUILD_HOST}" == dedicated ]]; then args+=(--all-dedicated); fi
+            python3 scripts/multiarch_plan.py --probe "${RUNNER_TEMP}/arm-probe.json"               --os-base-sha "${GITHUB_SHA}" --output "${RUNNER_TEMP}/multiarch-plan.json"               --reuse-system "${RUNNER_TEMP}/reuse-system.json" "${args[@]}"
+            pair=$(jq -er .pair_fingerprint "${RUNNER_TEMP}/multiarch-plan.json")
+            "${RUNNER_TEMP}/fsbuild" state reserve-generation --fingerprint "${pair}"               --proposed "$(date -u +%s)" --output "${RUNNER_TEMP}/pair-generation.json"
+          else
           # An incomplete cycle planned at another workflow revision can never
           # resume (component_farm.py refuses it), so supersede it like an abandon.
           stale=$(jq -r --arg sha "${GITHUB_SHA}" '.exists and (.cycle.superseded != true)
@@ -219,6 +243,7 @@ jobs:
             >"${RUNNER_TEMP}/cycle.json"
           "${RUNNER_TEMP}/fsbuild" multiarch cycle-commit --document "${RUNNER_TEMP}/cycle.json"
           fi
+          fi
           python3 - <<'PY' >>"${GITHUB_OUTPUT}"
           import json, os
           root = os.environ["RUNNER_TEMP"]
@@ -240,6 +265,8 @@ jobs:
 
   system_amd64:
     needs: prepare
+    # reuse_system (a debug option) takes the System repository of an earlier cycle.
+    if: ${{ !inputs.reuse_system }}
     uses: ./.github/workflows/system.yml
     with:
       target: amd64
@@ -263,10 +290,13 @@ jobs:
 
   packages_amd64:
     needs: [prepare, system_amd64]
+    # With reuse_system, system_amd64 is skipped on purpose. Everything after
+    # this job (repository, verify, publish) needs system_amd64 and so stays skipped.
+    if: ${{ !cancelled() && needs.prepare.result == 'success' && (needs.system_amd64.result == 'success' || (inputs.reuse_system && needs.system_amd64.result == 'skipped')) }}
     uses: ./.github/workflows/packages.yml
     with:
       target: amd64
-      system_fingerprint: ${{ needs.system_amd64.outputs.system_fingerprint }}
+      system_fingerprint: ${{ needs.system_amd64.outputs.system_fingerprint || fromJSON(needs.prepare.outputs.amd64_system).system }}
       multiarch_plan: ${{ needs.prepare.outputs.amd64_packages }}
       pair_generation: ${{ needs.prepare.outputs.pair_generation }}
       suppress_publication: true
