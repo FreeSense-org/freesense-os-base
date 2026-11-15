@@ -64,3 +64,9 @@ merge_package first/unrelated.pkg destination inventory {policy}
         result, _ = self.run_merge("rebuild", name="pkg")
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("bootstrap", result.stderr)
+
+    def test_sealed_composition_keeps_the_first_pkg_bootstrap(self):
+        result, files = self.run_merge("identical", name="pkg")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("Keeping the System pkg bootstrap", result.stdout)
+        self.assertEqual(files, {"pkg.pkg", "unrelated.pkg"})

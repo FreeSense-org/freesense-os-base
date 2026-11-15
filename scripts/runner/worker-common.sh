@@ -442,6 +442,14 @@ merge_package() {
       echo "Discarded conflicting delta seed for authoritative rebuild: ${name}"
       return 0
     fi
+    if [ "${duplicate_policy}" = identical ] && [ "${name}" = pkg ]; then
+      # The pin's official pkg and the pkg System built from the ports tree may
+      # differ in version. System was composed first and its pkg is the bootstrap
+      # Poudriere is seeded with, so it wins; seed_poudriere_repository still
+      # requires exactly one.
+      echo "Keeping the System pkg bootstrap, not the lower layer's: ${filename}"
+      return 0
+    fi
     echo "conflicting package name or filename while composing repository: ${name}" >&2
     return 1
   fi
