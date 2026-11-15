@@ -90,6 +90,35 @@ jobs:
             --repositories "${RUNNER_TEMP}/bundle/repository/repos.${package_arch}.manifest.json" \
             --release "${RUNNER_TEMP}/bundle/release/devel.json" \
             --public-key config/channel-signing-public.pem
+      # The notes the WebUI shows are in the download document, which only the
+      # image release rewrites. This log is rewritten on every publication, so
+      # devices see what changed in the build they just received. It is
+      # informative: a failure here never blocks the repositories above.
+      - name: Publish the Development release-notes log
+        if: ${{ inputs.architecture == 'amd64' }}
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_TOKEN: ${{ github.token }}
+          R2_BUCKET: ${{ vars.R2_BUILD_BUCKET }}
+          R2_ENDPOINT: ${{ vars.R2_ENDPOINT }}
+        run: |
+          set -euo pipefail
+          mkdir -p "${RUNNER_TEMP}/plan"
+          gh run download "${GITHUB_RUN_ID}" --repo "${GITHUB_REPOSITORY}" \
+            --name multiarch-plan --dir "${RUNNER_TEMP}/plan"
+          rm -f "${RUNNER_TEMP}/devel.notes.json"
+          python3 scripts/publish_notes.py --plan "${RUNNER_TEMP}/plan/multiarch-plan.json" \
+            --pair-generation "${RUNNER_TEMP}/plan/pair-generation.json" \
+            --architecture amd64 --output "${RUNNER_TEMP}/devel.notes.json"
+          [[ -f "${RUNNER_TEMP}/devel.notes.json" ]] || exit 0
+          aws s3 cp "${RUNNER_TEMP}/devel.notes.json" "s3://${R2_BUCKET}/v1/releases/devel.notes.json" \
+            --endpoint-url "${R2_ENDPOINT}" --no-progress --content-type application/json \
+            --cache-control 'public, max-age=60, must-revalidate'
+          curl --fail --silent --show-error --location \
+            "https://pkg.freesense.org/v1/releases/devel.notes.json?run=${GITHUB_RUN_ID}" \
+            --output "${RUNNER_TEMP}/devel.notes.published.json"
+          diff <(jq -S . "${RUNNER_TEMP}/devel.notes.json") <(jq -S . "${RUNNER_TEMP}/devel.notes.published.json")
 
   # The broker issues the coordinator role only to the build-coordinator
   # environment, and the channel roles only to channel-publisher, so the cycle
