@@ -75,6 +75,21 @@ class BinarySeedTests(unittest.TestCase):
         result = binary_seed.select(requirements(req), [pkg], "amd64")
         self.assertEqual(list(result["accepted"]), ["rust"])
 
+    def test_official_pkg_bootstrap_is_accepted_at_another_version(self):
+        rust = requirement()
+        pkg = {**requirement("pkg", "ports-mgmt/pkg"), "version": "2.9.0"}
+        official = {**catalogue(pkg), "version": "2.8.4"}
+        result = binary_seed.select(requirements(rust, pkg), [catalogue(rust), official], "amd64")
+        self.assertEqual(set(result["accepted"]), {"rust", "pkg"})
+        self.assertEqual(result["accepted"]["pkg"]["version"], "2.8.4")
+        # only the bootstrap is exempt: origin and ABI must still match, and other packages need the exact version
+        other = {**requirement("php85", "lang/php85"), "version": "8.5.1"}
+        result = binary_seed.select(requirements(rust, other), [catalogue(rust), {**catalogue(other), "version": "8.5.0"}], "amd64")
+        self.assertIn("php85", result["rejected"])
+        wrong = {**official, "origin": "ports-mgmt/pkg-devel"}
+        result = binary_seed.select(requirements(rust, pkg), [catalogue(rust), wrong], "amd64")
+        self.assertIn("pkg", result["rejected"])
+
     def test_mandatory_blacklist_cannot_be_overridden(self):
         for name, origin in (("FreeSense", "security/FreeSense"), ("world", "base/world"),
                              ("kernel", "base/kernel"), ("wireguard-kmod", "net/wireguard-kmod")):
