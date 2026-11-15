@@ -36,11 +36,13 @@ MAX_NOTE = 180
 SUBJECT = re.compile(r"^(?P<area>[A-Z][A-Za-z0-9+./-]*(?: [A-Za-z0-9+./-]+){0,3}): (?P<summary>\S.*)$")
 TRAILER = re.compile(r"^(?P<key>Release-Note|Release-Type):[ \t]*(?P<value>.*?)[ \t]*$", re.MULTILINE)
 EXEMPT = ("Merge ", "Revert ", "Bump ", "Reapply ")
+# Work that changes nothing a user can see; listed only with an explicit Release-Type.
+INTERNAL_AREAS = frozenset({"build", "ci", "test", "tests", "chore"})
 DRAFT = re.compile(r"^(wip|fixup!|squash!|tmp|todo)\b", re.IGNORECASE)
 
 
 def parse_message(message: str) -> dict:
-    """{subject, note, type, skip} of one commit message.
+    """{subject, area, internal, note, type, skip} of one commit message.
 
     note is the Release-Note trailer (None when absent or `skip`), type the
     Release-Type trailer (None when absent or unknown)."""
@@ -50,8 +52,11 @@ def parse_message(message: str) -> dict:
     note = trailers.get("Release-Note")
     skip = note is not None and note.lower() == "skip"
     release_type = trailers.get("Release-Type", "").lower()
+    match = SUBJECT.match(subject)
     return {
         "subject": subject,
+        "area": match["area"] if match else None,
+        "internal": bool(match) and match["area"].lower() in INTERNAL_AREAS,
         "note": None if skip or not note else note[:MAX_NOTE],
         "type": release_type if release_type in CHANGE_TYPES else None,
         "skip": skip,

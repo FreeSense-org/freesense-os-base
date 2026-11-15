@@ -20,6 +20,8 @@ Area: what changed
   characters, no full stop. Good: `WebUI: the page width setting is per user and
   lives in Account`. Poor: `WebUI: fixes`.
 - The whole first line stays under 120 characters. Put the detail in the body.
+- Areas `Build`, `CI`, `Tests` and `Chore` are internal work and are not listed
+  (add `Release-Type: ...` to list one anyway).
 - No drafts: `WIP`, `fixup!`, `squash!`, `tmp` are rejected. Merge, revert and
   dependency-bot commits are exempt.
 

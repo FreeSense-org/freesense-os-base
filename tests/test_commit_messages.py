@@ -92,6 +92,14 @@ class PublisherTests(unittest.TestCase):
             {"type": "security", "title": "Security: PHP upload progress is off"},
         ])
 
+    def test_internal_areas_are_not_listed_unless_typed(self):
+        changes = self.compare([
+            "Tests: the appearance menu is on the Account page",
+            "CI: check that commit messages read Area: what changed",
+            "Tests: cover the new menu\n\nRelease-Type: fix",
+        ])
+        self.assertEqual([change["type"] for change in changes], ["build", "build", "fix"])
+
     def test_old_commits_still_use_the_keyword_guess(self):
         changes = self.compare(["Fixed the broken thing in the dashboard"])
         self.assertEqual(changes[0]["type"], "fix")

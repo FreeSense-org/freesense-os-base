@@ -36,6 +36,13 @@ PACKAGES_PER_LIST = 50
 SHA = re.compile(r"^[0-9a-f]{40}$")
 SHA256 = re.compile(r"^[0-9a-f]{64}$")
 PROVENANCE_FIELDS = ("source", "system_ports", "packages", "freebsd", "ports")
+# "New in 1.2": what main has that the Stable branch does not. A fix that landed
+# on main first and was cherry-picked into RELENG_1_1 is in 1.1 as well, so it is
+# not new in 1.2.
+STABLE_BRANCH = "RELENG_1_1"
+SINCE_STABLE_LIMIT = 100
+SINCE_STABLE_COMPARE_LIMIT = 2000
+CHERRY_PICK = re.compile(r"\(cherry picked from commit ([0-9a-f]{40})\)")
 
 
 def now_utc() -> str:
@@ -126,10 +133,60 @@ def new_entry(previous: dict | None, generation: int, provenance: dict, system: 
     return entry
 
 
+def message_of(commit) -> str:
+    return commit.get("commit", {}).get("message", "") if isinstance(commit, dict) else ""
+
+
+def stable_changes(provenance: dict) -> dict:
+    """The changes on main (at the build's commits) that RELENG_1_1 does not have.
+
+    A main commit is left out when RELENG_1_1 took it by `git cherry-pick -x`
+    (its trailer names the original) or carries a commit with the same subject
+    (a cherry-pick without -x)."""
+    found = []
+    for field, repository, scope in pd.CHANGE_REPOSITORIES:
+        head = provenance[field]
+        ahead = pd.github_compare_commits(repository, STABLE_BRANCH, head, SINCE_STABLE_COMPARE_LIMIT)
+        behind = pd.github_compare_commits(repository, head, STABLE_BRANCH, SINCE_STABLE_COMPARE_LIMIT)
+        picked, subjects = set(), set()
+        for commit in behind:
+            message = message_of(commit)
+            picked.update(CHERRY_PICK.findall(message))
+            subjects.add(message.splitlines()[0].strip() if message else "")
+        for commit in ahead:
+            message = message_of(commit)
+            subject = message.splitlines()[0].strip() if message else ""
+            if commit.get("sha") in picked or subject in subjects:
+                continue
+            change = pd.change_from_message(message)
+            if change is None or change["type"] == "build":
+                continue
+            date = str(commit.get("commit", {}).get("committer", {}).get("date", ""))
+            found.append({**change, "scope": scope, "date": date})
+    found.sort(key=lambda change: change["date"], reverse=True)
+    unique, seen = [], set()
+    for change in found:
+        identity = (change["title"], change["scope"])
+        if identity not in seen:
+            seen.add(identity)
+            unique.append({**change, "date": change["date"][:10]})
+    return {"baseline": STABLE_BRANCH, "total": len(unique), "changes": unique[:SINCE_STABLE_LIMIT]}
+
+
+def valid_stable_changes(section) -> bool:
+    return (isinstance(section, dict) and isinstance(section.get("changes"), list)
+            and len(section["changes"]) <= SINCE_STABLE_LIMIT
+            and all(isinstance(change, dict) and change.get("type") in pd.CHANGE_TYPES
+                    and isinstance(change.get("title"), str) and 0 < len(change["title"]) <= 180
+                    and isinstance(change.get("scope"), str) for change in section["changes"]))
+
+
 def valid_log(document) -> bool:
     if not isinstance(document, dict) or document.get("schema_version") != LOG_SCHEMA:
         return False
     entries = document.get("entries")
+    if "since_stable" in document and not valid_stable_changes(document["since_stable"]):
+        return False
     return (isinstance(entries, list) and len(entries) <= LOG_LIMIT
             and all(isinstance(entry, dict) and isinstance(entry.get("generation"), int)
                     and SHA256.fullmatch(entry.get("system", ""))
@@ -139,7 +196,8 @@ def valid_log(document) -> bool:
 
 def update_log(existing: dict | None, release: dict | None, generation: int,
                provenance: dict, system: str, packages_fingerprint: str,
-               base_url: str, package_arch: str, version: str) -> dict | None:
+               base_url: str, package_arch: str, version: str,
+               since_stable: dict | None = None) -> dict | None:
     """The new log, or None when this build changes nothing."""
     entries = list(existing["entries"]) if existing is not None else []
     previous = entries[0] if entries else baseline_from_release(release)
@@ -147,8 +205,14 @@ def update_log(existing: dict | None, release: dict | None, generation: int,
         return None
     entry = new_entry(previous, generation, provenance, system, packages_fingerprint,
                       base_url, package_arch, version)
-    return {"schema_version": LOG_SCHEMA, "channel": "devel", "updated_at": entry["published_at"],
-            "entries": ([entry] + entries)[:LOG_LIMIT]}
+    document = {"schema_version": LOG_SCHEMA, "channel": "devel", "updated_at": entry["published_at"],
+                "entries": ([entry] + entries)[:LOG_LIMIT]}
+    # Without a fresh list (GitHub unreachable) the previous one stays.
+    section = since_stable if since_stable is not None else (existing or {}).get("since_stable")
+    if section is not None:
+        document["since_stable"] = {**section, "generation": generation if since_stable is not None
+                                    else section.get("generation", generation)}
+    return document
 
 
 def main() -> int:
@@ -177,8 +241,14 @@ def main() -> int:
     if existing is not None and not valid_log(existing):
         raise SystemExit("the published release-notes log is invalid; refusing to overwrite it")
     release = pd.fetch_json(f"{args.base_url}/releases/devel.{args.architecture}.json", missing=None)
+    try:
+        since_stable = stable_changes(provenance)
+    except SystemExit as error:
+        # The list is a convenience; the per-build entry must still be published.
+        print(f"warning: no 'new in 1.2' list this time ({error})", file=sys.stderr)
+        since_stable = None
     document = update_log(existing, release, generation, provenance, system,
-                          packages_fingerprint, args.base_url, package_arch, version)
+                          packages_fingerprint, args.base_url, package_arch, version, since_stable)
     if document is None:
         print("release-notes log unchanged")
         return 0

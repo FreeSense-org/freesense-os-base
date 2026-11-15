@@ -111,5 +111,75 @@ class PublishNotesTests(unittest.TestCase):
             notes.build_provenance(plan, "amd64")
 
 
+def raw(sha, message, date="2026-11-10T10:00:00Z"):
+    return {"sha": sha, "commit": {"message": message, "committer": {"date": date}}}
+
+
+class SinceStableTests(unittest.TestCase):
+    """What is new in 1.2: on main, and not in RELENG_1_1."""
+
+    def stable(self, ahead, behind):
+        def compare(repository, before, after, limit=None):
+            return ahead if before == notes.STABLE_BRANCH else behind
+        with mock.patch.object(notes.pd, "github_compare_commits", side_effect=compare):
+            return notes.stable_changes(provenance())
+
+    def test_a_cherry_picked_commit_is_not_new_in_1_2(self):
+        original = "1" * 40
+        result = self.stable(
+            ahead=[raw(original, "WebUI: the page width setting is per user"),
+                   raw("2" * 40, "Dashboard: a new widget layout for 1.2 only")],
+            behind=[raw("3" * 40, "WebUI: the page width setting is per user\n\n(cherry picked from commit %s)" % original)])
+        titles = [change["title"] for change in result["changes"]]
+        self.assertNotIn("WebUI: the page width setting is per user", titles)
+        self.assertIn("Dashboard: a new widget layout for 1.2 only", titles)
+
+    def test_a_cherry_pick_without_the_trailer_is_matched_by_subject(self):
+        result = self.stable(ahead=[raw("1" * 40, "Telegraf: generate a config the installed Telegraf accepts")],
+                             behind=[raw("2" * 40, "Telegraf: generate a config the installed Telegraf accepts")])
+        self.assertEqual(result["changes"], [])
+
+    def test_skipped_and_build_commits_are_not_listed(self):
+        result = self.stable(
+            ahead=[raw("1" * 40, "Build: rename a workflow\n\nRelease-Note: skip"),
+                   raw("2" * 40, "CI: run the workflow on every release build"),
+                   raw("3" * 40, "VPN: WireGuard peers can be disabled")],
+            behind=[])
+        self.assertEqual({change["title"] for change in result["changes"]}, {"VPN: WireGuard peers can be disabled"})
+        self.assertEqual(len(result["changes"]), 3)  # once per repository scope
+
+    def test_newest_first_each_title_once_and_capped(self):
+        ahead = [raw(f"{index:040x}", f"Network: change number {index}", f"2026-11-{(index % 28) + 1:02d}T10:00:00Z")
+                 for index in range(150)]
+        result = self.stable(ahead=ahead, behind=[])
+        # three repositories return the same commits; a title is listed once per scope
+        self.assertEqual(result["total"], 150 * 3)
+        self.assertEqual(len(result["changes"]), notes.SINCE_STABLE_LIMIT)
+        dates = [change["date"] for change in result["changes"]]
+        self.assertEqual(dates, sorted(dates, reverse=True))
+        self.assertEqual(result["baseline"], "RELENG_1_1")
+
+    def test_the_section_is_written_validated_and_kept_when_github_fails(self):
+        section = {"baseline": "RELENG_1_1", "total": 1,
+                   "changes": [{"type": "feature", "title": "VPN: WireGuard peers can be disabled",
+                                "scope": "System", "date": "2026-11-10"}]}
+        with mock.patch.object(notes.pd, "github_compare", return_value=[]), \
+                mock.patch.object(notes.pd, "package_changes", return_value=empty_packages()):
+            first = notes.update_log(None, release(), 200, provenance(B), S2, P2,
+                                     "https://x/v1", "amd64", "1.2.0", section)
+            self.assertEqual(first["since_stable"]["changes"], section["changes"])
+            self.assertEqual(first["since_stable"]["generation"], 200)
+            self.assertTrue(notes.valid_log(first))
+            second = notes.update_log(first, release(), 300, provenance(C), "5" * 64, "6" * 64,
+                                      "https://x/v1", "amd64", "1.2.0", None)
+        self.assertEqual(second["since_stable"]["changes"], section["changes"])
+        self.assertEqual(second["since_stable"]["generation"], 200)
+
+    def test_an_invalid_section_makes_the_log_invalid(self):
+        log = {"schema_version": notes.LOG_SCHEMA, "entries": [],
+               "since_stable": {"changes": [{"type": "nope", "title": "x", "scope": "System"}]}}
+        self.assertFalse(notes.valid_log(log))
+
+
 if __name__ == "__main__":
     unittest.main()
