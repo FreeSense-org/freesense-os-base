@@ -17,6 +17,7 @@ import urllib.request
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from build_platform import image_profile, load_policy, target
+from commit_messages import parse_message
 
 
 SHA = re.compile(r"^[0-9a-f]{40}$")
@@ -143,10 +144,13 @@ def github_compare(repository: str, before: str, after: str) -> list[dict[str, s
     changes = []
     for commit in commits:
         message = commit.get("commit", {}).get("message", "") if isinstance(commit, dict) else ""
-        title = message.splitlines()[0].strip()
-        if not title:
+        parsed = parse_message(message)
+        # Release-Note: skip hides an internal commit; Release-Note replaces the
+        # subject; Release-Type replaces the keyword guess (docs/commit-messages.md).
+        title = parsed["note"] or parsed["subject"]
+        if not title or parsed["skip"]:
             continue
-        changes.append({"type": classify_change(title), "title": title[:180]})
+        changes.append({"type": parsed["type"] or classify_change(title), "title": title[:180]})
     return changes
 
 

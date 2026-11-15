@@ -248,7 +248,7 @@ for value in ("--system-ports", "--packages", "GITHUB_TOKEN",
             f"development release changelog provenance is missing {value!r}")
 release_publisher = read("scripts/publish_download.py")
 for value in ("github_compare", "build_release_notes", '"release_notes": release_notes',
-              "system_package_inventory"):
+              "system_package_inventory", "parse_message"):
     require(value in release_publisher,
             f"canonical release changelog generation is missing {value!r}")
 # Optional Packages are part of what a release delivers and are listed; build
