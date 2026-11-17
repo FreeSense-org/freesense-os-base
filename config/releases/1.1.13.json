@@ -4,9 +4,9 @@
   "product_version": "1.1.13-RELEASE",
   "package_train": "1.1",
   "sealed": true,
-  "source_sha": "afdae055c3f197407c231a524d75b6fbe87964e3",
-  "system_ports_sha": "d252056d1e287cf28642372282f6d4cae8d58409",
-  "packages_sha": "c556acb76e369ffa8b4416a93135d589a7b61715",
+  "source_sha": "b143a31f2adb09721d643948e86c35e13784b47b",
+  "system_ports_sha": "cae0d9866e5c557c950a15686348b68f29c21e60",
+  "packages_sha": "22bda0f2fb4fe13bedfe45380082073b259ec0ab",
   "freebsd_source_sha": "769c49de261fbbd1293adab9188e5099516675cf",
   "freebsd_ports_sha": "5975cd092a057e8a31304edfa76db5bdbe197e6d",
   "freebsd_osversion": 1600031,
@@ -15,5 +15,39 @@
   "worker_tools_sha256": "1564567dfc8a5fc40de3abc592d0022eb5396dabc0d3c591801ad473531ea61f",
   "arm64": {
     "jail_object": "inputs/sha256/ddd15ab6b8ff97d83ebcd993929fa67ba783b14a62f4f023a50d1792a4a8a3d6"
-  }
+  },
+  "notes": [
+    {
+      "type": "security",
+      "title": "Supersedes 1.1.12 with the reviewed management-interface and package security batches; 1.1.12 is not withdrawn."
+    },
+    {
+      "type": "security",
+      "title": "Account changes revoke earlier WebUI sessions; routing, recovery and configuration state are protected; request and privilege checks are enforced."
+    },
+    {
+      "type": "security",
+      "title": "HTTPS alias feeds verify certificates and keep the last complete data on failure; DNS custom configuration requires separate privileges."
+    },
+    {
+      "type": "security",
+      "title": "BIND, TFTP, Tailscale, Web Gateway and syslog-ng validation is hardened; NUT, HAProxy and Suricata widget request checks are included."
+    },
+    {
+      "type": "package",
+      "title": "Require Expat 2.10.0, phpseclib 2.0.56 and Suricata 8.0.8 or later; verify actual installed versions after the update."
+    },
+    {
+      "type": "fix",
+      "title": "PPPoE uses the saved RADIUS NAS IP and accounting interval; the kernel-memory status panel handles FreeBSD 16 output."
+    },
+    {
+      "type": "build",
+      "title": "FreeBSD base and ports move to the active pinned snapshot (OSVERSION 1600031); retain amd64 and generic arm64 installer coverage."
+    },
+    {
+      "type": "other",
+      "title": "Before updating: export a config backup, keep console access, and review private-CA alias feeds, DNS delegation and stricter saved-value validation."
+    }
+  ]
 }
