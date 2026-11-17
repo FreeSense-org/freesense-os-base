@@ -248,13 +248,23 @@ for value in ("--system-ports", "--packages", "GITHUB_TOKEN",
             f"development release changelog provenance is missing {value!r}")
 release_publisher = read("scripts/publish_download.py")
 for value in ("github_compare", "build_release_notes", '"release_notes": release_notes',
-              "system_package_inventory"):
+              "system_package_inventory", "parse_message"):
     require(value in release_publisher,
             f"canonical release changelog generation is missing {value!r}")
 # Optional Packages are part of what a release delivers and are listed; build
 # and publication work in os-base is described by hand in the release lock.
 require('("packages", "FreeSense-org/freesense-packages", "Optional packages")' in release_publisher,
         "release notes do not list Optional Packages changes")
+# Devices update from the repositories every day, but the download document that
+# carries the notes only changes with images. The log is rewritten on every
+# Development publication, and must never stop the repositories from publishing.
+development_publisher = read(".github/workflows/publish-qualified-development.yml")
+for value in ("scripts/publish_notes.py", "releases/devel.notes.json", "multiarch-plan"):
+    require(value in development_publisher,
+            f"the Development release-notes log step is missing {value!r}")
+notes_step = development_publisher[development_publisher.index("Publish the Development release-notes log"):]
+require("continue-on-error: true" in notes_step.split("\n      - name:")[0],
+        "a failing release-notes log must not block the repository publication")
 require('("os_definition", "FreeSense-org/freesense-os-base"' not in release_publisher,
         "appliance release notes still include the internal os-base repository")
 require("s3://${R2_BUCKET}/v1/releases.json" not in release_workflow + stable_workflow,

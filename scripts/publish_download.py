@@ -17,6 +17,7 @@ import urllib.request
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from build_platform import image_profile, load_policy, target
+from commit_messages import parse_message
 
 
 SHA = re.compile(r"^[0-9a-f]{40}$")
@@ -104,9 +105,12 @@ def classify_change(title: str) -> str:
 COMPARE_COMMIT_LIMIT = 1000
 
 
-def github_compare(repository: str, before: str, after: str) -> list[dict[str, str]]:
+def github_compare_commits(repository: str, before: str, after: str,
+                           limit: int | None = None) -> list[dict]:
+    """Every commit GitHub reports between two refs (oldest first), as returned by the API."""
     if before == after:
         return []
+    limit = COMPARE_COMMIT_LIMIT if limit is None else limit
     headers = {
         "Accept": "application/vnd.github+json",
         "User-Agent": "FreeSense-build/1",
@@ -135,18 +139,35 @@ def github_compare(repository: str, before: str, after: str) -> list[dict[str, s
         # A page is full when more may follow; stop when we have them all.
         if len(commits) >= total or len(batch) < 100:
             break
-        if len(commits) >= COMPARE_COMMIT_LIMIT:
+        if len(commits) >= limit:
             break
         page += 1
-    if total > COMPARE_COMMIT_LIMIT or len(commits) < total:
-        raise SystemExit(f"release notes for {repository} exceed the {COMPARE_COMMIT_LIMIT}-commit safety limit")
+    if total > limit or len(commits) < total:
+        raise SystemExit(f"release notes for {repository} exceed the {limit}-commit safety limit")
+    return commits
+
+
+def change_from_message(message: str) -> dict[str, str] | None:
+    """One change line from a commit message, or None when it is not listed.
+
+    Release-Note: skip hides an internal commit; Release-Note replaces the
+    subject; Release-Type replaces the keyword guess (docs/commit-messages.md)."""
+    parsed = parse_message(message)
+    title = parsed["note"] or parsed["subject"]
+    if not title or parsed["skip"]:
+        return None
+    # Build, CI, Tests and Chore areas are internal: typed "build", which the notes drop.
+    kind = parsed["type"] or ("build" if parsed["internal"] else classify_change(title))
+    return {"type": kind, "title": title[:180]}
+
+
+def github_compare(repository: str, before: str, after: str) -> list[dict[str, str]]:
     changes = []
-    for commit in commits:
+    for commit in github_compare_commits(repository, before, after):
         message = commit.get("commit", {}).get("message", "") if isinstance(commit, dict) else ""
-        title = message.splitlines()[0].strip()
-        if not title:
-            continue
-        changes.append({"type": classify_change(title), "title": title[:180]})
+        change = change_from_message(message)
+        if change is not None:
+            changes.append(change)
     return changes
 
 
