@@ -68,6 +68,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           OBSERVE_RUN_ID: ${{ inputs.observe_run_id }}
+          PUBLICATION_ID: ${{ github.run_id }}.${{ github.run_attempt }}
           TRAIN_SUFFIX: ${{ inputs.train == 'stable' && '-stable' || '' }}
         run: |
           set -euo pipefail
@@ -85,7 +86,8 @@ jobs:
           }
           jq -e --arg abi "$(jq -er --arg arch "${ARCH}" '.targets[$arch].abi' config/build-policy.json)" \
             '.schema_version == "freesense.mirror-plan/v1" and .abi == $abi' "${plan}" >/dev/null
-          cp "${plan}" "${RUNNER_TEMP}/mirror-plan.json"
+          python3 scripts/mirror_publication.py --observed "${plan}" \
+            --publication-id "${PUBLICATION_ID}" --output "${RUNNER_TEMP}/mirror-plan.json"
           jq -r '"mirror \(.counts.mirror) packages, delta \(.counts.delta), ports \(.ports_commit)"' \
             "${RUNNER_TEMP}/mirror-plan.json"
 

@@ -186,15 +186,21 @@ jobs:
 
           retry=(--fail --location --silent --show-error --retry 5 --retry-all-errors --proto '=https')
 
-          # Exactly one dated directory (never Latest/); its checksum file names the snapshot:
+          # Select the newest dated directory (never Latest/); retain the cross-architecture
+          # revision check below. Upstream may retain more than one dated snapshot.
+          # Its checksum file names the snapshot:
           # CHECKSUM.SHA256-<YYYYMMDD>-<12 hex revision>-<count>
           pkgbase_snapshot() {
-            local root=$1 dates
+            local root=$1 dates date checksums
             dates=$(curl "${retry[@]}" "${root}/" | grep -oE 'href="[0-9]{8}/"' | grep -oE '[0-9]{8}' | sort -u)
-            [[ $(wc -l <<<"${dates}") -eq 1 && -n "${dates}" ]] \
-              || { echo "expected exactly one dated pkgbase directory in ${root}" >&2; return 1; }
-            curl "${retry[@]}" "${root}/${dates}/" \
-              | grep -oE "CHECKSUM\.SHA256-${dates}-[0-9a-f]{12}-[0-9]+" | sort -u
+            [[ -n "${dates}" ]] \
+              || { echo "no dated pkgbase directory in ${root}" >&2; return 1; }
+            date=$(tail -n 1 <<<"${dates}")
+            checksums=$(curl "${retry[@]}" "${root}/${date}/" \
+              | grep -oE "CHECKSUM\.SHA256-${date}-[0-9a-f]{12}-[0-9]+" | sort -u)
+            [[ "${checksums}" =~ ^CHECKSUM\.SHA256-[0-9]{8}-[0-9a-f]{12}-[0-9]+$ ]] \
+              || { echo "ambiguous or missing pkgbase checksum in ${root}/${date}" >&2; return 1; }
+            printf '%s\n' "${checksums}"
           }
           amd_checksum=$(pkgbase_snapshot "${PKGBASE_AMD64_ROOT}")
           arm_checksum=$(pkgbase_snapshot "${PKGBASE_ARM64_ROOT}")
