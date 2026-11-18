@@ -19,6 +19,7 @@ from pathlib import Path
 import re
 
 from multiarch_pin import ARCHES, digest
+from package_requirements import build_origin
 from resolve_worker_tools import _safe_name, _safe_origin, _safe_remote_path, _safe_version, parse_checksum
 
 REQUIRED_MIRROR_PACKAGES = ("pkg",)
@@ -100,7 +101,7 @@ def component_roots(delta: dict) -> dict[str, list[str]]:
     Poudriere builds them when a root needs them, so putting them in a bulk
     list would only make each stage build the other stage's cascade.
     """
-    origins = {item["name"]: item["origin"] for item in delta["build"]}
+    origins = {item["name"]: build_origin(item) for item in delta["build"]}
     components = delta.get("components")
     if not isinstance(components, dict) or set(components) != {"system", "optional"}:
         raise ValueError("the delta closure does not name both components")
@@ -112,11 +113,12 @@ def component_roots(delta: dict) -> dict[str, list[str]]:
         shared = {}
         for name in names:
             shared.setdefault(origins[name], []).append(name)
-        # package_requirements records a flavourless PKGORIGIN, so several
+        # Legacy requirements record a flavourless PKGORIGIN, so several
         # packages can share one. A bulk list addressed by that origin builds
         # the default flavour only, and the siblings end up in neither layer:
         # not built here, and excluded from the mirror because the delta claims
-        # them. Nothing would fail -- the list is non-empty, the origin is well
+        # them. Fresh requirements preserve the evaluated flavor in build_origin.
+        # Nothing would fail -- the list is non-empty, the origin is well
         # formed, the build succeeds, and the package is simply gone.
         collapsed = {origin: sorted(packages)
                      for origin, packages in shared.items() if len(packages) > 1}
@@ -198,7 +200,7 @@ def plan(delta: dict, catalogue: list[dict], *, architecture: str, catalog_sha25
         "catalog_sha256": catalog_sha256,
         "delta_sha256": digest(delta),
         "packages": mirror,
-        "delta_roots": sorted({item["origin"] for item in delta["build"]}),
+        "delta_roots": sorted({build_origin(item) for item in delta["build"]}),
         "component_roots": component_roots(delta),
         # Every package this build is allowed to produce. The build compares
         # what Poudriere actually emitted against this and the mirror's own

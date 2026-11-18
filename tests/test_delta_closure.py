@@ -61,6 +61,24 @@ class OverrideParsingTests(unittest.TestCase):
 
 
 class ClassificationTests(unittest.TestCase):
+    def test_flavor_selection_survives_classification_and_bulk_planning(self):
+        import mirror_plan
+        packages = [record("qemu-tools", "emulators/qemu", overlay=True,
+                           build_origin="emulators/qemu@tools"),
+                    record("qemu-guest-agent", "emulators/qemu", overlay=True,
+                           build_origin="emulators/qemu@guestagent")]
+        document = delta_closure.plan(requirements(packages, system=[p["name"] for p in packages]),
+                                      catalogue(packages), "")
+        self.assertEqual(mirror_plan.component_roots(document)["system"],
+                         ["emulators/qemu@guestagent", "emulators/qemu@tools"])
+
+    def test_build_flavor_cannot_change_the_package_origin_or_inject_make_arguments(self):
+        for origin in ("other/qemu@tools", "emulators/qemu@tools FLAVOR=default",
+                       "emulators/qemu@tools@default", "emulators/qemu@../tools"):
+            with self.subTest(origin=origin), self.assertRaisesRegex(ValueError, "build origin"):
+                package = record("qemu-tools", "emulators/qemu", build_origin=origin)
+                delta_closure.plan(requirements([package]), catalogue([package]), "")
+
     def test_overlaid_leaf_is_ours_and_forces_nothing(self):
         packages = [record("alpha", "devel/alpha"), record("lua54", "lang/lua54", overlay=True)]
         document = delta_closure.plan(requirements(packages), catalogue(packages), MAKE_CONF)
