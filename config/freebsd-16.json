@@ -6,7 +6,7 @@
     "revision_prefix": "611046b15dbb"
   },
   "freebsd_ports": {
-    "commit": "802d5a0a281d6c98c54b7eff0e2eba70fe21f5fe"
+    "commit": "68edce2ee778a82cc41138f080f66bc5b43cfbcc"
   },
   "freebsd_source": {
     "commit": "611046b15dbb92226c346cfbd61dffb4b402b4f6",
@@ -17,52 +17,52 @@
     "schema_version": "freesense.ports-candidate-selection/v1",
     "selected": {
       "accepted": {
-        "amd64": 215,
-        "arm64": 207
+        "amd64": 203,
+        "arm64": 206
       },
-      "commit": "802d5a0a281d6c98c54b7eff0e2eba70fe21f5fe",
-      "committed_at": "2026-11-04T23:41:53Z",
+      "commit": "68edce2ee778a82cc41138f080f66bc5b43cfbcc",
+      "committed_at": "2026-11-05T22:32:38Z",
       "pkg_official": {
         "amd64": true,
         "arm64": true
       },
       "rejected": {
         "amd64": {
-          "count": 355,
+          "count": 367,
           "error": "",
           "reasons": {
-            "OPTIONS mismatch": 17,
+            "OPTIONS mismatch": 18,
             "custom_patches": 8,
-            "dependencies mismatch": 35,
-            "dependency is source-only": 39,
+            "dependencies mismatch": 44,
+            "dependency is source-only": 35,
             "mandatory source-only package": 46,
-            "name/version/origin/ABI mismatch": 184,
+            "name/version/origin/ABI mismatch": 190,
             "non_options_knobs": 2,
             "overlay": 24
           }
         },
         "arm64": {
-          "count": 302,
+          "count": 303,
           "error": "",
           "reasons": {
-            "OPTIONS mismatch": 18,
+            "OPTIONS mismatch": 17,
             "custom_patches": 6,
-            "dependencies mismatch": 21,
-            "dependency is source-only": 45,
+            "dependencies mismatch": 22,
+            "dependency is source-only": 44,
             "mandatory source-only package": 41,
-            "name/version/origin/ABI mismatch": 148,
+            "name/version/origin/ABI mismatch": 150,
             "non_options_knobs": 2,
             "overlay": 21
           }
         }
       },
       "rust_official": {
-        "amd64": true,
+        "amd64": false,
         "arm64": true
       },
       "score": {
-        "combined_accepted": 422,
-        "minimum_accepted": 207
+        "combined_accepted": 409,
+        "minimum_accepted": 203
       }
     }
   },
@@ -70,19 +70,19 @@
   "source_archives": {
     "611046b15dbb92226c346cfbd61dffb4b402b4f6": {
       "format": "freesense.git-bare-shallow-tar/v1",
-      "object": "inputs/sha256/8c338c8eeab24ca2dfd298cac84e5935b3ee10b66da20b9346259366e00aa26d",
+      "object": "inputs/sha256/e72d45de1c8d872e2c81cb5b8b5c0c40385725c7b831c5c15fcec43b8a8960e7",
       "ref": "refs/heads/main",
       "repository": "freebsd/freebsd-src",
-      "sha256": "8c338c8eeab24ca2dfd298cac84e5935b3ee10b66da20b9346259366e00aa26d",
-      "size": 380037120
+      "sha256": "e72d45de1c8d872e2c81cb5b8b5c0c40385725c7b831c5c15fcec43b8a8960e7",
+      "size": 380170240
     },
-    "802d5a0a281d6c98c54b7eff0e2eba70fe21f5fe": {
+    "68edce2ee778a82cc41138f080f66bc5b43cfbcc": {
       "format": "freesense.git-bare-shallow-tar/v1",
-      "object": "inputs/sha256/2f3083467033303cd051b4ce1d57743e14d25edfe085a6d716e2c6ad03ecb98d",
+      "object": "inputs/sha256/edd7b55f7269a6be6b6b26668cdfdb8833cca0a1001314e338e9c921d92bc998",
       "ref": "refs/heads/main",
       "repository": "freebsd/freebsd-ports",
-      "sha256": "2f3083467033303cd051b4ce1d57743e14d25edfe085a6d716e2c6ad03ecb98d",
-      "size": 122306560
+      "sha256": "edd7b55f7269a6be6b6b26668cdfdb8833cca0a1001314e338e9c921d92bc998",
+      "size": 122501120
     }
   },
   "targets": {
@@ -90,13 +90,13 @@
       "abi": "FreeBSD:16:amd64",
       "binary_seed": {
         "abi": "FreeBSD:16:amd64",
-        "accepted_count": 215,
-        "catalog_sha256": "b3ae2e9f03f34c956a673416b166bb2a9e956702028706ffd45a19d7afa2b6d4",
-        "commit": "802d5a0a281d6c98c54b7eff0e2eba70fe21f5fe",
-        "committed_at": "2026-11-04T23:41:53Z",
-        "object": "inputs/sha256/e3b57b943108da6caa2b4d1a8b21d8f35023fa30c1df49f37629b773c164647b",
-        "package_count": 215,
-        "provenance_sha256": "9761c67c2618b71d5567e1186d2dcd24e8b20447c4a3fbd5ffaf465cc9f92a82",
+        "accepted_count": 203,
+        "catalog_sha256": "d4a56c39a89ebe499c2d0509778d1f6976f979cc8e29e214adc76b0823e9ceb6",
+        "commit": "68edce2ee778a82cc41138f080f66bc5b43cfbcc",
+        "committed_at": "2026-11-05T22:32:38Z",
+        "object": "inputs/sha256/b96cb935547f2a1781521c880b91353f098b8de09e7d9b3154eda08e28145a8f",
+        "package_count": 203,
+        "provenance_sha256": "09acc2e8844a311bbdd0693fe8d4417883fcb47cf5b993be4ee72aa40cdbfa7b",
         "rejected": {
           "FreeSense": "mandatory source-only package",
           "FreeSense-Status_Monitoring-php85": "mandatory source-only package",
@@ -145,22 +145,24 @@
           "FreeSense-system": "mandatory source-only package",
           "FreeSense-upgrade": "mandatory source-only package",
           "adguardhome-bin": "overlay",
-          "aom": "name/version/origin/ABI mismatch",
+          "andwatch": "dependency is source-only",
           "arj": "custom_patches",
           "autoconf": "name/version/origin/ABI mismatch",
           "autoconf-switch": "name/version/origin/ABI mismatch",
           "automake": "name/version/origin/ABI mismatch",
-          "avahi-app": "dependency is source-only",
+          "avahi-app": "dependencies mismatch",
           "aws-sdk-php85": "name/version/origin/ABI mismatch",
           "bind-tools": "custom_patches",
           "bind920": "custom_patches",
           "binutils": "name/version/origin/ABI mismatch",
+          "boost-libs": "dependency is source-only",
           "c-icap-modules": "dependency is source-only",
           "ca_root_nss": "name/version/origin/ABI mismatch",
           "cairo": "dependency is source-only",
           "check_reload_status": "overlay",
-          "clamav": "dependency is source-only",
-          "cmake-core": "dependency is source-only",
+          "clamav": "dependencies mismatch",
+          "clickhouse-cpp": "dependencies mismatch",
+          "cmake-core": "dependencies mismatch",
           "coredns": "name/version/origin/ABI mismatch",
           "cpu-microcode": "name/version/origin/ABI mismatch",
           "cpu-microcode-amd": "name/version/origin/ABI mismatch",
@@ -168,9 +170,10 @@
           "cpu-microcode-rc": "name/version/origin/ABI mismatch",
           "cpustats": "overlay",
           "crowdsec": "name/version/origin/ABI mismatch",
-          "cups": "dependency is source-only",
-          "dbus": "dependency is source-only",
-          "dbus-glib": "dependency is source-only",
+          "cups": "dependencies mismatch",
+          "curl": "dependencies mismatch",
+          "dbus": "name/version/origin/ABI mismatch",
+          "dbus-glib": "dependencies mismatch",
           "dejavu": "name/version/origin/ABI mismatch",
           "dhcpleases": "overlay",
           "dhcpleases6": "overlay",
@@ -213,6 +216,7 @@
           "isc-dhcp44-server": "custom_patches",
           "iso8879": "name/version/origin/ABI mismatch",
           "jpeg-turbo": "name/version/origin/ABI mismatch",
+          "jwasm": "name/version/origin/ABI mismatch",
           "kea": "dependencies mismatch",
           "lcms2": "name/version/origin/ABI mismatch",
           "lerc": "name/version/origin/ABI mismatch",
@@ -228,6 +232,9 @@
           "libavif": "dependencies mismatch",
           "libccid": "dependency is source-only",
           "libgd": "OPTIONS mismatch",
+          "liblz4": "name/version/origin/ABI mismatch",
+          "libmspack": "name/version/origin/ABI mismatch",
+          "libnghttp2": "name/version/origin/ABI mismatch",
           "libpci": "dependencies mismatch",
           "librdkafka": "name/version/origin/ABI mismatch",
           "libtool": "name/version/origin/ABI mismatch",
@@ -260,7 +267,7 @@
           "open-vm-tools-nox11": "overlay",
           "openjpeg": "dependencies mismatch",
           "opensc": "OPTIONS mismatch",
-          "openvpn": "name/version/origin/ABI mismatch",
+          "openvpn": "OPTIONS mismatch",
           "openvpn-client-export": "overlay",
           "p5-Authen-SASL": "name/version/origin/ABI mismatch",
           "p5-Digest-HMAC": "name/version/origin/ABI mismatch",
@@ -326,8 +333,9 @@
           "php85-xmlreader": "name/version/origin/ABI mismatch",
           "php85-xmlwriter": "name/version/origin/ABI mismatch",
           "php85-zlib": "name/version/origin/ABI mismatch",
-          "polkit": "dependency is source-only",
+          "polkit": "dependencies mismatch",
           "poppler-data": "name/version/origin/ABI mismatch",
+          "postgresql18-client": "name/version/origin/ABI mismatch",
           "powerman": "dependency is source-only",
           "public_suffix_list": "name/version/origin/ABI mismatch",
           "py312-Babel": "name/version/origin/ABI mismatch",
@@ -379,7 +387,7 @@
           "py312-referencing": "name/version/origin/ABI mismatch",
           "py312-requests": "name/version/origin/ABI mismatch",
           "py312-roman-numerals": "name/version/origin/ABI mismatch",
-          "py312-rpds-py": "dependencies mismatch",
+          "py312-rpds-py": "name/version/origin/ABI mismatch",
           "py312-semantic-version": "name/version/origin/ABI mismatch",
           "py312-setuptools": "name/version/origin/ABI mismatch",
           "py312-setuptools-rust": "name/version/origin/ABI mismatch",
@@ -414,17 +422,19 @@
           "ruby": "name/version/origin/ABI mismatch",
           "ruby34-gems": "name/version/origin/ABI mismatch",
           "rubygem-asciidoctor": "name/version/origin/ABI mismatch",
+          "rust": "dependency is source-only",
           "scponly": "OPTIONS mismatch",
           "sdocbook-xml": "name/version/origin/ABI mismatch",
           "shared-mime-info": "dependency is source-only",
           "snowballstemmer": "name/version/origin/ABI mismatch",
           "softflowd": "overlay",
+          "source-highlight": "dependency is source-only",
           "speedtest-go": "name/version/origin/ABI mismatch",
           "squid": "OPTIONS mismatch",
           "ssh_tunnel_shell": "overlay",
           "strongswan": "OPTIONS mismatch",
           "suricata": "OPTIONS mismatch",
-          "syslog-ng": "dependency is source-only",
+          "syslog-ng": "name/version/origin/ABI mismatch",
           "tailscale": "overlay",
           "talloc": "dependencies mismatch",
           "tdb": "dependencies mismatch",
@@ -441,7 +451,7 @@
           "voucher": "overlay",
           "webfonts": "name/version/origin/ABI mismatch",
           "webp": "dependencies mismatch",
-          "wpa_supplicant": "dependency is source-only",
+          "wpa_supplicant": "dependencies mismatch",
           "wrapalixresetbutton": "overlay",
           "xcb-proto": "name/version/origin/ABI mismatch",
           "xe-guest-utilities": "name/version/origin/ABI mismatch",
@@ -452,16 +462,18 @@
           "xorgproto": "name/version/origin/ABI mismatch",
           "xtrans": "name/version/origin/ABI mismatch",
           "xxd": "name/version/origin/ABI mismatch",
-          "zabbix7-proxy": "OPTIONS mismatch"
+          "zabbix7-agent": "dependency is source-only",
+          "zabbix7-proxy": "OPTIONS mismatch",
+          "zstd": "dependencies mismatch"
         },
-        "rejected_count": 355,
+        "rejected_count": 367,
         "rejection_reasons": {
-          "OPTIONS mismatch": 17,
+          "OPTIONS mismatch": 18,
           "custom_patches": 8,
-          "dependencies mismatch": 35,
-          "dependency is source-only": 39,
+          "dependencies mismatch": 44,
+          "dependency is source-only": 35,
           "mandatory source-only package": 46,
-          "name/version/origin/ABI mismatch": 184,
+          "name/version/origin/ABI mismatch": 190,
           "non_options_knobs": 2,
           "overlay": 24
         },
@@ -469,16 +481,14 @@
           "system",
           "packages"
         ],
-        "requirements_sha256": "93d43d2eb53484e729103c7e90361bc11bd9b411133ec9bb912039b56bc3718f",
-        "sha256": "e3b57b943108da6caa2b4d1a8b21d8f35023fa30c1df49f37629b773c164647b",
-        "size": 350750720,
+        "requirements_sha256": "bd879943b32af2de4d94fea3aaa15ffb6220a570a3f0b009a34af09aaef278be",
+        "sha256": "b96cb935547f2a1781521c880b91353f098b8de09e7d9b3154eda08e28145a8f",
+        "size": 124743680,
         "verified": true,
-        "verified_roots": [
-          "rust"
-        ]
+        "verified_roots": []
       },
       "jail_seed": {
-        "created": true,
+        "created": false,
         "key": "inputs/sha256/123a709f8e843cfef5b6a74f315f251dc3eceaec2b40328961630e57b956b0fe",
         "object": "inputs/sha256/123a709f8e843cfef5b6a74f315f251dc3eceaec2b40328961630e57b956b0fe",
         "schema_version": "freesense.blob/v1",
@@ -492,20 +502,20 @@
         }
       },
       "package_catalog": {
-        "created": false,
-        "key": "inputs/sha256/b3ae2e9f03f34c956a673416b166bb2a9e956702028706ffd45a19d7afa2b6d4",
-        "object": "inputs/sha256/b3ae2e9f03f34c956a673416b166bb2a9e956702028706ffd45a19d7afa2b6d4",
+        "created": true,
+        "key": "inputs/sha256/d4a56c39a89ebe499c2d0509778d1f6976f979cc8e29e214adc76b0823e9ceb6",
+        "object": "inputs/sha256/d4a56c39a89ebe499c2d0509778d1f6976f979cc8e29e214adc76b0823e9ceb6",
         "schema_version": "freesense.blob/v1",
-        "sha256": "b3ae2e9f03f34c956a673416b166bb2a9e956702028706ffd45a19d7afa2b6d4",
+        "sha256": "d4a56c39a89ebe499c2d0509778d1f6976f979cc8e29e214adc76b0823e9ceb6",
         "signature_verified": true,
-        "size": 9946707,
+        "size": 10012549,
         "trusted_key_sha256": "b0170035af3acc5f3f3ae1859dc717101b4e6c1d0a794ad554928ca0cbb2f438"
       },
       "ready": true,
       "worker_image": {
         "architecture": "amd64",
         "boot_verified": true,
-        "created": true,
+        "created": false,
         "key": "inputs/sha256/20cb2658a2a182a0092cf48f319c6dc4fdb35834b7a13dbadb8ce9f9c17db238",
         "object": "inputs/sha256/20cb2658a2a182a0092cf48f319c6dc4fdb35834b7a13dbadb8ce9f9c17db238",
         "schema_version": "freesense.blob/v1",
@@ -516,24 +526,24 @@
         "architecture": "amd64",
         "boot_verified": true,
         "created": true,
-        "key": "inputs/sha256/09c3f55283b7a8bdfccc326ae35c26e8d02c151bc66d8f413a4885ce697cf5ef",
-        "object": "inputs/sha256/09c3f55283b7a8bdfccc326ae35c26e8d02c151bc66d8f413a4885ce697cf5ef",
+        "key": "inputs/sha256/bd125b8c8707dd6a084435c570c2e1dd876fcabe2ce2aceb0f7e46893ecf3560",
+        "object": "inputs/sha256/bd125b8c8707dd6a084435c570c2e1dd876fcabe2ce2aceb0f7e46893ecf3560",
         "schema_version": "freesense.blob/v1",
-        "sha256": "09c3f55283b7a8bdfccc326ae35c26e8d02c151bc66d8f413a4885ce697cf5ef",
-        "size": 142141440
+        "sha256": "bd125b8c8707dd6a084435c570c2e1dd876fcabe2ce2aceb0f7e46893ecf3560",
+        "size": 142151680
       }
     },
     "arm64": {
       "abi": "FreeBSD:16:aarch64",
       "binary_seed": {
         "abi": "FreeBSD:16:aarch64",
-        "accepted_count": 207,
+        "accepted_count": 206,
         "catalog_sha256": "d3599447c41a0a35ff7e4cd94dda7de5ac1ae6337b3fe305772aadc13d492df6",
-        "commit": "802d5a0a281d6c98c54b7eff0e2eba70fe21f5fe",
-        "committed_at": "2026-11-04T23:41:53Z",
-        "object": "inputs/sha256/7976cc7ed3660bd8bcf0f3a893f2c3eafc0d24780eac5244d4debf882ec21f5f",
-        "package_count": 207,
-        "provenance_sha256": "16240e89f280670809e6a7fc53c9d435a82de6741d1fb252739b8fe779cf7c54",
+        "commit": "68edce2ee778a82cc41138f080f66bc5b43cfbcc",
+        "committed_at": "2026-11-05T22:32:38Z",
+        "object": "inputs/sha256/ea7db3bd65eead71b15568a7084e3fcc3dd130e211c27cb7a46775ece5e468dd",
+        "package_count": 206,
+        "provenance_sha256": "0b37a7087c5fb491b8c3d2ca5a3c630e631ac8842ef52715493c15adecc1555e",
         "rejected": {
           "FreeSense": "mandatory source-only package",
           "FreeSense-Status_Monitoring-php85": "mandatory source-only package",
@@ -578,6 +588,7 @@
           "FreeSense-upgrade": "mandatory source-only package",
           "adguardhome-bin": "overlay",
           "andwatch": "dependencies mismatch",
+          "aom": "name/version/origin/ABI mismatch",
           "autoconf": "name/version/origin/ABI mismatch",
           "autoconf-switch": "name/version/origin/ABI mismatch",
           "automake": "name/version/origin/ABI mismatch",
@@ -644,7 +655,7 @@
           "libXpm": "dependency is source-only",
           "libXrender": "dependency is source-only",
           "libXt": "dependency is source-only",
-          "libavif": "dependency is source-only",
+          "libavif": "dependencies mismatch",
           "libccid": "dependency is source-only",
           "libgd": "OPTIONS mismatch",
           "libpci": "dependency is source-only",
@@ -675,7 +686,7 @@
           "nut": "dependency is source-only",
           "open-vm-tools-nox11": "overlay",
           "opensc": "OPTIONS mismatch",
-          "openvpn": "OPTIONS mismatch",
+          "openvpn": "name/version/origin/ABI mismatch",
           "openvpn-client-export": "overlay",
           "p5-Authen-SASL": "name/version/origin/ABI mismatch",
           "p5-Digest-HMAC": "name/version/origin/ABI mismatch",
@@ -838,14 +849,14 @@
           "xtrans": "name/version/origin/ABI mismatch",
           "zabbix7-proxy": "OPTIONS mismatch"
         },
-        "rejected_count": 302,
+        "rejected_count": 303,
         "rejection_reasons": {
-          "OPTIONS mismatch": 18,
+          "OPTIONS mismatch": 17,
           "custom_patches": 6,
-          "dependencies mismatch": 21,
-          "dependency is source-only": 45,
+          "dependencies mismatch": 22,
+          "dependency is source-only": 44,
           "mandatory source-only package": 41,
-          "name/version/origin/ABI mismatch": 148,
+          "name/version/origin/ABI mismatch": 150,
           "non_options_knobs": 2,
           "overlay": 21
         },
@@ -853,16 +864,16 @@
           "system",
           "packages"
         ],
-        "requirements_sha256": "affddb1ddcc0f43275ef7105af2d687f5de1dae1bf4e2aee42f417ee348e7707",
-        "sha256": "7976cc7ed3660bd8bcf0f3a893f2c3eafc0d24780eac5244d4debf882ec21f5f",
-        "size": 433889280,
+        "requirements_sha256": "dcba9dcfab85c4903fef403f1319ef928037ccd3352917dc45a221606233d7a4",
+        "sha256": "ea7db3bd65eead71b15568a7084e3fcc3dd130e211c27cb7a46775ece5e468dd",
+        "size": 430837760,
         "verified": true,
         "verified_roots": [
           "rust"
         ]
       },
       "jail_seed": {
-        "created": true,
+        "created": false,
         "key": "inputs/sha256/5c5706b25a0bc6652ce6ace87fa8b9a42cda17b0bb4803180e20673e8b24049c",
         "object": "inputs/sha256/5c5706b25a0bc6652ce6ace87fa8b9a42cda17b0bb4803180e20673e8b24049c",
         "schema_version": "freesense.blob/v1",
@@ -889,7 +900,7 @@
       "worker_image": {
         "architecture": "arm64",
         "boot_verified": true,
-        "created": true,
+        "created": false,
         "key": "inputs/sha256/ee16d927b4355913871ba72f646c2cee87419ef8dbcedab85713188be0419324",
         "object": "inputs/sha256/ee16d927b4355913871ba72f646c2cee87419ef8dbcedab85713188be0419324",
         "schema_version": "freesense.blob/v1",
@@ -899,7 +910,7 @@
       "worker_tools": {
         "architecture": "arm64",
         "boot_verified": true,
-        "created": true,
+        "created": false,
         "key": "inputs/sha256/efcbd3eb5f645117d0aaf0310d940f1be3b0d5841d0da78d0939f938e9be41ce",
         "object": "inputs/sha256/efcbd3eb5f645117d0aaf0310d940f1be3b0d5841d0da78d0939f938e9be41ce",
         "schema_version": "freesense.blob/v1",
@@ -908,6 +919,6 @@
       }
     }
   },
-  "valid_from": "2026-11-17T18:54:15Z",
-  "valid_until": "2026-12-01T18:54:15Z"
+  "valid_from": "2026-11-18T17:15:47Z",
+  "valid_until": "2026-12-02T17:15:47Z"
 }
