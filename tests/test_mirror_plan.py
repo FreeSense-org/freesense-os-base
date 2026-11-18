@@ -239,6 +239,16 @@ class ComponentRootTests(unittest.TestCase):
         self.assertEqual(document["component_roots"]["system"], ["devel/shared"])
         self.assertEqual(document["component_roots"]["optional"], ["devel/shared"])
 
+    def test_explicit_flavors_survive_in_the_complete_bulk_list(self):
+        document = delta(build=["qemu-tools", "qemu-guest-agent"],
+                         components={"system": ["qemu-tools", "qemu-guest-agent"], "optional": []})
+        for item in document["build"]:
+            item["origin"] = "emulators/qemu"
+            item["build_origin"] = "emulators/qemu@" + ("tools" if item["name"] == "qemu-tools" else "guestagent")
+        result = make(document, [upstream("pkg"), upstream("alpha")])
+        self.assertEqual(result["delta_roots"], ["emulators/qemu@guestagent", "emulators/qemu@tools"])
+        self.assertEqual(result["component_roots"]["system"], result["delta_roots"])
+
     def test_a_component_naming_a_package_outside_the_delta_is_refused(self):
         with self.assertRaisesRegex(ValueError, "outside the delta"):
             make(delta(build=["ours"], components={"system": ["ours", "ghost"], "optional": []}),

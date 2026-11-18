@@ -22,7 +22,7 @@ import re
 
 from binary_seed import FLAGS, options as normalize_options
 from multiarch_pin import ARCHES
-from package_requirements import audit_make_conf
+from package_requirements import audit_make_conf, build_origin
 from resolve_worker_tools import _safe_name, _safe_origin, _safe_version
 
 # Poudriere per-port option knobs are <category>_<port directory>_SET[_FORCE].
@@ -103,6 +103,7 @@ def requirement_records(requirements: dict) -> dict[str, dict]:
     for record in requirements.get("packages", []):
         name = _safe_name(record.get("name"), "requirement name")
         _safe_origin(record.get("origin"), "requirement origin")
+        build_origin(record)
         _safe_version(record.get("version"), "requirement version")
         if name in records or record.get("abi") != abi:
             raise ValueError("duplicate or cross-architecture requirement")
@@ -197,6 +198,7 @@ def plan(requirements: dict, catalogue: list[dict], make_conf: str) -> dict:
         "abi": requirements["abi"],
         "build": [
             {"name": name, "origin": records[name]["origin"],
+             "build_origin": build_origin(records[name]),
              "cause": causes.get(name, "reverse-dependency")}
             for name in sorted(build)
         ],
@@ -241,7 +243,7 @@ def main() -> None:
                     args.make_conf.read_text(encoding="utf-8"))
     args.output.write_text(json.dumps(document, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     if args.roots_output:
-        origins = sorted({entry["origin"] for entry in document["build"]})
+        origins = sorted({build_origin(entry) for entry in document["build"]})
         args.roots_output.write_text("".join(origin + "\n" for origin in origins), encoding="utf-8")
 
 

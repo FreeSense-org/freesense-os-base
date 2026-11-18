@@ -390,6 +390,23 @@ class RequirementsCollectorTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "conflicting package name across ports/flavors"):
             collector.visit("other/py-docutils")
 
+    def test_collector_preserves_qemu_flavors_for_bulk_builds(self):
+        collector = object.__new__(package_requirements.Collector)
+        collector.abi, collector.knobs, collector.changed = "FreeBSD:16:amd64", set(), set()
+        collector.overlaid = set()
+        collector.records, collector.by_origin = {}, {}
+        def values(origin, names):
+            flavor = origin.split("@")[1]
+            result = {name: "" for name in names}
+            result.update(PKGBASE={"tools": "qemu-tools", "guestagent": "qemu-guest-agent"}[flavor],
+                          PKGVERSION="10.1", PKGORIGIN="emulators/qemu", FLAVOR=flavor)
+            return result
+        collector.values = values
+        for flavor in ("tools", "guestagent"):
+            name = collector.visit("emulators/qemu@" + flavor)
+            self.assertEqual(collector.records[name]["origin"], "emulators/qemu")
+            self.assertEqual(collector.records[name]["build_origin"], "emulators/qemu@" + flavor)
+
     def test_collector_values_passes_target_architecture(self):
         with tempfile.TemporaryDirectory() as root:
             ports = Path(root) / "ports"

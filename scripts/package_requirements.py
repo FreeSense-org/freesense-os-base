@@ -67,6 +67,16 @@ def dependency_origin(value: str) -> str:
     return parts[1]
 
 
+def build_origin(record: dict) -> str:
+    """Keep the evaluated flavor for bulk builds, without changing PKGORIGIN."""
+    origin = record["origin"]
+    selected = record.get("build_origin", origin)
+    if (not isinstance(selected, str) or not PORT.fullmatch(selected)
+            or selected.split("@")[0] != origin):
+        raise ValueError("build origin must select a flavor of the package origin")
+    return selected
+
+
 def is_overlaid(path: str, changed: set[str], overlaid: set[str]) -> bool:
     """Whether FreeSense carries a port, whatever the pinned ports tree says.
 
@@ -121,7 +131,7 @@ class Collector:
     def visit(self, origin: str) -> str:
         if origin in self.by_origin:
             return self.by_origin[origin]
-        values = self.values(origin, ("PKGBASE", "PKGVERSION", "PKGORIGIN", "COMPLETE_OPTIONS_LIST", "PORT_OPTIONS",
+        values = self.values(origin, ("PKGBASE", "PKGVERSION", "PKGORIGIN", "FLAVOR", "COMPLETE_OPTIONS_LIST", "PORT_OPTIONS",
                                       "USES", "EXTRA_PATCHES", "SUBPACKAGES", *DEPENDENCY_FIELDS))
         if values["SUBPACKAGES"]:
             raise ValueError(f"subpackage metadata requires explicit collection support: {origin}")
@@ -130,6 +140,7 @@ class Collector:
         path = origin.split("@")[0]
         record = {
             "name": name, "version": values["PKGVERSION"], "origin": values["PKGORIGIN"],
+            "build_origin": values["PKGORIGIN"] + ("@" + values["FLAVOR"] if values["FLAVOR"] else ""),
             "abi": self.abi, "options": options, "deps": {},
             "overlay": is_overlaid(path, self.changed, self.overlaid),
             "custom_patches": bool(values["EXTRA_PATCHES"]),
@@ -137,9 +148,11 @@ class Collector:
             "kernel_sensitive": "kmod" in values["USES"].split(),
             "base_package": False,
         }
+        build_origin(record)
         if name in self.records:
             existing = self.records[name]
             if (existing["origin"] == record["origin"] and
+                build_origin(existing) == build_origin(record) and
                 existing["version"] == record["version"] and
                 existing["options"] == record["options"] and
                 existing["overlay"] == record["overlay"] and
