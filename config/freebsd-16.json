@@ -1,15 +1,15 @@
 {
   "bootstrap_snapshot": {
-    "build_date": "20261109",
-    "commit": "769c49de261fbbd1293adab9188e5099516675cf",
+    "build_date": "20261117",
+    "commit": "611046b15dbb92226c346cfbd61dffb4b402b4f6",
     "osversion": 1600031,
-    "revision_prefix": "769c49de261f"
+    "revision_prefix": "611046b15dbb"
   },
   "freebsd_ports": {
-    "commit": "5975cd092a057e8a31304edfa76db5bdbe197e6d"
+    "commit": "802d5a0a281d6c98c54b7eff0e2eba70fe21f5fe"
   },
   "freebsd_source": {
-    "commit": "769c49de261fbbd1293adab9188e5099516675cf",
+    "commit": "611046b15dbb92226c346cfbd61dffb4b402b4f6",
     "osversion": 1600031
   },
   "pin_evidence": {
@@ -17,42 +17,42 @@
     "schema_version": "freesense.ports-candidate-selection/v1",
     "selected": {
       "accepted": {
-        "amd64": 213,
-        "arm64": 226
+        "amd64": 215,
+        "arm64": 207
       },
-      "commit": "5975cd092a057e8a31304edfa76db5bdbe197e6d",
-      "committed_at": "2026-11-03T23:33:00Z",
+      "commit": "802d5a0a281d6c98c54b7eff0e2eba70fe21f5fe",
+      "committed_at": "2026-11-04T23:41:53Z",
       "pkg_official": {
         "amd64": true,
         "arm64": true
       },
       "rejected": {
         "amd64": {
-          "count": 357,
+          "count": 355,
           "error": "",
           "reasons": {
             "OPTIONS mismatch": 17,
             "custom_patches": 8,
-            "dependencies mismatch": 44,
-            "dependency is source-only": 30,
+            "dependencies mismatch": 35,
+            "dependency is source-only": 39,
             "mandatory source-only package": 46,
-            "name/version/origin/ABI mismatch": 187,
+            "name/version/origin/ABI mismatch": 184,
             "non_options_knobs": 2,
-            "overlay": 23
+            "overlay": 24
           }
         },
         "arm64": {
-          "count": 283,
+          "count": 302,
           "error": "",
           "reasons": {
             "OPTIONS mismatch": 18,
             "custom_patches": 6,
-            "dependencies mismatch": 10,
-            "dependency is source-only": 39,
+            "dependencies mismatch": 21,
+            "dependency is source-only": 45,
             "mandatory source-only package": 41,
-            "name/version/origin/ABI mismatch": 147,
+            "name/version/origin/ABI mismatch": 148,
             "non_options_knobs": 2,
-            "overlay": 20
+            "overlay": 21
           }
         }
       },
@@ -61,28 +61,28 @@
         "arm64": true
       },
       "score": {
-        "combined_accepted": 439,
-        "minimum_accepted": 213
+        "combined_accepted": 422,
+        "minimum_accepted": 207
       }
     }
   },
   "schema_version": "freesense.freebsd-pin/v4",
   "source_archives": {
-    "5975cd092a057e8a31304edfa76db5bdbe197e6d": {
+    "611046b15dbb92226c346cfbd61dffb4b402b4f6": {
       "format": "freesense.git-bare-shallow-tar/v1",
-      "object": "inputs/sha256/f7e5ef4e0497bbec5979cfbc75dbafd40b4b271c9398dbbec55ff08bfce83026",
-      "ref": "refs/heads/main",
-      "repository": "freebsd/freebsd-ports",
-      "sha256": "f7e5ef4e0497bbec5979cfbc75dbafd40b4b271c9398dbbec55ff08bfce83026",
-      "size": 122214400
-    },
-    "769c49de261fbbd1293adab9188e5099516675cf": {
-      "format": "freesense.git-bare-shallow-tar/v1",
-      "object": "inputs/sha256/7349162f7f5c88e6e12c36872446ac0293b516df939a814dbbbe65bd1e88b5eb",
+      "object": "inputs/sha256/8c338c8eeab24ca2dfd298cac84e5935b3ee10b66da20b9346259366e00aa26d",
       "ref": "refs/heads/main",
       "repository": "freebsd/freebsd-src",
-      "sha256": "7349162f7f5c88e6e12c36872446ac0293b516df939a814dbbbe65bd1e88b5eb",
-      "size": 379105280
+      "sha256": "8c338c8eeab24ca2dfd298cac84e5935b3ee10b66da20b9346259366e00aa26d",
+      "size": 380037120
+    },
+    "802d5a0a281d6c98c54b7eff0e2eba70fe21f5fe": {
+      "format": "freesense.git-bare-shallow-tar/v1",
+      "object": "inputs/sha256/2f3083467033303cd051b4ce1d57743e14d25edfe085a6d716e2c6ad03ecb98d",
+      "ref": "refs/heads/main",
+      "repository": "freebsd/freebsd-ports",
+      "sha256": "2f3083467033303cd051b4ce1d57743e14d25edfe085a6d716e2c6ad03ecb98d",
+      "size": 122306560
     }
   },
   "targets": {
@@ -90,13 +90,13 @@
       "abi": "FreeBSD:16:amd64",
       "binary_seed": {
         "abi": "FreeBSD:16:amd64",
-        "accepted_count": 213,
+        "accepted_count": 215,
         "catalog_sha256": "b3ae2e9f03f34c956a673416b166bb2a9e956702028706ffd45a19d7afa2b6d4",
-        "commit": "5975cd092a057e8a31304edfa76db5bdbe197e6d",
-        "committed_at": "2026-11-03T23:33:00Z",
-        "object": "inputs/sha256/e1191f74af965a786bc1248d98644865c9bd72f2684738f66edb98aa3199777e",
-        "package_count": 213,
-        "provenance_sha256": "e28498c83fe824ebaa8c5cd6ed9afae67d333c1f06ac855c265dbf17b99e8e19",
+        "commit": "802d5a0a281d6c98c54b7eff0e2eba70fe21f5fe",
+        "committed_at": "2026-11-04T23:41:53Z",
+        "object": "inputs/sha256/e3b57b943108da6caa2b4d1a8b21d8f35023fa30c1df49f37629b773c164647b",
+        "package_count": 215,
+        "provenance_sha256": "9761c67c2618b71d5567e1186d2dcd24e8b20447c4a3fbd5ffaf465cc9f92a82",
         "rejected": {
           "FreeSense": "mandatory source-only package",
           "FreeSense-Status_Monitoring-php85": "mandatory source-only package",
@@ -150,7 +150,7 @@
           "autoconf": "name/version/origin/ABI mismatch",
           "autoconf-switch": "name/version/origin/ABI mismatch",
           "automake": "name/version/origin/ABI mismatch",
-          "avahi-app": "dependencies mismatch",
+          "avahi-app": "dependency is source-only",
           "aws-sdk-php85": "name/version/origin/ABI mismatch",
           "bind-tools": "custom_patches",
           "bind920": "custom_patches",
@@ -160,7 +160,7 @@
           "cairo": "dependency is source-only",
           "check_reload_status": "overlay",
           "clamav": "dependency is source-only",
-          "cmake-core": "dependencies mismatch",
+          "cmake-core": "dependency is source-only",
           "coredns": "name/version/origin/ABI mismatch",
           "cpu-microcode": "name/version/origin/ABI mismatch",
           "cpu-microcode-amd": "name/version/origin/ABI mismatch",
@@ -169,8 +169,8 @@
           "cpustats": "overlay",
           "crowdsec": "name/version/origin/ABI mismatch",
           "cups": "dependency is source-only",
-          "dbus": "dependencies mismatch",
-          "dbus-glib": "dependencies mismatch",
+          "dbus": "dependency is source-only",
+          "dbus-glib": "dependency is source-only",
           "dejavu": "name/version/origin/ABI mismatch",
           "dhcpleases": "overlay",
           "dhcpleases6": "overlay",
@@ -180,11 +180,11 @@
           "docbook-xml": "name/version/origin/ABI mismatch",
           "docbook-xsl": "name/version/origin/ABI mismatch",
           "doxygen": "OPTIONS mismatch",
-          "expat": "name/version/origin/ABI mismatch",
+          "expat": "overlay",
           "filterdns": "overlay",
           "filterlog": "overlay",
           "flashrom": "dependency is source-only",
-          "fontconfig": "dependencies mismatch",
+          "fontconfig": "dependency is source-only",
           "freeipmi": "name/version/origin/ABI mismatch",
           "freeradius3": "OPTIONS mismatch",
           "frr10": "non_options_knobs",
@@ -208,7 +208,6 @@
           "haproxy": "overlay",
           "harfbuzz": "dependency is source-only",
           "intltool": "name/version/origin/ABI mismatch",
-          "iprange": "name/version/origin/ABI mismatch",
           "isc-dhcp44-client": "custom_patches",
           "isc-dhcp44-relay": "custom_patches",
           "isc-dhcp44-server": "custom_patches",
@@ -246,7 +245,7 @@
           "mobile-broadband-provider-info": "name/version/origin/ABI mismatch",
           "mysql84-client": "dependencies mismatch",
           "ndpi": "dependency is source-only",
-          "neon": "dependencies mismatch",
+          "neon": "dependency is source-only",
           "net-snmp": "OPTIONS mismatch",
           "nginx": "name/version/origin/ABI mismatch",
           "nginx-module-lua": "name/version/origin/ABI mismatch",
@@ -254,10 +253,9 @@
           "ninja": "dependencies mismatch",
           "nmap": "dependency is source-only",
           "node_exporter": "overlay",
-          "nss": "name/version/origin/ABI mismatch",
           "nss_ldap": "OPTIONS mismatch",
           "nss_mdns": "dependency is source-only",
-          "ntopng": "dependencies mismatch",
+          "ntopng": "dependency is source-only",
           "nut": "dependencies mismatch",
           "open-vm-tools-nox11": "overlay",
           "openjpeg": "dependencies mismatch",
@@ -273,7 +271,7 @@
           "p5-Text-Unidecode": "name/version/origin/ABI mismatch",
           "p5-URI": "name/version/origin/ABI mismatch",
           "p5-Unicode-EastAsianWidth": "name/version/origin/ABI mismatch",
-          "p5-XML-Parser": "dependencies mismatch",
+          "p5-XML-Parser": "dependency is source-only",
           "pango": "dependency is source-only",
           "pciids": "name/version/origin/ABI mismatch",
           "pcsc-lite": "dependency is source-only",
@@ -328,7 +326,7 @@
           "php85-xmlreader": "name/version/origin/ABI mismatch",
           "php85-xmlwriter": "name/version/origin/ABI mismatch",
           "php85-zlib": "name/version/origin/ABI mismatch",
-          "polkit": "dependencies mismatch",
+          "polkit": "dependency is source-only",
           "poppler-data": "name/version/origin/ABI mismatch",
           "powerman": "dependency is source-only",
           "public_suffix_list": "name/version/origin/ABI mismatch",
@@ -456,41 +454,41 @@
           "xxd": "name/version/origin/ABI mismatch",
           "zabbix7-proxy": "OPTIONS mismatch"
         },
-        "rejected_count": 357,
+        "rejected_count": 355,
         "rejection_reasons": {
           "OPTIONS mismatch": 17,
           "custom_patches": 8,
-          "dependencies mismatch": 44,
-          "dependency is source-only": 30,
+          "dependencies mismatch": 35,
+          "dependency is source-only": 39,
           "mandatory source-only package": 46,
-          "name/version/origin/ABI mismatch": 187,
+          "name/version/origin/ABI mismatch": 184,
           "non_options_knobs": 2,
-          "overlay": 23
+          "overlay": 24
         },
         "requirements_components": [
           "system",
           "packages"
         ],
-        "requirements_sha256": "efb433e40ea5a48a2646e42829e9d26e83c6fcbd9cc09ff6c1ff961897423b45",
-        "sha256": "e1191f74af965a786bc1248d98644865c9bd72f2684738f66edb98aa3199777e",
-        "size": 348395520,
+        "requirements_sha256": "93d43d2eb53484e729103c7e90361bc11bd9b411133ec9bb912039b56bc3718f",
+        "sha256": "e3b57b943108da6caa2b4d1a8b21d8f35023fa30c1df49f37629b773c164647b",
+        "size": 350750720,
         "verified": true,
         "verified_roots": [
           "rust"
         ]
       },
       "jail_seed": {
-        "created": false,
-        "key": "inputs/sha256/be451360925765aa25c76303edea02b1bf8c8d5a15950bde8e70418f06cb653e",
-        "object": "inputs/sha256/be451360925765aa25c76303edea02b1bf8c8d5a15950bde8e70418f06cb653e",
+        "created": true,
+        "key": "inputs/sha256/123a709f8e843cfef5b6a74f315f251dc3eceaec2b40328961630e57b956b0fe",
+        "object": "inputs/sha256/123a709f8e843cfef5b6a74f315f251dc3eceaec2b40328961630e57b956b0fe",
         "schema_version": "freesense.blob/v1",
-        "sha256": "be451360925765aa25c76303edea02b1bf8c8d5a15950bde8e70418f06cb653e",
-        "size": 175646092,
+        "sha256": "123a709f8e843cfef5b6a74f315f251dc3eceaec2b40328961630e57b956b0fe",
+        "size": 175886128,
         "source": {
           "kind": "pkgbase",
-          "repo_tar_sha256": "46bea444b100f7f5f69a32e8427f3923618d2bd80fe4c35ee4ab5e291b3b5cac",
-          "repo_url": "https://download.freebsd.org/snapshots/PKGBASE-REPOS/16.0-CURRENT/amd64/20261109/FreeBSD-16.0-CURRENT-amd64-pkgbase-repo-20261109-769c49de261f-290812.tar",
-          "snapshot": "20261109-769c49de261f-290812"
+          "repo_tar_sha256": "5e478ac49ec1289eb536c51cb26967eb335d3de6927ab17f8d1dca0034694ed5",
+          "repo_url": "https://download.freebsd.org/snapshots/PKGBASE-REPOS/16.0-CURRENT/amd64/20261117/FreeBSD-16.0-CURRENT-amd64-pkgbase-repo-20261117-611046b15dbb-291235.tar",
+          "snapshot": "20261117-611046b15dbb-291235"
         }
       },
       "package_catalog": {
@@ -507,21 +505,21 @@
       "worker_image": {
         "architecture": "amd64",
         "boot_verified": true,
-        "created": false,
-        "key": "inputs/sha256/1d63bab2243ab2ca909eb7aabe82c4947ea25bc12319875f6a0e710a61e29d52",
-        "object": "inputs/sha256/1d63bab2243ab2ca909eb7aabe82c4947ea25bc12319875f6a0e710a61e29d52",
+        "created": true,
+        "key": "inputs/sha256/20cb2658a2a182a0092cf48f319c6dc4fdb35834b7a13dbadb8ce9f9c17db238",
+        "object": "inputs/sha256/20cb2658a2a182a0092cf48f319c6dc4fdb35834b7a13dbadb8ce9f9c17db238",
         "schema_version": "freesense.blob/v1",
-        "sha256": "1d63bab2243ab2ca909eb7aabe82c4947ea25bc12319875f6a0e710a61e29d52",
-        "size": 1044578304
+        "sha256": "20cb2658a2a182a0092cf48f319c6dc4fdb35834b7a13dbadb8ce9f9c17db238",
+        "size": 1048772608
       },
       "worker_tools": {
         "architecture": "amd64",
         "boot_verified": true,
-        "created": false,
-        "key": "inputs/sha256/1564567dfc8a5fc40de3abc592d0022eb5396dabc0d3c591801ad473531ea61f",
-        "object": "inputs/sha256/1564567dfc8a5fc40de3abc592d0022eb5396dabc0d3c591801ad473531ea61f",
+        "created": true,
+        "key": "inputs/sha256/09c3f55283b7a8bdfccc326ae35c26e8d02c151bc66d8f413a4885ce697cf5ef",
+        "object": "inputs/sha256/09c3f55283b7a8bdfccc326ae35c26e8d02c151bc66d8f413a4885ce697cf5ef",
         "schema_version": "freesense.blob/v1",
-        "sha256": "1564567dfc8a5fc40de3abc592d0022eb5396dabc0d3c591801ad473531ea61f",
+        "sha256": "09c3f55283b7a8bdfccc326ae35c26e8d02c151bc66d8f413a4885ce697cf5ef",
         "size": 142141440
       }
     },
@@ -529,13 +527,13 @@
       "abi": "FreeBSD:16:aarch64",
       "binary_seed": {
         "abi": "FreeBSD:16:aarch64",
-        "accepted_count": 226,
+        "accepted_count": 207,
         "catalog_sha256": "d3599447c41a0a35ff7e4cd94dda7de5ac1ae6337b3fe305772aadc13d492df6",
-        "commit": "5975cd092a057e8a31304edfa76db5bdbe197e6d",
-        "committed_at": "2026-11-03T23:33:00Z",
-        "object": "inputs/sha256/03ed60426ccb87d7e0ac819f9d3122e8e4c8759b4c39a38d50aa8db2de81af0f",
-        "package_count": 226,
-        "provenance_sha256": "55d4b53044532669a444c53eae486b346d412676a49b62ba4051b7f1a8c028c5",
+        "commit": "802d5a0a281d6c98c54b7eff0e2eba70fe21f5fe",
+        "committed_at": "2026-11-04T23:41:53Z",
+        "object": "inputs/sha256/7976cc7ed3660bd8bcf0f3a893f2c3eafc0d24780eac5244d4debf882ec21f5f",
+        "package_count": 207,
+        "provenance_sha256": "16240e89f280670809e6a7fc53c9d435a82de6741d1fb252739b8fe779cf7c54",
         "rejected": {
           "FreeSense": "mandatory source-only package",
           "FreeSense-Status_Monitoring-php85": "mandatory source-only package",
@@ -583,18 +581,19 @@
           "autoconf": "name/version/origin/ABI mismatch",
           "autoconf-switch": "name/version/origin/ABI mismatch",
           "automake": "name/version/origin/ABI mismatch",
-          "avahi-app": "dependency is source-only",
+          "avahi-app": "dependencies mismatch",
           "aws-sdk-php85": "name/version/origin/ABI mismatch",
           "bind-tools": "custom_patches",
           "bind920": "custom_patches",
           "ca_root_nss": "name/version/origin/ABI mismatch",
           "cairo": "dependency is source-only",
           "check_reload_status": "overlay",
+          "cmake-core": "dependencies mismatch",
           "cpustats": "overlay",
           "crowdsec": "name/version/origin/ABI mismatch",
           "cups": "dependency is source-only",
-          "dbus": "dependency is source-only",
-          "dbus-glib": "dependency is source-only",
+          "dbus": "dependencies mismatch",
+          "dbus-glib": "dependencies mismatch",
           "dejavu": "name/version/origin/ABI mismatch",
           "dhcpleases": "overlay",
           "dhcpleases6": "overlay",
@@ -604,16 +603,20 @@
           "docbook-xml": "name/version/origin/ABI mismatch",
           "docbook-xsl": "name/version/origin/ABI mismatch",
           "doxygen": "OPTIONS mismatch",
+          "expat": "overlay",
           "filterdns": "overlay",
           "filterlog": "overlay",
           "flashrom": "dependency is source-only",
+          "fontconfig": "dependencies mismatch",
           "freeradius3": "OPTIONS mismatch",
           "fribidi": "name/version/origin/ABI mismatch",
           "frr10": "non_options_knobs",
           "frr10-pythontools": "non_options_knobs",
+          "gdb": "dependencies mismatch",
           "gdk-pixbuf2": "dependency is source-only",
+          "gettext-tools": "dependency is source-only",
           "ghostscript10": "dependency is source-only",
-          "git": "dependency is source-only",
+          "git": "dependencies mismatch",
           "glib": "dependency is source-only",
           "glib-bootstrap": "dependency is source-only",
           "gnome_subr": "name/version/origin/ABI mismatch",
@@ -626,10 +629,12 @@
           "harfbuzz": "name/version/origin/ABI mismatch",
           "igmpproxy": "name/version/origin/ABI mismatch",
           "intltool": "name/version/origin/ABI mismatch",
+          "iprange": "name/version/origin/ABI mismatch",
           "isc-dhcp44-client": "custom_patches",
           "isc-dhcp44-relay": "custom_patches",
           "isc-dhcp44-server": "custom_patches",
           "iso8879": "name/version/origin/ABI mismatch",
+          "kea": "dependency is source-only",
           "libX11": "dependency is source-only",
           "libXaw": "dependency is source-only",
           "libXdmcp": "dependency is source-only",
@@ -657,10 +662,12 @@
           "mobile-broadband-provider-info": "name/version/origin/ABI mismatch",
           "mysql84-client": "name/version/origin/ABI mismatch",
           "ndpi": "dependency is source-only",
+          "neon": "dependencies mismatch",
           "net-snmp": "OPTIONS mismatch",
           "nginx": "name/version/origin/ABI mismatch",
           "nginx-module-lua": "name/version/origin/ABI mismatch",
           "nginx-module-ndk": "name/version/origin/ABI mismatch",
+          "ninja": "dependency is source-only",
           "nmap": "dependency is source-only",
           "nss_ldap": "OPTIONS mismatch",
           "nss_mdns": "dependency is source-only",
@@ -679,6 +686,7 @@
           "p5-Text-Unidecode": "name/version/origin/ABI mismatch",
           "p5-URI": "name/version/origin/ABI mismatch",
           "p5-Unicode-EastAsianWidth": "name/version/origin/ABI mismatch",
+          "p5-XML-Parser": "dependencies mismatch",
           "pango": "name/version/origin/ABI mismatch",
           "pciids": "name/version/origin/ABI mismatch",
           "pcsc-lite": "dependency is source-only",
@@ -733,7 +741,7 @@
           "php85-xmlreader": "name/version/origin/ABI mismatch",
           "php85-xmlwriter": "name/version/origin/ABI mismatch",
           "php85-zlib": "name/version/origin/ABI mismatch",
-          "polkit": "dependency is source-only",
+          "polkit": "dependencies mismatch",
           "poppler-data": "name/version/origin/ABI mismatch",
           "powerman": "dependency is source-only",
           "public_suffix_list": "name/version/origin/ABI mismatch",
@@ -743,6 +751,8 @@
           "py312-build": "name/version/origin/ABI mismatch",
           "py312-calver": "name/version/origin/ABI mismatch",
           "py312-certifi": "name/version/origin/ABI mismatch",
+          "py312-charset-normalizer": "dependency is source-only",
+          "py312-cython": "dependency is source-only",
           "py312-docutils": "name/version/origin/ABI mismatch",
           "py312-flit-core": "name/version/origin/ABI mismatch",
           "py312-gi-docgen": "name/version/origin/ABI mismatch",
@@ -752,6 +762,7 @@
           "py312-imagesize": "name/version/origin/ABI mismatch",
           "py312-installer": "name/version/origin/ABI mismatch",
           "py312-markdown": "name/version/origin/ABI mismatch",
+          "py312-markupsafe": "dependency is source-only",
           "py312-packaging": "name/version/origin/ABI mismatch",
           "py312-parameterized": "name/version/origin/ABI mismatch",
           "py312-pathspec": "name/version/origin/ABI mismatch",
@@ -760,6 +771,8 @@
           "py312-pygments": "name/version/origin/ABI mismatch",
           "py312-pyproject-hooks": "name/version/origin/ABI mismatch",
           "py312-pysocks": "name/version/origin/ABI mismatch",
+          "py312-pystemmer": "dependency is source-only",
+          "py312-qemu.qmp": "dependency is source-only",
           "py312-requests": "name/version/origin/ABI mismatch",
           "py312-roman-numerals": "name/version/origin/ABI mismatch",
           "py312-setuptools": "name/version/origin/ABI mismatch",
@@ -784,6 +797,7 @@
           "py312-urllib3": "name/version/origin/ABI mismatch",
           "py312-wheel": "name/version/origin/ABI mismatch",
           "py312-wheel044": "name/version/origin/ABI mismatch",
+          "python312": "dependencies mismatch",
           "qemu-guest-agent": "name/version/origin/ABI mismatch",
           "qemu-tools": "name/version/origin/ABI mismatch",
           "qstats": "overlay",
@@ -802,11 +816,14 @@
           "ssh_tunnel_shell": "overlay",
           "strongswan": "OPTIONS mismatch",
           "syslog-ng": "dependency is source-only",
+          "talloc": "dependency is source-only",
+          "tdb": "dependency is source-only",
           "telegraf": "name/version/origin/ABI mismatch",
           "texinfo": "dependency is source-only",
           "uclcmd": "dependencies mismatch",
           "unbound": "OPTIONS mismatch",
           "urw-base35-fonts": "name/version/origin/ABI mismatch",
+          "valgrind": "dependency is source-only",
           "vm-bhyve": "name/version/origin/ABI mismatch",
           "vnstat": "dependencies mismatch",
           "voucher": "overlay",
@@ -821,41 +838,41 @@
           "xtrans": "name/version/origin/ABI mismatch",
           "zabbix7-proxy": "OPTIONS mismatch"
         },
-        "rejected_count": 283,
+        "rejected_count": 302,
         "rejection_reasons": {
           "OPTIONS mismatch": 18,
           "custom_patches": 6,
-          "dependencies mismatch": 10,
-          "dependency is source-only": 39,
+          "dependencies mismatch": 21,
+          "dependency is source-only": 45,
           "mandatory source-only package": 41,
-          "name/version/origin/ABI mismatch": 147,
+          "name/version/origin/ABI mismatch": 148,
           "non_options_knobs": 2,
-          "overlay": 20
+          "overlay": 21
         },
         "requirements_components": [
           "system",
           "packages"
         ],
-        "requirements_sha256": "4df5737d0b681d26c2663297cb17bbf854e6ab9b2fba669a5294d7b65d555a1b",
-        "sha256": "03ed60426ccb87d7e0ac819f9d3122e8e4c8759b4c39a38d50aa8db2de81af0f",
-        "size": 549498880,
+        "requirements_sha256": "affddb1ddcc0f43275ef7105af2d687f5de1dae1bf4e2aee42f417ee348e7707",
+        "sha256": "7976cc7ed3660bd8bcf0f3a893f2c3eafc0d24780eac5244d4debf882ec21f5f",
+        "size": 433889280,
         "verified": true,
         "verified_roots": [
           "rust"
         ]
       },
       "jail_seed": {
-        "created": false,
-        "key": "inputs/sha256/ddd15ab6b8ff97d83ebcd993929fa67ba783b14a62f4f023a50d1792a4a8a3d6",
-        "object": "inputs/sha256/ddd15ab6b8ff97d83ebcd993929fa67ba783b14a62f4f023a50d1792a4a8a3d6",
+        "created": true,
+        "key": "inputs/sha256/5c5706b25a0bc6652ce6ace87fa8b9a42cda17b0bb4803180e20673e8b24049c",
+        "object": "inputs/sha256/5c5706b25a0bc6652ce6ace87fa8b9a42cda17b0bb4803180e20673e8b24049c",
         "schema_version": "freesense.blob/v1",
-        "sha256": "ddd15ab6b8ff97d83ebcd993929fa67ba783b14a62f4f023a50d1792a4a8a3d6",
-        "size": 158554056,
+        "sha256": "5c5706b25a0bc6652ce6ace87fa8b9a42cda17b0bb4803180e20673e8b24049c",
+        "size": 158822072,
         "source": {
           "kind": "pkgbase",
-          "repo_tar_sha256": "145f7b27f4a0e24b425f3bf00f37ca8036550305393f2eb3bf390e7fc22ce4c5",
-          "repo_url": "https://download.freebsd.org/snapshots/PKGBASE-REPOS/16.0-CURRENT/aarch64/20261109/FreeBSD-16.0-CURRENT-arm64-aarch64-pkgbase-repo-20261109-769c49de261f-290812.tar",
-          "snapshot": "20261109-769c49de261f-290812"
+          "repo_tar_sha256": "f9c8defb28706c79be5f2be8ab35ba10981bd3371beb14143c30f8e3e9dcaf8e",
+          "repo_url": "https://download.freebsd.org/snapshots/PKGBASE-REPOS/16.0-CURRENT/aarch64/20261117/FreeBSD-16.0-CURRENT-arm64-aarch64-pkgbase-repo-20261117-611046b15dbb-291235.tar",
+          "snapshot": "20261117-611046b15dbb-291235"
         }
       },
       "package_catalog": {
@@ -872,25 +889,25 @@
       "worker_image": {
         "architecture": "arm64",
         "boot_verified": true,
-        "created": false,
-        "key": "inputs/sha256/1f6a4bf44feff3da43a87b1b17da8481caf74ba41abdb8099871b78b337818fc",
-        "object": "inputs/sha256/1f6a4bf44feff3da43a87b1b17da8481caf74ba41abdb8099871b78b337818fc",
+        "created": true,
+        "key": "inputs/sha256/ee16d927b4355913871ba72f646c2cee87419ef8dbcedab85713188be0419324",
+        "object": "inputs/sha256/ee16d927b4355913871ba72f646c2cee87419ef8dbcedab85713188be0419324",
         "schema_version": "freesense.blob/v1",
-        "sha256": "1f6a4bf44feff3da43a87b1b17da8481caf74ba41abdb8099871b78b337818fc",
-        "size": 930807808
+        "sha256": "ee16d927b4355913871ba72f646c2cee87419ef8dbcedab85713188be0419324",
+        "size": 934805504
       },
       "worker_tools": {
         "architecture": "arm64",
         "boot_verified": true,
-        "created": false,
-        "key": "inputs/sha256/12c9cd13a21e5c7a64c484f97c98273728fe389c45925b3c895e2d81a642e934",
-        "object": "inputs/sha256/12c9cd13a21e5c7a64c484f97c98273728fe389c45925b3c895e2d81a642e934",
+        "created": true,
+        "key": "inputs/sha256/efcbd3eb5f645117d0aaf0310d940f1be3b0d5841d0da78d0939f938e9be41ce",
+        "object": "inputs/sha256/efcbd3eb5f645117d0aaf0310d940f1be3b0d5841d0da78d0939f938e9be41ce",
         "schema_version": "freesense.blob/v1",
-        "sha256": "12c9cd13a21e5c7a64c484f97c98273728fe389c45925b3c895e2d81a642e934",
+        "sha256": "efcbd3eb5f645117d0aaf0310d940f1be3b0d5841d0da78d0939f938e9be41ce",
         "size": 130119680
       }
     }
   },
-  "valid_from": "2026-11-15T06:59:36Z",
-  "valid_until": "2026-11-29T06:59:36Z"
+  "valid_from": "2026-11-17T18:54:15Z",
+  "valid_until": "2026-12-01T18:54:15Z"
 }
