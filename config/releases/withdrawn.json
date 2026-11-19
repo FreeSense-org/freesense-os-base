@@ -24,6 +24,12 @@
       "date": "2026-10-17",
       "reason": "Withdrawn before release: the candidate upgrade test showed that the changed Optional Packages and Status Monitoring kept their old versions, so updated systems did not get the fixes. Never sealed or published.",
       "superseded_by": "1.1.9"
+    },
+    {
+      "release": "1.1.13",
+      "date": "2026-11-17",
+      "reason": "Withdrawn before release: the incomplete candidate was cancelled to regenerate the FreeBSD pin and frozen mirrors. Never sealed or published to Stable.",
+      "superseded_by": "1.1.14"
     }
   ]
 }
