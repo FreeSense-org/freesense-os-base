@@ -7,7 +7,10 @@ versions, branches, tags and publishing are in `docs/release-policy.md`
 - `config/releases/<version>.json` is append-only (R1). Never edit, rename or
   delete a merged lock; withdraw it in `config/releases/withdrawn.json` and
   ship the next patch number (R2). CI (`scripts/check_release_locks.py`)
-  rejects anything else.
+  rejects changes to merged locks. A candidate cancelled before compilation or
+  image assembly may keep its number only under the verified pre-build
+  cancellation exception in `docs/release-policy.md` (R2); retain unchanged
+  inputs and record evidence for every architecture before any requested retry.
 - A Stable release is two dispatches of `stable.yml`: `stage=candidate`, an
   upgrade test, then `stage=seal` (R3). Dispatch either only when the user
   explicitly asks for that release and stage; the seal makes it live on

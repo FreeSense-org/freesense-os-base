@@ -25,7 +25,8 @@ fix one of them in the same pull request.
   is `1.1.N.a.YYYYMMDD.HHMM_G`, which sorts after `1.1.(N-1)` and before the
   released `1.1.N`.
 - A Stable number is used once. It is never rebuilt with other inputs, and a
-  release that is cancelled or broken is withdrawn, not reused (R2).
+  release that is cancelled or broken is withdrawn, not reused, except for a
+  verified cancellation before the candidate build starts (R2).
 
 ## Branches and tags
 
@@ -71,7 +72,9 @@ before they are sealed:
   append-only: never edit or delete `config/releases/<version>.json`.
 - **R2 No reuse.** A version number is used once. A cancelled or broken
   release is recorded in `config/releases/withdrawn.json` with a reason and
-  the release that supersedes it; the fix ships as the next number.
+  the release that supersedes it; the fix ships as the next number. A candidate
+  cancelled before any component compilation or image assembly starts may be
+  dispatched later with the same version under the exception below.
 - **R3 Candidate, test, seal.** A Stable release is first built as a
   candidate (`stable.yml`, `stage: candidate`), upgrade-tested on a VM from
   the current Stable release, and only then sealed (`stage: seal`). The seal
@@ -119,6 +122,32 @@ before they are sealed:
 2. Ship the fix as the next number; its notes name the withdrawn release (R9).
 3. Leftover downloads are removed only with an explicit, exact target (R7).
 
+### Cancel a candidate before its build starts (R2 exception)
+
+A cancelled workflow does not consume the release number when **all** of these
+conditions are verified:
+
+1. It was a `stage=candidate` run. No seal was started for the release, no
+   release artifacts were published, and the version is not already withdrawn.
+2. Every architecture stopped before component compilation or image assembly
+   began. Queueing, planning, assigning generations, fetching inputs and starting
+   a worker are preparation; they do not count as building the release. A job
+   named `build` starting is not by itself proof that compilation began.
+3. The merged release lock stays byte-for-byte unchanged (R1). The later run
+   uses the same product sources, FreeBSD pin, mirrors, worker inputs and build
+   configuration. A changed input requires the next patch number.
+4. The maintainer records the cancelled run URL and the reviewed logs or worker
+   evidence for every architecture, including where preparation stopped. Missing
+   or inconclusive evidence does not qualify for the exception. Keep this record
+   with the release's preparation evidence before dispatching again.
+
+When these conditions hold, leave the lock in place, do not add a withdrawal,
+and dispatch the same version only when explicitly requested. This exception
+does not undo an existing withdrawal, permit editing a merged lock, or allow
+reuse after a build has started. The normal candidate, VM test and seal sequence
+still applies (R3). Changing orchestration documentation alone is not a changed
+build input; changing scripts or configuration that affect the build is.
+
 ## Enforcement
 
 | Layer | Where | What it stops |
@@ -127,3 +156,7 @@ before they are sealed:
 | Workflow | `scripts/stable_gate.py` in `stable.yml` | building from commits outside `RELENG_<train>`, withdrawn numbers, seals inside the soak time, sealing without a finished candidate |
 | GitHub | `stable-publisher` environment, tag rulesets, `RELENG_*` branch protection | unapproved seals, moved or deleted tags, unreviewed maintenance commits |
 | Agents | workspace `AGENTS.md`, `/release` skill, release-guard hook | an AI dispatching, tagging, pushing or touching publication data without asking |
+
+The pre-build cancellation exception requires the recorded human log review
+above. The workflow does not infer eligibility from a `cancelled` conclusion;
+its existing withdrawn-release and immutable-lock checks still apply.
