@@ -45,7 +45,7 @@ index 5cb02831a25..96c0137f1d2 100644
  /*
   * Limit the amount we can prefetch with one call to this amount.  This
   * helps to limit the amount of memory that can be used by prefetching.
-@@ -2545,6 +2555,12 @@ restart:
+@@ -2545,4 +2555,10 @@ restart:
  
  	rw_enter(&dn->dn_struct_rwlock, RW_READER);
  
@@ -56,8 +56,6 @@ index 5cb02831a25..96c0137f1d2 100644
 +	}
 +
  	if (dnode_is_dirty(dn)) {
- 		/*
- 		 * If the zfs_dmu_offset_next_sync module option is enabled
 @@ -2986,6 +3002,9 @@ ZFS_MODULE_PARAM(zfs, zfs_, per_txg_dirty_frees_percent, UINT, ZMOD_RW,
  ZFS_MODULE_PARAM(zfs, zfs_, dmu_offset_next_sync, INT, ZMOD_RW,
  	"Enable forcing txg sync to find holes");
