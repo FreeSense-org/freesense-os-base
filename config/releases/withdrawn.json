@@ -30,6 +30,12 @@
       "date": "2026-11-17",
       "reason": "Withdrawn before release: the incomplete candidate was cancelled to regenerate the FreeBSD pin and frozen mirrors. Never sealed or published to Stable.",
       "superseded_by": "1.1.14"
+    },
+    {
+      "release": "1.1.14",
+      "date": "2026-11-19",
+      "reason": "Cancelled candidate: available evidence could not establish the pre-build cancellation exception for every architecture. Never sealed or published to Stable.",
+      "superseded_by": "1.1.15"
     }
   ]
 }
