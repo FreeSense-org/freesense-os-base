@@ -36,6 +36,12 @@
       "date": "2026-11-19",
       "reason": "Cancelled candidate: available evidence could not establish the pre-build cancellation exception for every architecture. Never sealed or published to Stable.",
       "superseded_by": "1.1.15"
+    },
+    {
+      "release": "1.1.15",
+      "date": "2026-11-20",
+      "reason": "Candidate failed applying the OpenZFS source patch on both architectures. The corrected patch ships in 1.1.16 with the same FreeBSD pin and frozen mirrors. Never sealed or published to Stable.",
+      "superseded_by": "1.1.16"
     }
   ]
 }
