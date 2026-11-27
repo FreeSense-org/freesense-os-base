@@ -86,11 +86,16 @@ const ROLE_DEFINITIONS = Object.freeze({
   // CopyObject: a build copies the packages it reuses from the previous
   // repository server-side; without it R2 answered 403 for every one and the
   // worker uploaded them all again from the build VM.
+  //
+  // The build VM receives this credential once, before it starts, and
+  // publishes with it at the end. An emulated arm64 System build on a new
+  // FreeBSD pin takes about 10 hours, so the credential must outlive the
+  // longest build (runner-build.yml BUILD_TIMEOUT_SECONDS, 23.5 hours).
   "artifact-writer": {
     environments: ["build"],
     workflow: "artifact",
     actions: ["CopyObject", "GetObject", "HeadObject", "ListObjectsV2", "PutObject"],
-    ttlSeconds: 345 * 60,
+    ttlSeconds: 24 * 60 * 60,
     paths() {
       return [
         `${R2_PREFIX}/inputs/sha256/`,

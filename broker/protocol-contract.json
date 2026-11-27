@@ -20,7 +20,7 @@
   "prefix": "v1",
   "region": "auto",
   "default_minimum_validity_seconds": 300,
-  "maximum_validity_seconds": 21600,
+  "maximum_validity_seconds": 86400,
   "roles": [
     "artifact-writer",
     "broker-smoke",

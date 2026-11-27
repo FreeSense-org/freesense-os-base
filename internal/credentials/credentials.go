@@ -29,7 +29,7 @@ const (
 
 	maximumResponseBytes   = int64(64 * 1024)
 	maximumOIDCTokenSize   = 32 * 1024
-	maximumValidity        = 6 * time.Hour
+	maximumValidity        = 24 * time.Hour
 	defaultMinimumValidity = 5 * time.Minute
 	defaultHTTPTimeout     = 30 * time.Second
 	brokerAttempts         = 6

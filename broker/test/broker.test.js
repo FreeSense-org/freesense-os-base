@@ -414,7 +414,7 @@ describe("least-privilege role policies", () => {
     [
       "artifact-writer",
       BUCKET,
-      20700,
+      86400,
       ["v1/inputs/sha256/", "v1/artifacts/"],
       [],
       ["CopyObject", "GetObject", "HeadObject", "ListObjectsV2", "PutObject"],
