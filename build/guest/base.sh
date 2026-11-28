@@ -10,10 +10,30 @@ mkdir -p "$obj" "$repo"
 cd "$src"
 tree=$(cat "$src/.freesense-tree")
 say() { echo "build/base: $* ($(date -u +%H:%M:%S))"; }
-build() {
-	make -j"$jobs" "$@" SRCCONF="$src/release/conf/FreeSense_build_src.conf" __MAKE_CONF="$src/release/conf/FreeSense_make.conf" \
+conf() {
+	make "$@" SRCCONF="$src/release/conf/FreeSense_build_src.conf" __MAKE_CONF="$src/release/conf/FreeSense_make.conf" \
 		KERNCONF="$kernconf"
 }
+# The build host is the same revision as the source, so make takes its compiler and linker (WITH_SYSTEM_COMPILER and
+# WITH_SYSTEM_LINKER). It still builds all of libllvm for llvm-ar, nm and objcopy unless every one of these binutils
+# is given as a full path.
+tools=
+# system WHAT: make's own decision; only Makefile.inc1 knows it. The build is native: target is the host.
+system() {
+	conf -f Makefile.inc1 TARGET="$(uname -m)" TARGET_ARCH="$(uname -p)" "test-system-$1" -V "$2" 2>/dev/null
+}
+if [ "$(system compiler USING_SYSTEM_COMPILER)" = yes ] && [ "$(system linker USING_SYSTEM_LINKER)" = yes ]; then
+	tools="XAR=/usr/bin/ar XNM=/usr/bin/nm XOBJCOPY=/usr/bin/objcopy XSIZE=/usr/bin/size XSTRINGS=/usr/bin/strings XSTRIPBIN=/usr/bin/strip"
+fi
+build() {
+	# shellcheck disable=SC2086 # a list of assignments
+	conf -j"$jobs" "$@" $tools
+}
+if [ -n "$tools" ]; then
+	say "compiler, linker and binutils of the build host: no bootstrap toolchain"
+else
+	say "WARNING: the host compiler or linker differs from the source: building a bootstrap toolchain (slow)"
+fi
 done_for_tree() { [ -f "$obj/.$1-done" ] && [ "$(cat "$obj/.$1-done")" = "$tree" ]; }
 
 if done_for_tree world; then
