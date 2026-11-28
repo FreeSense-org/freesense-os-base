@@ -1,0 +1,422 @@
+#!/usr/bin/env python3
+"""FreeSense 2.0 build driver: build/build [--work DIR] [--from STAGE] [STAGE]
+
+Runs the stages in order up to STAGE (default: smoke, the last one):
+  check      minutes: patches apply to the pinned source, inputs match lock.json, every required package is built by
+             us, part of the pinned base, or in the FreeBSD catalogue with its dependencies and shared libraries.
+             Writes out/packages.json, the exact package versions this build uses.
+  source     the patched FreeBSD tree with the pinned kernel contrib sources, in <work>/src.
+  base       world, kernel and the FreeSense-* base packages (out/base).
+  deps       the third-party packages check resolved, checksums verified, and our own builds of the ports that need
+             our options (out/deps).
+  freesense  the FreeSense packages, through freesense-system-ports/build-packages.sh (out/freesense).
+  repo       the package repository of the installer medium, unsigned, with its closure check (out/repo).
+  iso        the hybrid installer ISO (UEFI and BIOS, CD and USB), SHA256SUMS and manifest.json (out/iso).
+  smoke      boot the ISO four ways and install it (UFS and ZFS) under QEMU (build/smoke.py).
+
+On FreeBSD (root, the pinned release) the stages run directly. On Linux with KVM, check runs on the host, source to iso
+in a throwaway VM from the pinned image (build/vm.py), smoke on the host. A stage whose inputs have not changed is not
+run again; --from STAGE runs STAGE and everything after it again. The results are plain directories: state/ and out/
+(with checksums in out/<stage>.json) and cache/catalogue are all a later run or another machine needs.
+
+While the VM works, the whole output of the stages is written to <work>/vm/live.log (not printed); the logs of each
+stage are in out/logs.
+
+--sign-key FILE signs the repository after the repo stage (build/sign-repo); without it the repository stays as it is.
+--public-key FILE is the key a signed repository is verified with (default keys/freesense-2.0-pkg.pub).
+--mirror DIR may hold freebsd-src.git, freebsd-ports.git, intel-ipsec-mb.git, packagesite.pkg, distfiles and packages;
+commits and checksums still decide.
+Environment: FREESENSE_BUILD_ID (X.Y.Z-dev.YYYYMMDD.N, names packages and ISO), FREESENSE_JOBS, FREESENSE_VM_CPUS,
+FREESENSE_VM_MEMORY_MB, FREESENSE_VM_PROFILE (runner: 4 CPUs, 12 GiB, as a GitHub-hosted runner), FREESENSE_VM_TIMEOUT, FREESENSE_MIN_FREE_GIB, FREESENSE_BUILDER_IMAGE (local .qcow2.xz).
+Needs Python 3.11, git and a tar that reads zstd.
+"""
+# Copyright (c) 2026 The FreeSense Project. SPDX-License-Identifier: Apache-2.0
+
+import argparse
+import hashlib
+import json
+import os
+from pathlib import Path
+import shutil
+import subprocess
+import sys
+import time
+import urllib.request
+
+sys.dont_write_bytecode = True
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import packages
+import source
+import stages
+import vm
+
+BUILD = Path(__file__).resolve().parent
+COMPONENT = BUILD.parent
+WORKSPACE = COMPONENT.parent
+STAGES = ("check", "source", "base", "deps", "freesense", "repo", "iso", "smoke")
+HOST_STAGES = ("check", "smoke")
+
+
+class Context:
+    def __init__(self, work: Path, mirror: Path | None, refresh: bool):
+        self.work, self.mirror, self.refresh = work, mirror, refresh
+        self.workspace = WORKSPACE
+        self.cache, self.out, self.state = work / "cache", work / "out", work / "state"
+        self.logs = self.out / "logs"
+        self.public_key, self.public_key_given = stages.PUBLIC_KEY, False
+        self.lock = json.loads((BUILD / "lock.json").read_text(encoding="utf-8"))
+        target = self.lock["targets"].get(self.lock["target"], {})
+        if not target.get("enabled"):
+            raise ValueError(f"target {self.lock['target']} is not enabled in lock.json")
+        self.freebsd = self.cache / "freebsd-src.git"
+        self.ipsecmb = self.cache / "intel-ipsec-mb.git"
+        self.ports = self.cache / "freebsd-ports.git"
+
+    def ensure_source(self) -> None:
+        """The source tree is not part of the results: write it again when it is not the one the record names."""
+        stamp = self.work / "src" / ".freesense-tree"
+        wanted = stages.record(self, "source")["patched_tree"]
+        if not stamp.is_file() or stamp.read_text(encoding="utf-8").strip() != wanted:
+            source_stage(self)
+            if stages.record(self, "source")["patched_tree"] != wanted:
+                raise ValueError("the source tree differs from the recorded one; run --from source")
+
+    def ensure_ports(self) -> Path:
+        pin = self.lock["ports_source"]
+        destination = self.work / "ports"
+        stamp = destination / ".freesense-commit"
+        if not stamp.is_file() or stamp.read_text(encoding="utf-8").strip() != pin["commit"]:
+            source.fetch_commit(self.ports, pin["url"], pin["commit"], self.mirror)
+            if destination.exists():
+                shutil.rmtree(destination)
+            print(f"  writing {destination}", flush=True)
+            index = self.work / "tmp/ports.index"
+            index.parent.mkdir(parents=True, exist_ok=True)
+            index.unlink(missing_ok=True)
+            source.git(self.ports, "read-tree", pin["commit"], index=index)
+            source.checkout(self.ports, index, destination)
+            stamp.write_text(pin["commit"] + "\n", encoding="utf-8")
+        return destination
+
+    def pkg_environment(self) -> dict:
+        """Build dependencies of our own ports come from the lock's repository only, never from a base repository."""
+        directory = self.work / "tmp/pkg-repos"
+        directory.mkdir(parents=True, exist_ok=True)
+        (directory / "Locked.conf").write_text(packages.repository_conf(self.lock["packages"]["repository"]), encoding="utf-8",
+                                               newline="\n")
+        return {"REPOS_DIR": str(directory), "IGNORE_OSVERSION": "yes", "ASSUME_ALWAYS_YES": "yes"}
+
+    def builder_packages(self) -> list[str]:
+        """What the build VM got beside the pinned image."""
+        path = self.work / "builder-packages.txt"
+        return path.read_text(encoding="utf-8").split() if path.is_file() else []
+
+    def catalogue(self) -> Path:
+        """The package list of the repository as it is now (or the cached one)."""
+        directory = self.cache / "catalogue"
+        archive = directory / "packagesite.pkg"
+        if self.refresh or not archive.is_file():
+            directory.mkdir(parents=True, exist_ok=True)
+            mirrored = self.mirror and self.mirror / "packagesite.pkg"
+            if mirrored and mirrored.is_file():
+                shutil.copyfile(mirrored, archive)
+            else:
+                url = self.lock["packages"]["repository"] + "/packagesite.pkg"
+                with urllib.request.urlopen(url, timeout=60) as response:
+                    archive.write_bytes(response.read())
+            self.refresh = False
+        return archive
+
+
+def tree_files(workspace: Path) -> list[Path]:
+    """What build-packages.sh reads."""
+    found = []
+    for folder in ("freesense/src", "freesense-native", packages.PORTS):
+        root = workspace / folder
+        found += [path for path in sorted(root.rglob("*")) if path.is_file() and "__pycache__" not in path.parts
+                  and not path.relative_to(root).parts[0] in ("tests", ".github")]
+    return found
+
+
+def stage_inputs(context: Context, stage: str) -> dict:
+    """Everything the stage reads, as digests. Later stages are keyed by the records of earlier ones, so a stage that
+    is run again with the same result does not invalidate what follows."""
+    lock = context.lock
+    installer = context.workspace / packages.INSTALLER
+    tree = [COMPONENT / local for local in lock["tree_files"]["add"].values()]
+    if stage == "check":
+        files = [BUILD / "build", BUILD / "packages.py", BUILD / "source.py", BUILD / "base-provides.json", installer,
+                 *packages.port_files(context.workspace), *source.patch_files(COMPONENT), *tree]
+        values = {"lock": lock, "catalogue": source.sha256(context.catalogue())}
+    elif stage == "source":
+        files = [BUILD / "source.py", *source.patch_files(COMPONENT), *tree]
+        values = {"lock": {name: lock[name] for name in ("target", "targets", "freebsd_source", "kernel_contrib", "tree_files")}}
+    elif stage == "base":
+        files = [BUILD / "guest/base.sh", BUILD / "nasm.sh", BUILD / "base-provides.json"]
+        values = {"source": stages.record(context, "source"), "image": lock["builder_image"]["sha256"]}
+    elif stage == "deps":
+        files = [BUILD / "guest/ports.sh"]
+        values = {"packages": stages.record(context, "check")["packages"], "ports": lock["ports_source"],
+                  "custom": lock["custom_ports"]}
+    elif stage == "freesense":
+        files = tree_files(context.workspace)
+        values = {"deps": stages.record(context, "deps"), "ports": lock["ports_source"]}
+    elif stage == "repo":
+        # Not the signature: signing changes the repository's catalogue, and must not rebuild it.
+        files = [BUILD / "guest/repo.sh", installer]
+        values = {name: stages.record(context, name) for name in ("base", "deps", "freesense")}
+    elif stage == "iso":
+        files = [BUILD / "guest/iso.sh", installer, installer.with_name("InstallerMedia.php")]
+        # The signature is part of the catalogue. Both digests are values: their paths differ between host and build VM.
+        catalogue = context.out / "repo/packagesite.pkg"
+        values = {"repo": stages.record(context, "repo"), "build_id": os.environ.get("FREESENSE_BUILD_ID"),
+                  "catalogue": source.sha256(catalogue) if catalogue.is_file() else None,
+                  "public_key": source.sha256(context.public_key)}
+    else:
+        files = [BUILD / "smoke.py"]
+        values = {"iso": stages.record(context, "iso")}
+    # Names relative to the workspace, so the same inputs give the same key on the host and in the build VM.
+    values["files"] = {path.resolve().relative_to(context.workspace).as_posix(): source.sha256(path) if path.is_file() else None
+                       for path in files}
+    return values
+
+
+def check(context: Context) -> None:
+    lock, problems = context.lock, []
+
+    def attempt(what: str, action):
+        print(f"  {what}", flush=True)
+        try:
+            return action()
+        except (ValueError, OSError, KeyError, subprocess.CalledProcessError) as error:
+            problems.extend(f"{what}: {line}" for line in str(error).splitlines() if line.strip())
+            return None
+
+    pin = lock["freebsd_source"]
+    contrib = lock["kernel_contrib"]
+    patches = source.patch_files(COMPONENT)
+    problems += source.binary_patches(patches)
+
+    def freebsd_tree():
+        source.fetch_commit(context.freebsd, pin["url"], pin["commit"], context.mirror)
+        tree = source.patched_index(context.freebsd, pin["commit"], patches, lock["tree_files"], COMPONENT,
+                                    context.work / "tmp/check.index")
+        if (found := source.osversion(context.freebsd, tree)) != pin["osversion"]:
+            raise ValueError(f"the source has __FreeBSD_version {found}, the lock says {pin['osversion']}")
+        return tree
+
+    tree = attempt("pinned FreeBSD source and patch series", freebsd_tree)
+
+    def library():
+        entry = contrib["intel-ipsec-mb"]
+        source.fetch_commit(context.ipsecmb, entry["url"], entry["commit"], context.mirror)
+        if tree and (missing := source.missing_contrib_sources(context.freebsd, tree, context.ipsecmb, entry["commit"])):
+            raise ValueError("\n".join(missing))
+
+    attempt("intel-ipsec-mb", library)
+
+    def ports_tree():
+        entry = lock["ports_source"]
+        source.fetch_commit(context.ports, entry["url"], entry["commit"], context.mirror)
+        for origin in lock["custom_ports"]:
+            source.git(context.ports, "cat-file", "-e", f"{entry['commit']}:{origin}/Makefile")
+
+    attempt("pinned ports tree", ports_tree)
+    attempt("nasm", lambda: nasm_tarball(context))
+
+    def package_set():
+        base = json.loads((BUILD / "base-provides.json").read_text(encoding="utf-8"))
+        if base["freebsd_commit"] != pin["commit"]:
+            raise ValueError("base-provides.json was recorded for another FreeBSD commit; record it again from a base build")
+        for name, directory in lock["php"]["built_extensions"].items():
+            if not (WORKSPACE / directory).is_dir():
+                raise ValueError(f"extension {name} is built by us, but {directory} does not exist")
+        archive = context.catalogue()
+        text = subprocess.run(["tar", "-xOf", str(archive), "packagesite.yaml"], check=True, capture_output=True).stdout
+        ours, wanted = packages.requirements(context.workspace, lock["php"])
+        ours, wanted = packages.with_custom_ports(ours, wanted, lock["custom_ports"])
+        result = packages.resolve(ours, wanted, packages.read_catalogue(text.decode("utf-8")), lock, base)
+        context.out.mkdir(parents=True, exist_ok=True)
+        record = {"repository": lock["packages"]["repository"], "catalogue_sha256": source.sha256(archive),
+                  "built_by_us": result["built"], "base": result["base"], "packages": packages.manifest(result["catalogue"])}
+        if result["errors"]:
+            (context.out / "packages.json").unlink(missing_ok=True)
+            raise ValueError("\n".join(result["errors"]))
+        (context.out / "packages.json").write_text(json.dumps(record, indent=1) + "\n", encoding="utf-8", newline="\n")
+        print(f"    {len(record['packages'])} packages from the catalogue, built by us: {', '.join(sorted(result['built']))}")
+
+    attempt("packages", package_set)
+    if problems:
+        raise ValueError(f"{len(problems)} problem(s):\n  " + "\n  ".join(problems))
+
+
+def nasm_tarball(context: Context) -> Path:
+    entry = context.lock["kernel_contrib"]["nasm"]
+    return source.fetch_file(context.cache / "distfiles" / entry["file"], entry["urls"], entry["sha256"], context.mirror)
+
+
+def source_stage(context: Context) -> None:
+    if os.name == "nt":
+        raise ValueError("the source stage needs a case-sensitive file system with symbolic links (Linux or FreeBSD)")
+    lock, tmp = context.lock, context.work / "tmp"
+    pin = lock["freebsd_source"]
+    library, assembler = lock["kernel_contrib"]["intel-ipsec-mb"], lock["kernel_contrib"]["nasm"]
+    patches = source.patch_files(COMPONENT)
+    source.fetch_commit(context.freebsd, pin["url"], pin["commit"], context.mirror)
+    source.fetch_commit(context.ipsecmb, library["url"], library["commit"], context.mirror)
+    tarball = nasm_tarball(context)
+    tree = source.patched_index(context.freebsd, pin["commit"], patches, lock["tree_files"], COMPONENT, tmp / "source.index")
+    destination = context.work / "src"
+    if destination.exists():
+        shutil.rmtree(destination)
+    print(f"  writing {destination}", flush=True)
+    source.checkout(context.freebsd, tmp / "source.index", destination)
+    source.write_tree_files(context.ipsecmb, library["commit"], destination / library["destination"], library["exclude"],
+                            tmp / "contrib.index")
+    (destination / assembler["destination"]).mkdir(parents=True)
+    shutil.copyfile(tarball, destination / assembler["destination"] / assembler["file"])
+    context.out.mkdir(parents=True, exist_ok=True)
+    record = {"freebsd_commit": pin["commit"], "patched_tree": tree, "intel_ipsec_mb_commit": library["commit"],
+              "nasm_sha256": assembler["sha256"], "patches": {patch.name: source.sha256(patch) for patch in patches}}
+    (context.out / "source.json").write_text(json.dumps(record, indent=1) + "\n", encoding="utf-8", newline="\n")
+    (destination / ".freesense-tree").write_text(tree + "\n", encoding="utf-8")
+
+
+ACTIONS = {
+    "check": (check, ("out/packages.json",)), "source": (source_stage, ("out/source.json",)),
+    "base": (stages.base, ("out/base.json", "out/base")), "deps": (stages.deps, ("out/deps.json", "out/deps")),
+    "freesense": (stages.freesense, ("out/freesense.json", "out/freesense")),
+    "repo": (stages.repo, ("out/repo.json", "out/repo")), "iso": (stages.iso, ("out/iso.json", "out/iso")),
+    "smoke": (stages.smoke, ("out/smoke.json",)),
+}
+
+
+def stage_key(context: Context, name: str, inputs=None) -> str:
+    return hashlib.sha256(json.dumps((inputs or stage_inputs)(context, name), sort_keys=True).encode()).hexdigest()
+
+
+def kept(context: Context, name: str, key: str, outputs: tuple) -> bool:
+    marker = context.state / f"{name}.json"
+    return (marker.is_file() and json.loads(marker.read_text(encoding="utf-8"))["key"] == key
+            and all((context.work / output).exists() for output in outputs))
+
+
+def stale(context: Context, names: tuple) -> bool:
+    """Whether any of these stages would run. A missing record of an earlier stage counts."""
+    for name in names:
+        try:
+            if not kept(context, name, stage_key(context, name), ACTIONS[name][1]):
+                return True
+        except (ValueError, OSError):
+            return True
+    return False
+
+
+def record_time(context: Context, name: str, seconds: int) -> None:
+    """out/timings.json: how long each stage took and on what, to size jobs."""
+    path = getattr(context, "out", None)
+    if path is None:
+        return
+    path.mkdir(parents=True, exist_ok=True)
+    timings = path / "timings.json"
+    values = json.loads(timings.read_text(encoding="utf-8")) if timings.is_file() else {}
+    values[name] = {"seconds": seconds, "cpus": os.cpu_count()}
+    timings.write_text(json.dumps(values, indent=1) + "\n", encoding="utf-8", newline="\n")
+
+
+def run_stages(context: Context, last: str, forced_from: str | None, names: tuple = STAGES, actions: dict = ACTIONS,
+               inputs=stage_inputs, first: str | None = None) -> list[str]:
+    """Run what is stale up to `last`; return the names that ran. The marker is written only after success."""
+    ran = []
+    for position, name in enumerate(names[:names.index(last) + 1]):
+        if first is not None and position < names.index(first):
+            continue
+        action, outputs = actions[name]
+        key = stage_key(context, name, inputs)
+        marker = context.state / f"{name}.json"
+        forced = forced_from is not None and position >= names.index(forced_from)
+        if not forced and kept(context, name, key, outputs):
+            print(f"== {name}: unchanged, kept ({key[:12]})", flush=True)
+            continue
+        print(f"== {name} ({key[:12]})", flush=True)
+        marker.unlink(missing_ok=True)
+        started = time.monotonic()
+        try:
+            action(context)
+        except (ValueError, OSError, subprocess.CalledProcessError) as error:
+            raise ValueError(f"stage {name}: {error}") from error
+        context.state.mkdir(parents=True, exist_ok=True)
+        marker.write_text(json.dumps({"key": key}) + "\n", encoding="utf-8")
+        seconds = round(time.monotonic() - started)
+        record_time(context, name, seconds)
+        print(f"== {name}: done in {seconds} s", flush=True)
+        ran.append(name)
+    return ran
+
+
+def run_on_linux(context: Context, last: str, forced_from: str | None) -> None:
+    """check and smoke on this machine, the rest in a throwaway VM from the pinned image."""
+    run_stages(context, "check", forced_from)
+    if last == "check":
+        return
+    inside = STAGES[1:STAGES.index(min(last, "iso", key=STAGES.index)) + 1]
+    forced = None
+    if forced_from and forced_from != "smoke":
+        forced = max(forced_from, "source", key=STAGES.index)
+    if (forced and forced in inside) or stale(context, inside):
+        print(f"== build VM for: {', '.join(inside)}", flush=True)
+        builds_base = "base" in inside and (stale(context, ("source", "base")) or forced in ("source", "base"))
+        vm.run_stages(context, inside[-1], forced if forced in inside else None, builds_base)
+    else:
+        print(f"== {', '.join(inside)}: unchanged, kept", flush=True)
+    if last == "smoke":
+        run_stages(context, "smoke", forced_from, first="smoke")
+
+
+def sign(context: Context, key: Path) -> None:
+    repository = context.out / "repo"
+    if subprocess.run([sys.executable, str(BUILD / "sign-repo"), str(repository), str(key), str(context.public_key)]).returncode:
+        raise ValueError("signing the repository failed")
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("stage", nargs="?", choices=STAGES, default=STAGES[-1], help="run up to this stage")
+    parser.add_argument("--from", dest="forced_from", choices=STAGES, help="run this stage and the later ones again")
+    parser.add_argument("--work", type=Path, default=os.environ.get("FREESENSE_BUILD_DIR"),
+                        help="cache, state and results (default: FREESENSE_BUILD_DIR or the workspace's ignored build folder)")
+    parser.add_argument("--mirror", type=Path, help="directory with local copies of the inputs")
+    parser.add_argument("--offline", action="store_true", help="keep the cached package catalogue")
+    parser.add_argument("--sign-key", type=Path, help="sign the repository with this private key after the repo stage")
+    parser.add_argument("--public-key", type=Path, help="verify a signed repository with this public key")
+    args = parser.parse_args()
+    if args.forced_from and STAGES.index(args.forced_from) > STAGES.index(args.stage):
+        parser.error("--from names a stage after the requested one")
+    work = (Path(args.work) if args.work else WORKSPACE / "local-output" / "build").resolve()
+    # Resuming from a later stage keeps the package catalogue that was checked.
+    refresh = not args.offline and args.forced_from in (None, "check")
+    context = Context(work, args.mirror.resolve() if args.mirror else None, refresh)
+    if args.public_key:
+        context.public_key, context.public_key_given = args.public_key.resolve(), True
+    linux = sys.platform.startswith("linux")
+    run = run_on_linux if linux else run_stages
+    last, forced = args.stage, args.forced_from
+    if not linux and last == "smoke":
+        last = "iso"
+        forced = None if forced == "smoke" else forced
+    if args.sign_key and STAGES.index(last) >= STAGES.index("repo"):
+        run(context, "repo", forced if forced and STAGES.index(forced) <= STAGES.index("repo") else None)
+        sign(context, args.sign_key.resolve())
+        if last == "repo":
+            return
+        forced = forced if forced and STAGES.index(forced) > STAGES.index("repo") else None
+    run(context, last, forced)
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except (ValueError, OSError, KeyError, subprocess.CalledProcessError) as error:
+        sys.exit(f"FAIL: {error}")
+    except KeyboardInterrupt:
+        sys.exit("FAIL: interrupted")

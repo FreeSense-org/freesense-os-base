@@ -1,0 +1,14 @@
+name: "2.0 commit messages"
+
+on:
+  push:
+    branches: ['2.0']
+  pull_request:
+    branches: ['2.0']
+
+permissions:
+  contents: read
+
+jobs:
+  commit-messages:
+    uses: ./.github/workflows/v2-commit-rules.yml

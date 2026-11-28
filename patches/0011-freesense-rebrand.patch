@@ -1,0 +1,1182 @@
+diff --git a/libexec/rc/rc b/libexec/rc/rc
+index b14dfe34d..15b6dd9cb 100644
+--- a/libexec/rc/rc
++++ b/libexec/rc/rc
+@@ -24,9 +24,9 @@
+ # OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+ # SUCH DAMAGE.
+ 
+-# Call pfSense version of this script when it's available
+-if [ -f /etc/pfSense-rc ]; then
+-	. /etc/pfSense-rc
++# Call FreeSense version of this script when it's available
++if [ -f /etc/FreeSense-rc ]; then
++	. /etc/FreeSense-rc
+ 	exit 0
+ fi
+ 
+diff --git a/libexec/rc/rc.shutdown b/libexec/rc/rc.shutdown
+index 6f5d8da74..bd3894548 100644
+--- a/libexec/rc/rc.shutdown
++++ b/libexec/rc/rc.shutdown
+@@ -26,9 +26,9 @@
+ #
+ #
+ 
+-# Call pfSense version of this script when it's available
+-if [ -f /etc/pfSense-rc.shutdown ]; then
+-	. /etc/pfSense-rc.shutdown
++# Call FreeSense version of this script when it's available
++if [ -f /etc/FreeSense-rc.shutdown ]; then
++	. /etc/FreeSense-rc.shutdown
+ 	exit 0
+ fi
+ 
+diff --git a/release/conf/pfSense_build_src.conf b/release/conf/FreeSense_build_src.conf
+similarity index 100%
+rename from release/conf/pfSense_build_src.conf
+rename to release/conf/FreeSense_build_src.conf
+diff --git a/release/conf/pfSense_install_src.conf b/release/conf/FreeSense_install_src.conf
+similarity index 100%
+rename from release/conf/pfSense_install_src.conf
+rename to release/conf/FreeSense_install_src.conf
+diff --git a/release/conf/pfSense_installer_make.conf b/release/conf/FreeSense_installer_make.conf
+similarity index 100%
+rename from release/conf/pfSense_installer_make.conf
+rename to release/conf/FreeSense_installer_make.conf
+diff --git a/release/conf/pfSense_installer_src.conf b/release/conf/FreeSense_installer_src.conf
+similarity index 98%
+rename from release/conf/pfSense_installer_src.conf
+rename to release/conf/FreeSense_installer_src.conf
+index 8a5397f33..ec5d64e82 100644
+--- a/release/conf/pfSense_installer_src.conf
++++ b/release/conf/FreeSense_installer_src.conf
+@@ -1,4 +1,4 @@
+-OSNAME=pfSense
++OSNAME=FreeSense
+ WITHOUT_ACCT=YES
+ WITHOUT_AMD=YES
+ WITHOUT_APM=YES
+diff --git a/release/conf/pfSense_make.conf b/release/conf/FreeSense_make.conf
+similarity index 100%
+rename from release/conf/pfSense_make.conf
+rename to release/conf/FreeSense_make.conf
+diff --git a/release/conf/pfSense_src-env.conf b/release/conf/FreeSense_src-env.conf
+similarity index 100%
+rename from release/conf/pfSense_src-env.conf
+rename to release/conf/FreeSense_src-env.conf
+diff --git a/sys/amd64/conf/pfSense b/sys/amd64/conf/FREESENSE
+similarity index 73%
+rename from sys/amd64/conf/pfSense
+rename to sys/amd64/conf/FREESENSE
+index a641d0aad..61e8d8df0 100644
+--- a/sys/amd64/conf/pfSense
++++ b/sys/amd64/conf/FREESENSE
+@@ -1,7 +1,7 @@
+-include pfSense-DEBUG
++include FREESENSE-DEBUG
+ include "../../conf/std.nodebug"
+ 
+ # We want these probe points, even for non-debug versions
+ options 	KDTRACE_MIB_SDT
+ 
+-ident   pfSense
++ident   FREESENSE
+diff --git a/sys/amd64/conf/pfSense-DEBUG b/sys/amd64/conf/FREESENSE-DEBUG
+similarity index 99%
+rename from sys/amd64/conf/pfSense-DEBUG
+rename to sys/amd64/conf/FREESENSE-DEBUG
+index 4808b98a3..1589cc33e 100644
+--- a/sys/amd64/conf/pfSense-DEBUG
++++ b/sys/amd64/conf/FREESENSE-DEBUG
+@@ -3,7 +3,7 @@ include		GENERIC
+ nooptions	KDB_TRACE
+ options 	DDB
+ 
+-ident		pfSense-DEBUG
++ident		FREESENSE-DEBUG
+ 
+ nooptions	MAC		# TrustedBSD MAC Framework
+ nooptions	COMPAT_FREEBSD4	# Compatible with FreeBSD4
+@@ -86,7 +86,7 @@ device		uhid		# "Human Interface Devices"
+ device		firewire	# FireWire bus code
+ device		sbp		# SCSI over FireWire (Requires scbus and da)
+ 
+-# pfsense addons
++# FreeSense additions
+ 
+ # Required by athp
+ options 	ALQ
+diff --git a/sys/amd64/conf/pfSense-KASAN b/sys/amd64/conf/pfSense-KASAN
+deleted file mode 100644
+index 09940d9d6..000000000
+--- a/sys/amd64/conf/pfSense-KASAN
++++ /dev/null
+@@ -1,6 +0,0 @@
+-
+-include pfSense-DEBUG
+-
+-ident   pfSense-KASAN
+-
+-options 	KASAN
+diff --git a/sys/amd64/conf/pfSense-KMSAN b/sys/amd64/conf/pfSense-KMSAN
+deleted file mode 100644
+index 6657cb087..000000000
+--- a/sys/amd64/conf/pfSense-KMSAN
++++ /dev/null
+@@ -1,6 +0,0 @@
+-
+-include pfSense-DEBUG
+-
+-ident   pfSense-KMSAN
+-
+-options 	KMSAN
+diff --git a/sys/arm64/conf/pfSense b/sys/arm64/conf/FREESENSE
+similarity index 99%
+rename from sys/arm64/conf/pfSense
+rename to sys/arm64/conf/FREESENSE
+index d57ce263c..2d8968498 100644
+--- a/sys/arm64/conf/pfSense
++++ b/sys/arm64/conf/FREESENSE
+@@ -4,7 +4,7 @@ include		"../../conf/std.nodebug"
+ 
+ nooptions	KDB_TRACE
+ 
+-ident		pfSense
++ident		FREESENSE
+ 
+ nooptions	MAC		# TrustedBSD MAC Framework
+ nooptions	COMPAT_FREEBSD4	# Compatible with FreeBSD4
+@@ -93,7 +93,7 @@ device		cdce
+ 
+ device		uhid		# "Human Interface Devices"
+ 
+-# pfsense addons
++# FreeSense additions
+ 
+ device		xz
+ device		gre
+diff --git a/sys/conf/files b/sys/conf/files
+index 96b89018f..f263571b7 100644
+--- a/sys/conf/files
++++ b/sys/conf/files
+@@ -2594,7 +2594,6 @@ dev/mxge/mxge_ethp_z8e.c	optional mxge pci
+ dev/mxge/mxge_rss_eth_z8e.c	optional mxge pci
+ dev/mxge/mxge_rss_ethp_z8e.c	optional mxge pci
+ dev/my/if_my.c			optional my
+-dev/netgate/netgate.c		standard
+ dev/netmap/if_ptnet.c		optional netmap inet
+ dev/netmap/netmap.c		optional netmap
+ dev/netmap/netmap_bdg.c		optional netmap
+@@ -4420,7 +4419,7 @@ netgraph/ng_deflate.c		optional netgraph_deflate
+ netgraph/ng_device.c		optional netgraph_device
+ netgraph/ng_echo.c		optional netgraph_echo
+ netgraph/ng_eiface.c		optional netgraph_eiface
+-# netgate: keep for in-kernel ng_etf(4) build support
++# FreeSense: keep for in-kernel ng_etf(4) build support
+ netgraph/ng_etf.c		optional netgraph_etf
+ netgraph/ng_ether.c		optional netgraph_ether
+ netgraph/ng_ether_echo.c	optional netgraph_ether_echo
+diff --git a/sys/conf/options b/sys/conf/options
+index 875484d30..bf38036b4 100644
+--- a/sys/conf/options
++++ b/sys/conf/options
+@@ -539,7 +539,7 @@ NETGRAPH_DEFLATE	opt_netgraph.h
+ NETGRAPH_DEVICE		opt_netgraph.h
+ NETGRAPH_ECHO		opt_netgraph.h
+ NETGRAPH_EIFACE		opt_netgraph.h
+-# netgate: keep for in-kernel ng_etf(4) build support
++# FreeSense: keep for in-kernel ng_etf(4) build support
+ NETGRAPH_ETF		opt_netgraph.h
+ NETGRAPH_ETHER		opt_netgraph.h
+ NETGRAPH_ETHER_ECHO	opt_netgraph.h
+diff --git a/sys/contrib/openzfs/module/zfs/dmu.c b/sys/contrib/openzfs/module/zfs/dmu.c
+index 496ed07e6..e6d1cae46 100644
+--- a/sys/contrib/openzfs/module/zfs/dmu.c
++++ b/sys/contrib/openzfs/module/zfs/dmu.c
+@@ -78,7 +78,7 @@ static uint_t zfs_per_txg_dirty_frees_percent = 30;
+ static int zfs_dmu_offset_next_sync = 1;
+ 
+ /*
+- * XXXNETGATE
++ * XXXFREESENSE
+  *
+  * Hole reporting resulted in quite a few data corruption issues.
+  *
+diff --git a/sys/dev/netgate/netgate.c b/sys/dev/netgate/netgate.c
+deleted file mode 100644
+index dd78c95b2..000000000
+--- a/sys/dev/netgate/netgate.c
++++ /dev/null
+@@ -1,753 +0,0 @@
+-/*-
+- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+- *
+- * Copyright (c) 2022-2023 Rubicon Communications, LLC (Netgate).
+- * All rights reserved.
+- *
+- * Redistribution and use in source and binary forms, with or without
+- * modification, are permitted provided that the following conditions
+- * are met:
+- * 1. Redistributions of source code must retain the above copyright
+- *    notice, this list of conditions and the following disclaimer.
+- * 2. Redistributions in binary form must reproduce the above copyright
+- *    notice, this list of conditions and the following disclaimer in the
+- *    documentation and/or other materials provided with the distribution.
+- *
+- * THIS SOFTWARE IS PROVIDED BY THE AUTHOR ``AS IS'' AND ANY EXPRESS OR
+- * IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
+- * OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.
+- * IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY DIRECT, INDIRECT,
+- * INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT
+- * NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+- * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+- * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+- * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
+- * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+- */
+-
+-#include <sys/cdefs.h>
+-__FBSDID("$FreeBSD$");
+-
+-#include "opt_platform.h"
+-
+-#include <sys/types.h>
+-#include <sys/bus.h>
+-#include <sys/kernel.h>
+-#include <sys/malloc.h>
+-#include <sys/module.h>
+-#include <sys/smp.h>
+-#include <sys/sysctl.h>
+-
+-#ifdef FDT
+-#include <dev/ofw/openfirm.h>
+-#endif
+-
+-#include <dev/netgate/netgate.h>
+-
+-#define	NETGATE_BUFSZ		128
+-
+-struct netgate_ids {
+-	int		id;
+-	char		*model;
+-	char		*desc;
+-
+-	int		cpu;
+-	char		*bios;
+-	char		*chassis;
+-	char		*boardname;
+-	char		*boardpn;
+-	char		*fdt;
+-	char		*hwmodel;
+-	char		*maker;
+-	char		*planar;
+-	char		*prod;
+-	char		*vm;
+-};
+-
+-static struct netgate_ids ng_ids[] = {
+-	/* Old devices. */
+-	{ .id = NETGATE_APU1,	.prod = "apu1",				.model = "APU", .desc = "Netgate APU" },
+-	{ .id = NETGATE_APU,	.prod = "APU",				.model = "APU", .desc = "Netgate APU" },
+-	{ .id = NETGATE_SG2200,	.prod = "DFFv2",			.model = "SG-2220", .desc = "Netgate SG-2220" },
+-	{ .id = NETGATE_RCCVE,	.prod = "RCC-VE",			.model = "RCC-VE", .desc = "Netgate RCC-VE" },
+-	{ .id = NETGATE_SG4860, .prod = "RCC-VE", .hwmodel = "C2558",	.model = "RCC-VE", .desc = "Netgate SG-4860" },
+-	{ .id = NETGATE_SG8860, .prod = "RCC-VE", .hwmodel = "C2758",	.model = "RCC-VE", .desc = "Netgate SG-8860" },
+-	{ .id = NETGATE_XG2758, .prod = "RCC",				.model = "RCC", .desc = "Netgate XG-2758" },
+-	{ .id = NETGATE_MBT4220, .prod = "Minnowboard Turbot D0 PLATFORM", .cpu = 4,	.model = "MBT-4220", .desc = "Netgate MBT-4220" },
+-	{ .id = NETGATE_MBT4220_1, .prod = "Minnowboard Turbot D0/D1 PLATFORM", .cpu = 4, .model = "MBT-4220", .desc = "Netgate MBT-4220" },
+-	{ .id = NETGATE_MBT2220, .prod = "Minnowboard Turbot D0 PLATFORM", .cpu = 2,	.model = "MBT-2220", .desc = "Netgate MBT-2220" },
+-	{ .id = NETGATE_MBT2220_1, .prod = "Minnowboard Turbot D0/D1 PLATFORM", .cpu = 2, .model = "MBT-2220", .desc = "Netgate MBT-2220" },
+-	{ .id = NETGATE_TURBOT,	.prod = "Minnowboard Turbot D0 PLATFORM",	.model = "Turbot", .desc = "Netgate Turbot Dual-E" },
+-	{ .id = NETGATE_TURBOT_1, .prod = "Minnowboard Turbot D0/D1 PLATFORM", .model = "Turbot", .desc = "Netgate Turbot Dual-E" },
+-	{ .id = NETGATE_C2558,	.prod = "SYS-5018A-FTN4", .hwmodel = "C2558", .model = "C2558", .desc = "Super Micro C2558" },
+-	{ .id = NETGATE_C2558_1, .prod = "A1SAi", .hwmodel = "C2558",	.model = "C2558", .desc = "Super Micro C2558" },
+-	{ .id = NETGATE_C2758,	.prod = "SYS-5018A-FTN4", .hwmodel = "C2758", .model = "C2758", .desc = "Super Micro C2758" },
+-	{ .id = NETGATE_C2758_1, .prod = "A1SAi", .hwmodel = "C2758",	.model = "C2758", .desc = "Super Micro C2758" },
+-	{ .id = NETGATE_APU2,	.prod = "apu2",				.model = "apu2", .desc = "PC Engines APU2" },
+-	{ .id = NETGATE_APU2_1,	.prod = "APU2",				.model = "apu2", .desc = "PC Engines APU2" },
+-
+-	/* VMs */
+-	{ .id = NETGATE_VM_GOOGLE, .maker = "Google",		.model = "Google", .desc = "Google Cloud Platform" },
+-	{ .id = NETGATE_VM_GOOGLE_1, .bios = "Google",		.model = "Google", .desc = "Google Cloud Platform" },
+-	{ .id = NETGATE_VM_AWS, .maker = "Amazon EC2",		.model = "AWS",	.desc = "Amazon Web Services" },
+-	{ .id = NETGATE_VM_AWS_1, .bios = "4.11.amazon",	.model = "AWS",	.desc = "Amazon Web Services" },
+-	{ .id = NETGATE_VM_ORACLE, .chassis = "OracleCloud.com",	.model = "Oracle",	.desc = "Oracle Cloud Infrastructure" },
+-	{ .id = NETGATE_VM_VIRTUALBOX, .prod = "VirtualBox",	.model = "VirtualBox", .desc = "VirtualBox Virtual Machine" },
+-	{ .id = NETGATE_VM_AZURE, .prod = "Virtual Machine", .maker = "Microsoft Corporation", .chassis = "7783-7084-3265-9085-8269-3286-77", .model = "Azure", .desc = "Microsoft Azure" },
+-	{ .id = NETGATE_VM_HYPERV, .prod = "Virtual Machine", .maker = "Microsoft Corporation", .bios = "Hyper",	.model = "Hyper-V", .desc = "Hyper-V Virtual Machine" },
+-	{ .id = NETGATE_VM_VMWARE, .prod = "VMware Virtual Platform", .maker = "VMware, Inc.", .model = "VMware", .desc = "VMware Virtual Machine" },
+-	{ .id = NETGATE_VM_QEMU, .maker = "QEMU",		.model = "QEMU", .desc = "QEMU Guest" },
+-	{ .id = NETGATE_VM_KVM, .vm = "kvm",			.model = "KVM", .desc = "KVM Guest" },
+-
+-	/* Netgate */
+-#ifdef FDT
+-	{ .id = NETGATE_1100, .prod = "mvebu_armada-37xx", .fdt = "Netgate SG-1100", .model = "1100", .desc = "Netgate 1100" },
+-	{ .id = NETGATE_1100, .prod = "mvebu_armada-37xx", .fdt = "Netgate 1100", .model = "1100", .desc = "Netgate 1100" },
+-	{ .id = NETGATE_2100, .prod = "mvebu_armada-37xx", .fdt = "Netgate SG-2100", .model = "2100", .desc = "Netgate 2100" },
+-	{ .id = NETGATE_2100, .prod = "mvebu_armada-37xx", .fdt = "Netgate 2100", .model = "2100", .desc = "Netgate 2100" },
+-	{ .id = NETGATE_2100, .prod = "SG-2100", .fdt = "Netgate SG-2100",	.model = "2100", .desc = "Netgate 2100" },
+-	{ .id = NETGATE_2100, .prod = "SG-2100", .fdt = "Netgate 2100",		.model = "2100", .desc = "Netgate 2100" },
+-	{ .id = NETGATE_2100, .prod = "80500-0205-G", .fdt = "Netgate SG-2100",	.model = "2100", .desc = "Netgate 2100" },
+-	{ .id = NETGATE_2100, .prod = "80500-0205-G", .fdt = "Netgate 2100",	.model = "2100", .desc = "Netgate 2100" },
+-#endif
+-	{ .id = NETGATE_SG1000, .boardname = "A335uFW",				.model = "1000", .desc = "Netgate SG-1000" },
+-	{ .id = NETGATE_3100, .hwmodel = "ARM Cortex-A9", .boardpn = "80500-0148", .model = "3100", .desc = "Netgate 3100" },
+-	{ .id = NETGATE_1540, .prod = "SYS-5018D-FN4T", 			.model = "1540", .desc = "Super Micro XG-1540" },
+-	{ .id = NETGATE_1541, .prod = "SYS-5018D-FN4T", .hwmodel = "D-1541",	.model = "1541", .desc = "Super Micro 1541" },
+-	{ .id = NETGATE_4100, .prod = "4100", .maker = "Netgate",		.model = "4100", .desc = "Netgate 4100" },
+-	{ .id = NETGATE_4200, .prod = "4200", .maker = "Netgate",		.model = "4200", .desc = "Netgate 4200" },
+-	{ .id = NETGATE_5100, .prod = "SG-5100",				.model = "5100", .desc = "Netgate 5100" },
+-	{ .id = NETGATE_5200, .prod = "80500-0240-", .cpu = 4,			.model = "5200", .desc = "Netgate 5200" },
+-	{ .id = NETGATE_5200, .prod = "5200", .maker = "Netgate",		.model = "5200", .desc = "Netgate 5200" },
+-	{ .id = NETGATE_6100, .prod = "6100", .maker = "Netgate",		.model = "6100", .desc = "Netgate 6100" },
+-	{ .id = NETGATE_6200, .prod = "6200", .maker = "Netgate",		.model = "6200", .desc = "Netgate 6200" },
+-	{ .id = NETGATE_8200, .prod = "8200", .maker = "Netgate",		.model = "8200", .desc = "Netgate 8200" },
+-	{ .id = NETGATE_7541, .prod = "FW7541",					.model = "FW7541", .desc = "Netgate FW7541" },
+-	{ .id = NETGATE_1537, .planar = "X10SDV-8C-TLN4F+",			.model = "1537", .desc = "Super Micro 1537" },
+-	{ .id = NETGATE_7100, .planar = "80300-0134",				.model = "7100", .desc = "Netgate 7100" },
+-	{ .id = NETGATE_7200, .prod = "80500-0240-", .cpu = 8,			.model = "7200", .desc = "Netgate 7200" },
+-	{ .id = NETGATE_7200, .prod = "7200", .maker = "Netgate",		.model = "7200", .desc = "Netgate 7200" },
+-};
+-
+-struct netgate_softc {
+-	char		*sc_desc;
+-	char		*sc_desc_str;
+-	char		*sc_model_str;
+-};
+-
+-static driver_t netgate_driver;
+-static int netgate_model = NETGATE_UNKNOWN;
+-
+-char *
+-netgate_get_device_desc(void)
+-{
+-	int i;
+-
+-	for (i = 0; i < nitems(ng_ids); i++) {
+-		if (ng_ids[i].id == netgate_model)
+-			return (ng_ids[i].desc);
+-	}
+-
+-	return ("unknown hardware");
+-}
+-
+-char *
+-netgate_get_device_model(void)
+-{
+-	int i;
+-
+-	for (i = 0; i < nitems(ng_ids); i++) {
+-		if (ng_ids[i].id == netgate_model)
+-			return (ng_ids[i].model);
+-	}
+-
+-	return ("unknown");
+-}
+-
+-int
+-netgate_get_device_id(void)
+-{
+-
+-	return (netgate_model);
+-}
+-
+-static void
+-fdt_free(char *s)
+-{
+-#ifdef FDT
+-	free(s, M_OFWPROP);
+-#endif
+-}
+-
+-static char *
+-fdt_get_model(void)
+-{
+-#ifdef FDT
+-	char *model;
+-	phandle_t root;
+-	ssize_t len;
+-
+-	root = OF_finddevice("/");
+-	if (root == 0)
+-		return (NULL);
+-	if ((len = OF_getproplen(root, "model")) <= 0)
+-		return (NULL);
+-	if (len > 1024 ||
+-	    OF_getprop_alloc(root, "model", (void **)&model) == -1)
+-		return (NULL);
+-
+-	return (model);
+-#else
+-	return (NULL);
+-#endif
+-}
+-
+-static void
+-netgate_identify(driver_t *driver, device_t parent)
+-{
+-
+-	if (device_find_child(parent, netgate_driver.name, -1) == NULL)
+-		BUS_ADD_CHILD(parent, 0, netgate_driver.name, -1);
+-}
+-
+-static int
+-netgate_maker(const char *maker)
+-{
+-	int i;
+-
+-	for (i = 0; i < nitems(ng_ids); i++) {
+-		/* VM - Maker */
+-		if (ng_ids[i].bios == NULL &&
+-		    ng_ids[i].boardname == NULL &&
+-		    ng_ids[i].boardpn == NULL &&
+-		    ng_ids[i].chassis == NULL &&
+-		    ng_ids[i].fdt == NULL && ng_ids[i].hwmodel == NULL &&
+-		    ng_ids[i].maker != NULL && ng_ids[i].planar == NULL &&
+-		    ng_ids[i].prod == NULL && ng_ids[i].vm == NULL &&
+-		    ng_ids[i].cpu == 0 &&
+-		    maker != NULL &&
+-		    strncmp(maker, ng_ids[i].maker, strlen(ng_ids[i].maker)) == 0)
+-			return (ng_ids[i].id);
+-	}
+-
+-	return (NETGATE_UNKNOWN);
+-}
+-
+-static int
+-netgate_vm_guest(const char *vm)
+-{
+-	int i;
+-
+-	for (i = 0; i < nitems(ng_ids); i++) {
+-		/* VM - kern.vm_guest */
+-		if (ng_ids[i].bios == NULL &&
+-		    ng_ids[i].boardname == NULL &&
+-		    ng_ids[i].boardpn == NULL &&
+-		    ng_ids[i].chassis == NULL &&
+-		    ng_ids[i].fdt == NULL && ng_ids[i].hwmodel == NULL &&
+-		    ng_ids[i].maker == NULL && ng_ids[i].planar == NULL &&
+-		    ng_ids[i].prod == NULL && ng_ids[i].vm != NULL &&
+-		    ng_ids[i].cpu == 0 &&
+-		    vm != NULL &&
+-		    strncmp(vm, ng_ids[i].vm, strlen(ng_ids[i].vm)) == 0)
+-			return (ng_ids[i].id);
+-	}
+-
+-	return (NETGATE_UNKNOWN);
+-}
+-
+-static int
+-netgate_vm_bios(const char *bios)
+-{
+-	int i;
+-
+-	for (i = 0; i < nitems(ng_ids); i++) {
+-		/* VM - BIOS */
+-		if (ng_ids[i].bios != NULL &&
+-		    ng_ids[i].boardname == NULL &&
+-		    ng_ids[i].boardpn == NULL &&
+-		    ng_ids[i].chassis == NULL &&
+-		    ng_ids[i].fdt == NULL && ng_ids[i].hwmodel == NULL &&
+-		    ng_ids[i].maker == NULL && ng_ids[i].planar == NULL &&
+-		    ng_ids[i].prod == NULL && ng_ids[i].vm == NULL &&
+-		    ng_ids[i].cpu == 0 &&
+-		    bios != NULL &&
+-		    strstr(bios, ng_ids[i].bios) != NULL)
+-			return (ng_ids[i].id);
+-	}
+-
+-	return (NETGATE_UNKNOWN);
+-}
+-
+-static int
+-netgate_prod_maker_chassis(const char *prod, const char *maker,
+-    const char *chassis)
+-{
+-	int i;
+-
+-	for (i = 0; i < nitems(ng_ids); i++) {
+-		/* Product, Maker and Chassis Tag */
+-		if (ng_ids[i].bios == NULL &&
+-		    ng_ids[i].boardname == NULL &&
+-		    ng_ids[i].boardpn == NULL &&
+-		    ng_ids[i].chassis != NULL &&
+-		    ng_ids[i].fdt == NULL && ng_ids[i].hwmodel == NULL &&
+-		    ng_ids[i].maker != NULL && ng_ids[i].planar == NULL &&
+-		    ng_ids[i].prod != NULL && ng_ids[i].vm == NULL &&
+-		    ng_ids[i].cpu == 0 &&
+-		    chassis != NULL && maker != NULL && prod != NULL &&
+-		    strncmp(chassis, ng_ids[i].chassis, strlen(ng_ids[i].chassis)) == 0 &&
+-		    strncmp(maker, ng_ids[i].maker, strlen(ng_ids[i].maker)) == 0 &&
+-		    strncmp(prod, ng_ids[i].prod, strlen(ng_ids[i].prod)) == 0)
+-			return (ng_ids[i].id);
+-	}
+-
+-	return (NETGATE_UNKNOWN);
+-}
+-
+-static int
+-netgate_prod_maker_bios(const char *prod, const char *maker, const char *bios)
+-{
+-	int i;
+-
+-	for (i = 0; i < nitems(ng_ids); i++) {
+-		/* Product, Maker and Bios */
+-		if (ng_ids[i].bios != NULL &&
+-		    ng_ids[i].boardname == NULL &&
+-		    ng_ids[i].boardpn == NULL &&
+-		    ng_ids[i].chassis == NULL &&
+-		    ng_ids[i].fdt == NULL && ng_ids[i].hwmodel == NULL &&
+-		    ng_ids[i].maker != NULL && ng_ids[i].planar == NULL &&
+-		    ng_ids[i].prod != NULL && ng_ids[i].vm == NULL &&
+-		    ng_ids[i].cpu == 0 &&
+-		    bios != NULL && maker != NULL && prod != NULL &&
+-		    strstr(bios, ng_ids[i].bios) != NULL &&
+-		    strncmp(maker, ng_ids[i].maker, strlen(ng_ids[i].maker)) == 0 &&
+-		    strncmp(prod, ng_ids[i].prod, strlen(ng_ids[i].prod)) == 0)
+-			return (ng_ids[i].id);
+-	}
+-
+-	return (NETGATE_UNKNOWN);
+-}
+-
+-static int
+-netgate_product_maker(const char *prod, const char *maker)
+-{
+-	int i;
+-
+-	for (i = 0; i < nitems(ng_ids); i++) {
+-		/* Product and Maker */
+-		if (ng_ids[i].bios == NULL &&
+-		    ng_ids[i].boardname == NULL &&
+-		    ng_ids[i].boardpn == NULL &&
+-		    ng_ids[i].chassis == NULL &&
+-		    ng_ids[i].fdt == NULL && ng_ids[i].hwmodel == NULL &&
+-		    ng_ids[i].maker != NULL && ng_ids[i].planar == NULL &&
+-		    ng_ids[i].prod != NULL && ng_ids[i].vm == NULL &&
+-		    ng_ids[i].cpu == 0 &&
+-		    maker != NULL && prod != NULL &&
+-		    strncmp(maker, ng_ids[i].maker, strlen(ng_ids[i].maker)) == 0 &&
+-		    strncmp(prod, ng_ids[i].prod, strlen(ng_ids[i].prod)) == 0)
+-			return (ng_ids[i].id);
+-	}
+-
+-	return (NETGATE_UNKNOWN);
+-}
+-
+-static int
+-netgate_planar_maker(const char *planar, const char *maker)
+-{
+-	int i;
+-
+-	for (i = 0; i < nitems(ng_ids); i++) {
+-		/* Planar and Maker */
+-		if (ng_ids[i].bios == NULL &&
+-		    ng_ids[i].boardname == NULL &&
+-		    ng_ids[i].boardpn == NULL &&
+-		    ng_ids[i].chassis == NULL &&
+-		    ng_ids[i].fdt == NULL && ng_ids[i].hwmodel == NULL &&
+-		    ng_ids[i].maker != NULL && ng_ids[i].planar != NULL &&
+-		    ng_ids[i].prod == NULL && ng_ids[i].vm == NULL &&
+-		    ng_ids[i].cpu == 0 &&
+-		    maker != NULL && planar != NULL &&
+-		    strncmp(maker, ng_ids[i].maker, strlen(ng_ids[i].maker)) == 0 &&
+-		    strncmp(planar, ng_ids[i].planar, strlen(ng_ids[i].planar)) == 0)
+-			return (ng_ids[i].id);
+-	}
+-
+-	return (NETGATE_UNKNOWN);
+-}
+-
+-static int
+-netgate_product_model(const char *prod, const char *model)
+-{
+-	int i;
+-
+-	for (i = 0; i < nitems(ng_ids); i++) {
+-		/* Product and hw.model */
+-		if (ng_ids[i].bios == NULL &&
+-		    ng_ids[i].boardname == NULL &&
+-		    ng_ids[i].boardpn == NULL &&
+-		    ng_ids[i].chassis == NULL &&
+-		    ng_ids[i].fdt == NULL && ng_ids[i].hwmodel != NULL &&
+-		    ng_ids[i].maker == NULL && ng_ids[i].planar == NULL &&
+-		    ng_ids[i].prod != NULL && ng_ids[i].vm == NULL &&
+-		    ng_ids[i].cpu == 0 &&
+-		    model != NULL && prod != NULL &&
+-		    strstr(model, ng_ids[i].hwmodel) != NULL &&
+-		    strncmp(prod, ng_ids[i].prod, strlen(ng_ids[i].prod)) == 0)
+-			return (ng_ids[i].id);
+-	}
+-
+-	return (NETGATE_UNKNOWN);
+-}
+-
+-static int
+-netgate_product_ncpu(const char *prod)
+-{
+-	int i;
+-
+-	for (i = 0; i < nitems(ng_ids); i++) {
+-		/* Product and hw.ncpu */
+-		if (ng_ids[i].bios == NULL &&
+-		    ng_ids[i].boardname == NULL &&
+-		    ng_ids[i].boardpn == NULL &&
+-		    ng_ids[i].chassis == NULL &&
+-		    ng_ids[i].fdt == NULL && ng_ids[i].hwmodel == NULL &&
+-		    ng_ids[i].maker == NULL && ng_ids[i].planar == NULL &&
+-		    ng_ids[i].prod != NULL && ng_ids[i].vm == NULL &&
+-		    ng_ids[i].cpu > 0 &&
+-		    prod != NULL &&
+-		    ng_ids[i].cpu == mp_ncpus &&
+-		    strncmp(prod, ng_ids[i].prod, strlen(ng_ids[i].prod)) == 0)
+-			return (ng_ids[i].id);
+-	}
+-
+-	return (NETGATE_UNKNOWN);
+-}
+-
+-static int
+-netgate_model_uboot_board(const char *model, const char *boardpn)
+-{
+-	int i;
+-
+-	for (i = 0; i < nitems(ng_ids); i++) {
+-		/* hw.model and U-boot board PN */
+-		if (ng_ids[i].bios == NULL &&
+-		    ng_ids[i].boardname == NULL &&
+-		    ng_ids[i].boardpn != NULL &&
+-		    ng_ids[i].chassis == NULL &&
+-		    ng_ids[i].fdt == NULL && ng_ids[i].hwmodel != NULL &&
+-		    ng_ids[i].maker == NULL && ng_ids[i].planar == NULL &&
+-		    ng_ids[i].prod == NULL && ng_ids[i].vm == NULL &&
+-		    ng_ids[i].cpu == 0 &&
+-		    boardpn != NULL && model != NULL &&
+-		    strncmp(boardpn, ng_ids[i].boardpn, strlen(ng_ids[i].boardpn)) == 0 &&
+-		    strncmp(model, ng_ids[i].hwmodel, strlen(ng_ids[i].hwmodel)) == 0)
+-			return (ng_ids[i].id);
+-	}
+-
+-	return (NETGATE_UNKNOWN);
+-}
+-
+-static int
+-netgate_uboot_boardname(const char *boardname)
+-{
+-	int i;
+-
+-	for (i = 0; i < nitems(ng_ids); i++) {
+-		/* U-boot board Name */
+-		if (ng_ids[i].bios == NULL &&
+-		    ng_ids[i].boardname != NULL &&
+-		    ng_ids[i].boardpn == NULL &&
+-		    ng_ids[i].chassis == NULL &&
+-		    ng_ids[i].fdt == NULL && ng_ids[i].hwmodel == NULL &&
+-		    ng_ids[i].maker == NULL && ng_ids[i].planar == NULL &&
+-		    ng_ids[i].prod == NULL && ng_ids[i].vm == NULL &&
+-		    ng_ids[i].cpu == 0 &&
+-		    boardname != NULL &&
+-		    strncmp(boardname, ng_ids[i].boardname,
+-		      strlen(ng_ids[i].boardname)) == 0)
+-			return (ng_ids[i].id);
+-	}
+-
+-	return (NETGATE_UNKNOWN);
+-}
+-
+-#ifdef FDT
+-static int
+-netgate_prod_fdt_model(const char *prod, const char *fdt)
+-{
+-	int i;
+-
+-	for (i = 0; i < nitems(ng_ids); i++) {
+-		/* Product and FDT model */
+-		if (ng_ids[i].bios == NULL &&
+-		    ng_ids[i].boardname == NULL &&
+-		    ng_ids[i].boardpn == NULL &&
+-		    ng_ids[i].chassis == NULL &&
+-		    ng_ids[i].fdt != NULL && ng_ids[i].hwmodel == NULL &&
+-		    ng_ids[i].maker == NULL && ng_ids[i].planar == NULL &&
+-		    ng_ids[i].prod != NULL && ng_ids[i].vm == NULL &&
+-		    ng_ids[i].cpu == 0 &&
+-		    fdt != NULL && prod != NULL &&
+-		    strncmp(fdt, ng_ids[i].fdt, strlen(ng_ids[i].fdt)) == 0 &&
+-		    strncmp(prod, ng_ids[i].prod, strlen(ng_ids[i].prod)) == 0)
+-			return (ng_ids[i].id);
+-	}
+-
+-	return (NETGATE_UNKNOWN);
+-}
+-#endif
+-
+-static int
+-netgate_product(const char *prod)
+-{
+-	int i;
+-
+-	for (i = 0; i < nitems(ng_ids); i++) {
+-		/* Product */
+-		if (ng_ids[i].bios == NULL &&
+-		    ng_ids[i].boardname == NULL &&
+-		    ng_ids[i].boardpn == NULL &&
+-		    ng_ids[i].chassis == NULL &&
+-		    ng_ids[i].fdt == NULL && ng_ids[i].hwmodel == NULL &&
+-		    ng_ids[i].maker == NULL && ng_ids[i].planar == NULL &&
+-		    ng_ids[i].prod != NULL && ng_ids[i].vm == NULL &&
+-		    ng_ids[i].cpu == 0 &&
+-		    prod != NULL &&
+-		    strncmp(prod, ng_ids[i].prod, strlen(ng_ids[i].prod)) == 0)
+-			return (ng_ids[i].id);
+-	}
+-
+-	return (NETGATE_UNKNOWN);
+-}
+-
+-static int
+-netgate_planar(const char *planar)
+-{
+-	int i;
+-
+-	for (i = 0; i < nitems(ng_ids); i++) {
+-		/* Planar */
+-		if (ng_ids[i].bios == NULL &&
+-		    ng_ids[i].boardname == NULL &&
+-		    ng_ids[i].boardpn == NULL &&
+-		    ng_ids[i].chassis == NULL &&
+-		    ng_ids[i].fdt == NULL && ng_ids[i].hwmodel == NULL &&
+-		    ng_ids[i].maker == NULL && ng_ids[i].planar != NULL &&
+-		    ng_ids[i].prod == NULL && ng_ids[i].vm == NULL &&
+-		    ng_ids[i].cpu == 0 &&
+-		    planar != NULL &&
+-		    strncmp(planar, ng_ids[i].planar, strlen(ng_ids[i].planar)) == 0)
+-			return (ng_ids[i].id);
+-	}
+-
+-	return (NETGATE_UNKNOWN);
+-}
+-
+-static int
+-netgate_chassis(const char *chassis)
+-{
+-	int i;
+-
+-	for (i = 0; i < nitems(ng_ids); i++) {
+-		/* Chassis */
+-		if (ng_ids[i].bios == NULL &&
+-		    ng_ids[i].boardname == NULL &&
+-		    ng_ids[i].boardpn == NULL &&
+-		    ng_ids[i].chassis != NULL &&
+-		    ng_ids[i].fdt == NULL && ng_ids[i].hwmodel == NULL &&
+-		    ng_ids[i].maker == NULL && ng_ids[i].planar == NULL &&
+-		    ng_ids[i].prod == NULL && ng_ids[i].vm == NULL &&
+-		    ng_ids[i].cpu == 0 &&
+-		    chassis != NULL &&
+-		    strncmp(chassis, ng_ids[i].chassis, strlen(ng_ids[i].chassis)) == 0)
+-			return (ng_ids[i].id);
+-	}
+-
+-	return (NETGATE_UNKNOWN);
+-}
+-
+-static int
+-netgate_probe(device_t dev)
+-{
+-	size_t len;
+-	char *bios, *boardname, *boardpn, *chassis, *fdt, *maker;
+-	char *model, *planar, *prod, *vm;
+-	struct netgate_softc *sc;
+-
+-	sc = device_get_softc(dev);
+-
+-	/* hw.model */
+-	len = NETGATE_BUFSZ;
+-	model = malloc(len, M_DEVBUF, M_WAITOK);
+-	memset(model, 0, len);
+-	if (kernel_sysctlbyname(curthread, "hw.model", model, &len, NULL,
+-	    0, NULL, 0) != 0) {
+-		free(model, M_DEVBUF);
+-		model = NULL;
+-	}
+-	/* kern.vm_guest */
+-	len = NETGATE_BUFSZ;
+-	vm = malloc(len, M_DEVBUF, M_WAITOK);
+-	memset(vm, 0, len);
+-	if (kernel_sysctlbyname(curthread, "kern.vm_guest", vm, &len, NULL,
+-	    0, NULL, 0) != 0) {
+-		free(vm, M_DEVBUF);
+-		vm = NULL;
+-	}
+-	fdt = fdt_get_model();
+-	bios = kern_getenv("smbios.bios.version");
+-	chassis = kern_getenv("smbios.chassis.tag");
+-	maker = kern_getenv("smbios.system.maker");
+-	planar = kern_getenv("smbios.planar.product");
+-	prod = kern_getenv("smbios.system.product");
+-	boardpn = kern_getenv("uboot.boardpn");
+-	boardname = kern_getenv("uboot.board_name");
+-
+-	/* VM - Maker */
+-	if (maker != NULL)
+-		netgate_model = netgate_maker(maker);
+-	/* VM - kern.vm_guest */
+-	if (netgate_model == NETGATE_UNKNOWN &&
+-	    vm != NULL)
+-		netgate_model = netgate_vm_guest(vm);
+-	/* VM - BIOS */
+-	if (netgate_model == NETGATE_UNKNOWN &&
+-	    bios != NULL)
+-		netgate_model = netgate_vm_bios(bios);
+-	/* Product, Maker and Chassis Tag */
+-	if (netgate_model == NETGATE_UNKNOWN &&
+-	    chassis != NULL && maker != NULL && prod != NULL)
+-		netgate_model = netgate_prod_maker_chassis(prod, maker, chassis);
+-	/* Product, Maker and Bios */
+-	if (netgate_model == NETGATE_UNKNOWN &&
+-	    bios != NULL && maker != NULL && prod != NULL)
+-		netgate_model = netgate_prod_maker_bios(prod, maker, bios);
+-	/* Product and Maker */
+-	if (netgate_model == NETGATE_UNKNOWN &&
+-	    maker != NULL && prod != NULL)
+-		netgate_model = netgate_product_maker(prod, maker);
+-	/* Planar and Maker */
+-	if (netgate_model == NETGATE_UNKNOWN &&
+-	    maker != NULL && planar != NULL)
+-		netgate_model = netgate_planar_maker(planar, maker);
+-	/* Product and hw.model */
+-	if (netgate_model == NETGATE_UNKNOWN &&
+-	    model != NULL && prod != NULL)
+-		netgate_model = netgate_product_model(prod, model);
+-	/* Product and hw.ncpu */
+-	if (netgate_model == NETGATE_UNKNOWN &&
+-	    prod != NULL)
+-		netgate_model = netgate_product_ncpu(prod);
+-	/* hw.model and U-boot board PN */
+-	if (netgate_model == NETGATE_UNKNOWN &&
+-	    boardpn != NULL && model != NULL)
+-		netgate_model = netgate_model_uboot_board(model, boardpn);
+-	/* U-boot board Name */
+-	if (netgate_model == NETGATE_UNKNOWN &&
+-	    boardname != NULL)
+-		netgate_model = netgate_uboot_boardname(boardname);
+-#ifdef FDT
+-	/* Product and FDT model */
+-	if (netgate_model == NETGATE_UNKNOWN &&
+-	    fdt != NULL && prod != NULL)
+-		netgate_model = netgate_prod_fdt_model(prod, fdt);
+-#endif
+-	/* Product */
+-	if (netgate_model == NETGATE_UNKNOWN &&
+-	    prod != NULL)
+-		netgate_model = netgate_product(prod);
+-	/* Planar */
+-	if (netgate_model == NETGATE_UNKNOWN &&
+-	    planar != NULL)
+-		netgate_model = netgate_planar(planar);
+-	/* Chassis */
+-	if (netgate_model == NETGATE_UNKNOWN &&
+-	    chassis != NULL)
+-		netgate_model = netgate_chassis(chassis);
+-	/* QEMU with Chassis */
+-	if (netgate_model == NETGATE_VM_QEMU &&
+-	    chassis != NULL)
+-		netgate_model = netgate_chassis(chassis);	
+-
+-	if (bios != NULL)
+-		freeenv(bios);
+-	if (boardname != NULL)
+-		freeenv(boardname);
+-	if (boardpn != NULL)
+-		freeenv(boardpn);
+-	if (chassis != NULL)
+-		freeenv(chassis);
+-	if (fdt != NULL)
+-		fdt_free(fdt);
+-	if (maker != NULL)
+-		freeenv(maker);
+-	if (model != NULL)
+-		free(model, M_DEVBUF);
+-	if (planar != NULL)
+-		freeenv(planar);
+-	if (prod != NULL)
+-		freeenv(prod);
+-	if (vm != NULL)
+-		free(vm, M_DEVBUF);
+-
+-	/* Set the device description. */
+-	sc->sc_desc = netgate_get_device_desc();
+-	device_set_desc(dev, sc->sc_desc);
+-
+-	return (BUS_PROBE_DEFAULT);
+-}
+-
+-static int
+-netgate_attach(device_t dev)
+-{
+-	struct netgate_softc *sc;
+-	struct sysctl_ctx_list *ctx;
+-	struct sysctl_oid_list *child;
+-
+-	sc = device_get_softc(dev);
+-	sc->sc_model_str = malloc(NETGATE_BUFSZ, M_DEVBUF, M_WAITOK);
+-	sc->sc_desc_str = malloc(NETGATE_BUFSZ, M_DEVBUF, M_WAITOK);
+-	snprintf(sc->sc_model_str, NETGATE_BUFSZ, "%s", netgate_get_device_model());
+-	snprintf(sc->sc_desc_str, NETGATE_BUFSZ, "%s", netgate_get_device_desc());
+-	ctx = device_get_sysctl_ctx(dev);
+-	child = SYSCTL_CHILDREN(SYSCTL_PARENT(device_get_sysctl_tree(dev)));
+-	SYSCTL_ADD_STRING(ctx, child, OID_AUTO, "model", CTLFLAG_RD,
+-	    sc->sc_model_str, 0, "Device model");
+-	SYSCTL_ADD_STRING(ctx, child, OID_AUTO, "desc", CTLFLAG_RD,
+-	    sc->sc_desc_str, 0, "Device description");
+-
+-	device_printf(dev, "version: %s\n", NETGATE_MOD_VER);
+-
+-	return (0);
+-}
+-
+-static int
+-netgate_detach(device_t dev)
+-{
+-
+-	return (EINVAL);
+-}
+-
+-static device_method_t netgate_methods[] = {
+-	/* Device interface */
+-	DEVMETHOD(device_identify,	netgate_identify),
+-	DEVMETHOD(device_probe,		netgate_probe),
+-	DEVMETHOD(device_attach,	netgate_attach),
+-	DEVMETHOD(device_detach,	netgate_detach),
+-
+-	DEVMETHOD_END
+-};
+-
+-static driver_t netgate_driver = {
+-	"netgate",
+-	netgate_methods,
+-	sizeof(struct netgate_softc),
+-};
+-
+-EARLY_DRIVER_MODULE(netgate, nexus, netgate_driver, 0, 0, BUS_PASS_RESOURCE);
+-MODULE_DEPEND(netgate, nexus, 1, 1, 1);
+-
+-MODULE_VERSION(netgate, 1);
+diff --git a/sys/dev/netgate/netgate.h b/sys/dev/netgate/netgate.h
+deleted file mode 100644
+index d2599e74c..000000000
+--- a/sys/dev/netgate/netgate.h
++++ /dev/null
+@@ -1,92 +0,0 @@
+-/*-
+- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+- *
+- * Copyright (c) 2022-2023 Rubicon Communications, LLC (Netgate).
+- * All rights reserved.
+- *
+- * Redistribution and use in source and binary forms, with or without
+- * modification, are permitted provided that the following conditions
+- * are met:
+- * 1. Redistributions of source code must retain the above copyright
+- *    notice, this list of conditions and the following disclaimer.
+- * 2. Redistributions in binary form must reproduce the above copyright
+- *    notice, this list of conditions and the following disclaimer in the
+- *    documentation and/or other materials provided with the distribution.
+- *
+- * THIS SOFTWARE IS PROVIDED BY THE AUTHOR ``AS IS'' AND ANY EXPRESS OR
+- * IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
+- * OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.
+- * IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY DIRECT, INDIRECT,
+- * INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT
+- * NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+- * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+- * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+- * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
+- * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+- */
+-
+-#ifndef __NETGATE_H__
+-#define __NETGATE_H__
+-
+-#define	NETGATE_MOD_VER		"0.2"
+-
+-#define	NETGATE_UNKNOWN		0
+-
+-/* Old devices. */
+-#define	NETGATE_APU1		10
+-#define	NETGATE_APU		11
+-#define	NETGATE_SG2200		12
+-#define	NETGATE_RCCVE		13
+-#define	NETGATE_SG4860		14
+-#define	NETGATE_SG8860		15
+-#define	NETGATE_XG2758		16
+-#define	NETGATE_MBT4220		17
+-#define	NETGATE_MBT4220_1	18
+-#define	NETGATE_MBT2220		19
+-#define	NETGATE_MBT2220_1	20
+-#define	NETGATE_TURBOT		21
+-#define	NETGATE_TURBOT_1	22
+-#define	NETGATE_C2558		23
+-#define	NETGATE_C2558_1		24
+-#define	NETGATE_C2758		25
+-#define	NETGATE_C2758_1		26
+-#define	NETGATE_APU2		27
+-#define	NETGATE_APU2_1		28
+-
+-/* VMs */
+-#define	NETGATE_VM_QEMU		50
+-#define	NETGATE_VM_GOOGLE	51
+-#define	NETGATE_VM_KVM		52
+-#define	NETGATE_VM_AWS		53
+-#define	NETGATE_VM_GOOGLE_1	54
+-#define	NETGATE_VM_VIRTUALBOX	55
+-#define	NETGATE_VM_HYPERV	56
+-#define	NETGATE_VM_AZURE	57
+-#define	NETGATE_VM_VMWARE	58
+-#define	NETGATE_VM_AWS_1    59
+-#define	NETGATE_VM_ORACLE   60
+-
+-/* Netgate */
+-#define	NETGATE_SG1000		1000
+-#define	NETGATE_1100		1100
+-#define	NETGATE_2100		2100
+-#define	NETGATE_1537		1537
+-#define	NETGATE_1540		1540
+-#define	NETGATE_1541		1541
+-#define	NETGATE_3100		3100
+-#define	NETGATE_4100		4100
+-#define	NETGATE_4200		4200
+-#define	NETGATE_5100		5100
+-#define	NETGATE_5200		5200
+-#define	NETGATE_6100		6100
+-#define	NETGATE_6200		6200
+-#define	NETGATE_7100		7100
+-#define	NETGATE_7200		7200
+-#define	NETGATE_7541		7541
+-#define	NETGATE_8200		8200
+-
+-char *netgate_get_device_desc(void);
+-char *netgate_get_device_model(void);
+-int netgate_get_device_id(void);
+-
+-#endif	/* __NETGATE_H__ */
+diff --git a/sys/netinet6/nd6.c b/sys/netinet6/nd6.c
+index 23b1e4997..a9754fd13 100644
+--- a/sys/netinet6/nd6.c
++++ b/sys/netinet6/nd6.c
+@@ -309,7 +309,7 @@ nd6_ifattach(struct ifnet *ifp)
+ 
+ 	/* Set IPv6 disabled on all interfaces but loopback by default. */
+ 	if ((ifp->if_flags & IFF_LOOPBACK) == 0) {
+-	/* Netgate: retain the stable/12 default behaviour of having IPv6 be enabled on interfaces.
++	/* FreeSense: retain the stable/12 default behaviour of having IPv6 be enabled on interfaces.
+ 		nd->nd_flags |= ND6_IFF_IFDISABLED;
+ 	*/
+ 		if (V_ip6_no_radr)
+diff --git a/usr.sbin/bsdinstall/scripts/config b/usr.sbin/bsdinstall/scripts/config
+index bc8444e29..b1de5a931 100755
+--- a/usr.sbin/bsdinstall/scripts/config
++++ b/usr.sbin/bsdinstall/scripts/config
+@@ -41,9 +41,9 @@ fi
+ 
+ cp $BSDINSTALL_TMPETC/* $BSDINSTALL_CHROOT/etc
+ 
+-# Copy pfSense loader.conf
++# Copy the FreeSense loader.conf
+ if [ -f /boot/loader.conf ]; then
+-	cp /boot/loader.conf $BSDINSTALL_TMPBOOT/loader.conf.pfSense
++	cp /boot/loader.conf $BSDINSTALL_TMPBOOT/loader.conf.FreeSense
+ fi
+ 
+ cat $BSDINSTALL_TMPBOOT/loader.conf.* >> $BSDINSTALL_TMPBOOT/loader.conf
+@@ -61,12 +61,12 @@ if [ "${product}" = "Minnowboard Turbot D0 PLATFORM" ] || [ "${product}" = "Minn
+ fi
+ 
+ # Add default values for hn devices to work with ALTQ
+-# See https://redmine.pfsense.org/issues/8954
++# Keep the installer loader settings ahead of the target ones
+ echo 'hw.hn.vf_transparent="0"' >> $BSDINSTALL_TMPBOOT/loader.conf
+ echo 'hw.hn.use_if_start="1"' >> $BSDINSTALL_TMPBOOT/loader.conf
+ 
+-if [ -f /tmp/loader.conf.pfSense ]; then
+-	cat /tmp/loader.conf.pfSense $BSDINSTALL_TMPBOOT/loader.conf \
++if [ -f /tmp/loader.conf.FreeSense ]; then
++	cat /tmp/loader.conf.FreeSense $BSDINSTALL_TMPBOOT/loader.conf \
+ 	    | sort -u > $BSDINSTALL_TMPBOOT/loader.conf.tmp
+ 	mv $BSDINSTALL_TMPBOOT/loader.conf.tmp $BSDINSTALL_TMPBOOT/loader.conf
+ fi
+@@ -74,8 +74,8 @@ fi
+ sort -u < $BSDINSTALL_TMPBOOT/loader.conf > $BSDINSTALL_TMPBOOT/loader.conf.tmp
+ mv $BSDINSTALL_TMPBOOT/loader.conf.tmp $BSDINSTALL_TMPBOOT/loader.conf
+ 
+-if [ -f /tmp/loader.conf.local.pfSense ]; then
+-	cat /tmp/loader.conf.local.pfSense $BSDINSTALL_TMPBOOT/loader.conf.local \
++if [ -f /tmp/loader.conf.local.FreeSense ]; then
++	cat /tmp/loader.conf.local.FreeSense $BSDINSTALL_TMPBOOT/loader.conf.local \
+ 	    | sort -u > $BSDINSTALL_TMPBOOT/loader.conf.local.tmp
+ 	mv $BSDINSTALL_TMPBOOT/loader.conf.local.tmp $BSDINSTALL_TMPBOOT/loader.conf.local
+ fi
+diff --git a/usr.sbin/bsdinstall/scripts/fix_fstab b/usr.sbin/bsdinstall/scripts/fix_fstab
+index ef8ff8cca..20c7f0237 100644
+--- a/usr.sbin/bsdinstall/scripts/fix_fstab
++++ b/usr.sbin/bsdinstall/scripts/fix_fstab
+@@ -90,7 +90,7 @@ dev_label() {
+ FSTAB=${BSDINSTALL_TMPETC}/fstab
+ 
+ if [ -z "${FSTAB}" -o ! -f "${FSTAB}" ]; then
+-	dialog --backtitle "pfSense Installer" --title "Error" \
++	dialog --backtitle "FreeSense Installer" --title "Error" \
+ 	    --msgbox "Error creating device labels" 0 0
+ 	exit 1
+ fi
+diff --git a/usr.sbin/bsdinstall/startbsdinstall b/usr.sbin/bsdinstall/startbsdinstall
+index f81afe5eb..107e41096 100644
+--- a/usr.sbin/bsdinstall/startbsdinstall
++++ b/usr.sbin/bsdinstall/startbsdinstall
+@@ -160,7 +160,7 @@ EOD
+ 
+ if [ ! -f /tmp/buildroom ]; then
+ 	exec 3>&1
+-	bsddialog --backtitle "pfSense Installer" \
++	bsddialog --backtitle "FreeSense Installer" \
+ 		--title "Copyright and distribution notice" \
+ 		--ok-label "Accept" \
+ 		--colors \
+@@ -179,7 +179,7 @@ if [ -x /root/import_foreign_config.sh ] ; then
+ fi
+ 
+ exec 3>&1
+-IMODE=`eval bsddialog --backtitle \"pfSense Installer\" \
++IMODE=`eval bsddialog --backtitle \"FreeSense Installer\" \
+ 	--title "Welcome" \
+ 	--menu \"Welcome to pfSense!\" \
+ 	0 0 0 ${IOPTS} 2>&1 1>&3` || exit 1
+@@ -235,7 +235,7 @@ case "$IMODE" in
+ 		ZFSBOOT_SWAP_SIZE=1g \
+ 		bsdinstall
+ 	if [ $? -eq 0 ]; then
+-		bsddialog --backtitle "pfSense Installer" --title "Complete" --yes-label "Reboot" --no-label "Shell" --yesno "Installation of pfSense complete! Would you like to reboot into the installed system now?" 0 0 && reboot
++		bsddialog --backtitle "FreeSense Installer" --title "Complete" --yes-label "Reboot" --no-label "Shell" --yesno "Installation of pfSense complete! Would you like to reboot into the installed system now?" 0 0 && reboot
+ 		clear
+ 		echo "When finished, type 'exit' to reboot."
+ 		/bin/sh
+@@ -253,16 +253,16 @@ case "$IMODE" in
+ "Recover config.xml") # Recover config.xml from a target drive
+ 	/root/recover_configxml.sh
+ 	if [ -r /tmp/recovered_config/config.xml ]; then
+-		bsddialog --backtitle "pfSense Installer" --title "Recover config.xml" --msgbox "config.xml recovered and staged for install.\n\nChoose \"Install\" on the next menu to install FreeSense using this configuration." 0 0
++		bsddialog --backtitle "FreeSense Installer" --title "Recover config.xml" --msgbox "config.xml recovered and staged for install.\n\nChoose \"Install\" on the next menu to install FreeSense using this configuration." 0 0
+ 	else
+-		bsddialog --backtitle "pfSense Installer" --title "Recover config.xml" --msgbox "No config.xml was recovered.\n\nInstalling now would use a default configuration." 0 0
++		bsddialog --backtitle "FreeSense Installer" --title "Recover config.xml" --msgbox "No config.xml was recovered.\n\nInstalling now would use a default configuration." 0 0
+ 	fi
+ 	. /etc/rc.local
+ 	;;
+ "Import config") # Import basic config from another firewall (pfSense/OPNsense)
+ 	/root/import_foreign_config.sh
+ 	if [ -r /tmp/recovered_config/config.xml ]; then
+-		bsddialog --backtitle "pfSense Installer" --title "Import config" --msgbox "Configuration imported and staged for install.\n\nChoose \"Install\" on the next menu to install FreeSense using the imported configuration." 0 0
++		bsddialog --backtitle "FreeSense Installer" --title "Import config" --msgbox "Configuration imported and staged for install.\n\nChoose \"Install\" on the next menu to install FreeSense using the imported configuration." 0 0
+ 	fi
+ 	. /etc/rc.local
+ 	;;

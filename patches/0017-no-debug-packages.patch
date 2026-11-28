@@ -1,0 +1,11 @@
+diff --git a/release/conf/FreeSense_build_src.conf b/release/conf/FreeSense_build_src.conf
+index 3a0703d9b..afabac3b9 100644
+--- a/release/conf/FreeSense_build_src.conf
++++ b/release/conf/FreeSense_build_src.conf
+@@ -35,3 +35,6 @@ WITHOUT_SHAREDOCS=YES
+ WITHOUT_TALK=YES
+ WITHOUT_TESTS=yes
+ WITHOUT_UNBOUND=YES
++
++# The appliance ships no debug packages
++WITHOUT_DEBUG_FILES=YES

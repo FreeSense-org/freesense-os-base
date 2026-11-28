@@ -1,0 +1,41 @@
+#!/bin/sh
+# shellcheck disable=SC2034,SC1091
+# Sourced modules share functions and state with this script.
+# Copyright (c) 2026 The FreeSense Project. SPDX-License-Identifier: Apache-2.0
+# Single boot-media entry point. Only the shared guarded backend opens target storage.
+exec </dev/console >/dev/console 2>&1
+export PATH=/sbin:/bin:/usr/sbin:/usr/bin LC_ALL=C
+unset FREESENSE_PROVISION_LIB
+FS_INSTALL_STATE=new
+FS_INSTALL_ERROR=''
+FS_WORK=''
+. /freesense/provision.sh
+. /freesense/guided/backend.sh
+. /freesense/guided/media.sh
+. /freesense/guided/freebsd.sh
+. /freesense/guided/terminal.sh
+. /freesense/guided/wizard.sh
+
+guided_start() {
+	printf '%s\n' 'FreeSense guided installer'
+	guided_preflight || return 1
+	printf 'Platform: %s %s\n' "$FS_INSTALL_ARCH" "$FS_INSTALL_FIRMWARE"
+	case "$FS_INSTALL_PLAN_STATUS" in
+		ready) printf '%s\n' 'Valid unattended installation plan found. Checking machine and target.'; guided_unattended ;;
+		absent) guided_terminal && guided_wizard ;;
+		*) return 1 ;;
+	esac
+}
+trap 'fs_adapter_cleanup || :' EXIT
+if guided_start && [ "$FS_INSTALL_STATE" = 'done' ]; then
+	printf 'FREESENSE_INSTALL_VERIFIED /dev/%s\n' "$FS_INSTALL_DISK"
+	printf '%s\n' 'Installation complete. Disconnect the installer and start the appliance.'
+elif [ "$FS_INSTALL_STATE" = cancelled ]; then
+	printf '%s\n' 'Installation cancelled before writing.'
+else
+	printf 'FREESENSE_INSTALL_REFUSED_OR_FAILED %s\n' "$FS_INSTALL_ERROR"
+	[ -z "${FS_INSTALL_EXCLUSIONS:-}" ] || printf 'Excluded devices:\n%s\n' "$FS_INSTALL_EXCLUSIONS"
+fi
+fs_adapter_cleanup || :
+/sbin/shutdown -p now
+

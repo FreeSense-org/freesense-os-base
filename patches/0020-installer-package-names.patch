@@ -1,0 +1,59 @@
+diff --git a/usr.sbin/bsdinstall/scripts/pkgbase.in b/usr.sbin/bsdinstall/scripts/pkgbase.in
+index 596d716df..3b0a91976 100755
+--- a/usr.sbin/bsdinstall/scripts/pkgbase.in
++++ b/usr.sbin/bsdinstall/scripts/pkgbase.in
+@@ -167,7 +167,7 @@ local function select_components(components, options)
+ 	end
+ 
+ 	local bsddialog_args = {
+-		"--backtitle", "FreeBSD Installer",
++		"--backtitle", "FreeSense Installer",
+ 		"--title", "Select System Components",
+ 		"--nocancel",
+ 		"--disable-esc",
+@@ -240,16 +240,13 @@ local function select_packages(pkg, options)
+ 	-- Note: if you update this list, you must also update the list in
+ 	-- release/scripts/pkgbase-stage.lua.
+ 	local kernel_packages = {
+-		-- Most architectures use this
+-		["FreeBSD-kernel-generic"] = true,
+-		-- PowerPC uses either of these, depending on platform
+-		["FreeBSD-kernel-generic64"] = true,
+-		["FreeBSD-kernel-generic64le"] = true,
++		-- The FreeSense kernel package (named after the FREESENSE kernel configuration)
++		["FreeSense-kernel-freesense"] = true,
+ 	}
+ 
+-	local rquery = capture(pkg .. "rquery -U -r FreeBSD-base %n")
++	local rquery = capture(pkg .. "rquery -U -r FreeSense-base %n")
+ 	for package in rquery:gmatch("[^\n]+") do
+-		local setname = package:match("^FreeBSD%-set%-(.+)$")
++		local setname = package:match("^FreeSense%-set%-(.+)$")
+ 
+ 		if setname then
+ 			components[setname] = components[setname] or {}
+@@ -293,7 +290,7 @@ local function select_packages(pkg, options)
+ 		-- actually exists, because some sets (src, tests) don't
+ 		-- have a -dbg subpackage.
+ 		for _, c in ipairs(pkglist) do
+-			local setname = c:match("^FreeBSD%-set%-(.*)$")
++			local setname = c:match("^FreeSense%-set%-(.*)$")
+ 			if debug and setname then
+ 				local dbgset = setname.."-dbg"
+ 				if components[dbgset] then
+@@ -364,13 +361,13 @@ local function pkgbase()
+ 
+ 	local packages = table.concat(select_packages(pkg, options), " ")
+ 
+-	while not os.execute(pkg .. "install -U -F -y -r FreeBSD-base " .. packages) do
++	while not os.execute(pkg .. "install -U -F -y -r FreeSense-base " .. packages) do
+ 		if not prompt_yn("Fetching packages failed, try again?") then
+ 			os.exit(1)
+ 		end
+ 	end
+ 
+-	if not os.execute(pkg .. "install -U -y -r FreeBSD-base " .. packages) then
++	if not os.execute(pkg .. "install -U -y -r FreeSense-base " .. packages) then
+ 		os.exit(1)
+ 	end
+ end

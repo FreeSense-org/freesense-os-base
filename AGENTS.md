@@ -1,26 +1,14 @@
-# freesense-os-base agent rules
+# FreeSense 2.0 branch
 
-Release planning, build orchestration, signing and publication. The rules for
-versions, branches, tags and publishing are in `docs/release-policy.md`
-(R1–R9); cite the rule number when an action touches a release.
+This is one repository of the experimental FreeSense 2.0 line. It builds and checks; it publishes nothing.
 
-- `config/releases/<version>.json` is append-only (R1). Never edit, rename or
-  delete a merged lock; withdraw it in `config/releases/withdrawn.json` and
-  ship the next patch number (R2). CI (`scripts/check_release_locks.py`)
-  rejects changes to merged locks. A candidate cancelled before compilation or
-  image assembly may keep its number only under the verified pre-build
-  cancellation exception in `docs/release-policy.md` (R2); retain unchanged
-  inputs and record evidence for every architecture before any requested retry.
-- A Stable release is two dispatches of `stable.yml`: `stage=candidate`, an
-  upgrade test, then `stage=seal` (R3). Dispatch either only when the user
-  explicitly asks for that release and stage; the seal makes it live on
-  installed devices and cannot be undone.
-- Never move or delete `v*` tags (R5). `scripts/tag_release.py` creates
-  missing ones and refuses to move existing ones.
-- Changes under `broker/**` redeploy the live credential broker when merged.
-- Run the suite in Linux before pushing: `python:3.12-alpine` with bash, jq,
-  git and openssl, `python3 -m unittest discover -s tests -p 'test_*.py'`,
-  `python3 scripts/validate-build-pipeline.py` and
-  `python3 scripts/check_release_locks.py --base origin/main`.
-- This repository only allows squash merges on GitHub; land a reviewed branch
-  with a fast-forward push of `main` after CI is green.
+- The checks and the build need all repositories laid out as one workspace. Put checkouts of `freesense`,
+  `freesense-os-base`, `freesense-system-ports` and `freesense-packages` (branch `2.0`) in one folder and run
+  `python3 freesense-os-base/scripts/assemble-workspace.py --repos . --dest ../ws`.
+- The workspace guidance is `workspace/AGENTS.md` on the `2.0` branch of `freesense-os-base`
+  (in the assembled workspace: `AGENTS.md` at the top).
+- Never open a pull request from `2.0` to `main` and never merge one line into the other. A fix both need is
+  cherry-picked.
+- First line of every commit: `Area: what changed`.
+- No workflow here may publish, deploy or use a credential; `scripts/ci/workflow_lint.py` of `freesense-os-base`
+  enforces it.

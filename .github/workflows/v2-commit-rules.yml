@@ -1,0 +1,39 @@
+name: "2.0 commit messages (shared)"
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  commit-messages:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: FreeSense-org/freesense-os-base
+          ref: '2.0'
+          path: .rules
+          persist-credentials: false
+      - name: Check the commit subjects
+        env:
+          PULL_BASE: ${{ github.event.pull_request.base.sha }}
+          PULL_HEAD: ${{ github.event.pull_request.head.sha }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+          if [ -n "${PULL_BASE}" ]; then
+            range="${PULL_BASE}..${PULL_HEAD}"
+          elif git cat-file -e "${BEFORE}^{commit}" 2>/dev/null; then
+            range="${BEFORE}..${GITHUB_SHA}"
+          else
+            # The first push of the branch: everything that is not on main.
+            range="origin/main..${GITHUB_SHA}"
+          fi
+          python3 .rules/scripts/ci/commit_messages.py --range "${range}"

@@ -1,0 +1,100 @@
+diff --git a/stand/defaults/loader.conf b/stand/defaults/loader.conf
+index e9ce5a109..d64de3d20 100644
+--- a/stand/defaults/loader.conf
++++ b/stand/defaults/loader.conf
+@@ -28,8 +28,8 @@ bitmap_load="NO"		# Set this to YES if you want splash screen!
+ bitmap_name="splash.bmp"	# Set this to the name of the file
+ bitmap_type="splash_image_data" # and place it on the module_path
+ # Set boot_mute=YES to load these
+-splash="/boot/images/freebsd-logo-rev.png"
+-shutdown_splash="/boot/images/freebsd-logo-rev.png"
++splash="/boot/images/freesense-logo-rev.png"
++shutdown_splash="/boot/images/freesense-logo-rev.png"
+ 
+ ###  Screen saver modules  ###################################
+ # This is best done in rc.conf
+@@ -207,4 +207,5 @@ loader_brand="FreeSense"
+ hw.usb.no_pf="1"
+ net.isr.maxthreads="-1"
+ loader_menu_title="Welcome to FreeSense"
++boot_mute="YES"
+ net.pf.request_maxcount="400000"
+diff --git a/stand/forth/brand-fbsd.4th b/stand/forth/brand-fbsd.4th
+index ba84ae0d5..45fc20e29 100644
+--- a/stand/forth/brand-fbsd.4th
++++ b/stand/forth/brand-fbsd.4th
+@@ -38,7 +38,7 @@
+ 			\ note, we use 0, 0 for image upper left as origin,
+ 			\ and 0, 7 for lower right to preserve aspect ratio
+ 			>r 0 1 1 0 7
+-			s" /boot/images/freebsd-brand-rev.png"
++			s" /boot/images/freesense-brand-rev.png"
+ 			r> execute if 2drop exit then
+ 		else
+ 			drop
+diff --git a/stand/forth/logo-orb.4th b/stand/forth/logo-orb.4th
+index 51efdeaec..1361fe7d3 100644
+--- a/stand/forth/logo-orb.4th
++++ b/stand/forth/logo-orb.4th
+@@ -39,7 +39,7 @@
+ 			>r 2dup			( x y x y )
+ 			>r 0 swap r>		( x y 0 x y )
+ 			dup 0 swap 15 +		( x y 0 x y 0 y+15 )
+-			s" /boot/images/freebsd-logo-rev.png"
++			s" /boot/images/freesense-logo-rev.png"
+ 			r> execute if 2drop exit then
+ 		else
+ 			drop
+diff --git a/stand/images/Makefile b/stand/images/Makefile
+index 2f45b989e..0e2909dc1 100644
+--- a/stand/images/Makefile
++++ b/stand/images/Makefile
+@@ -1,7 +1,7 @@
+ .include <bsd.init.mk>
+ 
+-FILES+=	freebsd-brand-rev.png freebsd-brand.png freebsd-install-brand-rev.png \
+-	freebsd-logo-rev.png
++FILES+=	freesense-brand-rev.png freesense-install-brand-rev.png \
++	freesense-logo-rev.png
+ 
+ FILESDIR=  /boot/images
+ 
+diff --git a/stand/lua/drawer.lua b/stand/lua/drawer.lua
+index 1c03ed93f..0d693ccbd 100644
+--- a/stand/lua/drawer.lua
++++ b/stand/lua/drawer.lua
+@@ -503,7 +503,7 @@ branddefs = {
+ 			image = fbsd_brand,
+ 		},
+ 		fb = {
+-			image = "/boot/images/freebsd-brand-rev.png",
++			image = "/boot/images/freesense-brand-rev.png",
+ 		},
+ 	},
+ 	["none"] = {
+diff --git a/stand/lua/gfx-install.lua b/stand/lua/gfx-install.lua
+index d4cd34e32..0ba957c4e 100644
+--- a/stand/lua/gfx-install.lua
++++ b/stand/lua/gfx-install.lua
+@@ -17,7 +17,7 @@ return {
+ 			requires_color = false,
+ 		},
+ 		fb = {
+-			image = "/boot/images/freebsd-install-brand-rev.png",
++			image = "/boot/images/freesense-install-brand-rev.png",
+ 			width = 80,
+ 		},
+ 	}
+diff --git a/stand/lua/gfx-orb.lua b/stand/lua/gfx-orb.lua
+index 6845d6fa0..8d91e0569 100644
+--- a/stand/lua/gfx-orb.lua
++++ b/stand/lua/gfx-orb.lua
+@@ -49,7 +49,7 @@ return {
+ 			shift = {x = 5, y = -1},
+ 		},
+ 		fb = {
+-			image = "/boot/images/freebsd-logo-rev.png",
++			image = "/boot/images/freesense-logo-rev.png",
+ 			width = 15,
+ 			shift = {x = 2, y = -2},
+ 		},

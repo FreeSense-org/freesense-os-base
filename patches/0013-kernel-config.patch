@@ -1,0 +1,599 @@
+diff --git a/sys/amd64/conf/FREESENSE b/sys/amd64/conf/FREESENSE
+old mode 100644
+new mode 100755
+index 61e8d8df0..32408923b
+--- a/sys/amd64/conf/FREESENSE
++++ b/sys/amd64/conf/FREESENSE
+@@ -1,7 +1,7 @@
+-include FREESENSE-DEBUG
+-include "../../conf/std.nodebug"
+-
+-# We want these probe points, even for non-debug versions
+-options 	KDTRACE_MIB_SDT
+-
+-ident   FREESENSE
++# FreeSense amd64 kernel (release).
++# Copyright (c) 2026 The FreeSense Project, Apache-2.0.
++include		GENERIC
++include		"../../conf/std.nodebug"
++include		"../../conf/FREESENSE-COMMON"
++include		"FREESENSE-HW"
++ident		FREESENSE
+diff --git a/sys/amd64/conf/FREESENSE-DEBUG b/sys/amd64/conf/FREESENSE-DEBUG
+old mode 100644
+new mode 100755
+index 1589cc33e..d1856a953
+--- a/sys/amd64/conf/FREESENSE-DEBUG
++++ b/sys/amd64/conf/FREESENSE-DEBUG
+@@ -1,203 +1,6 @@
++# FreeSense amd64 debug kernel: GENERIC keeps INVARIANTS, WITNESS and the other debug options.
++# Copyright (c) 2026 The FreeSense Project, Apache-2.0.
+ include		GENERIC
+-
+-nooptions	KDB_TRACE
+-options 	DDB
+-
++include		"../../conf/FREESENSE-COMMON"
++include		"FREESENSE-HW"
+ ident		FREESENSE-DEBUG
+-
+-nooptions	MAC		# TrustedBSD MAC Framework
+-nooptions	COMPAT_FREEBSD4	# Compatible with FreeBSD4
+-nooptions	COMPAT_FREEBSD5	# Compatible with FreeBSD5
+-nooptions	COMPAT_FREEBSD6	# Compatible with FreeBSD6
+-nooptions	COMPAT_FREEBSD7	# Compatible with FreeBSD7
+-nooptions 	COMPAT_FREEBSD9	# Compatible with FreeBSD9
+-
+-options 	GEOM_MIRROR
+-options 	GEOM_UZIP
+-options 	GEOM_ELI
+-
+-options 	TMPFS
+-options 	NULLFS
+-options 	PPS_SYNC
+-
+-options 	KDTRACE_MIB_SDT
+-
+-# Wireless
+-nooptions	IEEE80211_DEBUG	# enable debug msgs
+-device		wlan_rssadapt
+-device		wlan_xauth
+-device		wlan_acl
+-device		iwm
+-device		iwifw
+-device		ipwfw		# Firmware for Intel PRO/Wireless 2100 IEEE 802.11 driver
+-device		wpifw		# Firmware for Intel 3945ABG Wireless LAN IEEE 802.11 driver
+-device		iwnfw		# Firmware for Intel Wireless WiFi Link 4965AGN IEEE 802.11n driver
+-device		uath		# Atheros USB IEEE 802.11a/b/g wireless network device
+-device		ralfw		# Firmware for Ralink Technology RT2500 wireless NICs.
+-device		ural		# Ralink Technology RT2500USB IEEE 802.11 driver
+-device		urtw		# Realtek RTL8187B/L USB IEEE 802.11b/g wireless network device
+-device		rum		# Ralink Technology USB IEEE 802.11a/b/g wireless network device
+-device		mwlfw		# Firmware for Marvell 88W8363 IEEE 802.11n wireless network driver
+-device		zyd		# ZyDAS ZD1211/ZD1211B USB IEEE 802.11b/g wireless network device
+-device		upgt		# Conexant/Intersil PrismGT SoftMAC USB IEEE 802.11b/g wireless
+-device		udav		# Davicom DM9601 USB Ethernet driver
+-device		axe
+-device		axge
+-device		aue
+-device		cue
+-device		igc			# Intel i225 2.5G ethernet
+-device		kue
+-device		mos
+-device		rsu
+-device		rsufw
+-device		rtwn
+-device		rtwnfw
+-device		rtwn_pci
+-device		rtwn_usb
+-device		run		# Ralink RT2700U/RT2800U/RT3000U USB 802.11agn
+-device		runfw
+-device		rue
+-device		bwn		# Broadcom BCM43xx IEEE 802.11b/g wireless network driver
+-device		bwi		# Broadcom BCM43xx IEEE 802.11b/g wireless network driver
+-
+-# Pseudo devices.
+-#device		pty		# Pseudo-ttys (telnet etc)
+-
+-# USB support
+-nooptions	USB_DEBUG	# enable debug msgs
+-
+-# 3G devices
+-device		ufoma
+-device		ucom
+-device		uslcom
+-device		uplcom
+-device		umct
+-device		uvisor
+-device		uark
+-device		uftdi
+-device		uvscom
+-device		umodem
+-device		u3g
+-device		cdce
+-
+-device		uhid		# "Human Interface Devices"
+-
+-# FireWire support
+-device		firewire	# FireWire bus code
+-device		sbp		# SCSI over FireWire (Requires scbus and da)
+-
+-# FreeSense additions
+-
+-# Required by athp
+-options 	ALQ
+-
+-device		gre
+-device		if_bridge
+-device		carp
+-device		lagg
+-device		vte
+-
+-# IP/IPFW
+-options 	IPFIREWALL_DEFAULT_TO_ACCEPT
+-options 	IPFIREWALL_VERBOSE
+-options 	IPSTEALTH
+-
+-# Netgraph
+-options 	NETGRAPH		#netgraph(4) system
+-options 	NETGRAPH_VLAN
+-options 	NETGRAPH_L2TP
+-options 	NETGRAPH_BPF
+-options 	NETGRAPH_ETF
+-options 	NETGRAPH_ETHER
+-options 	NETGRAPH_IFACE
+-options 	NETGRAPH_EIFACE
+-options 	NETGRAPH_PPP
+-options 	NETGRAPH_PPPOE
+-options 	NETGRAPH_PPTPGRE
+-options 	NETGRAPH_RFC1490
+-options 	NETGRAPH_SOCKET
+-options 	NETGRAPH_TTY
+-options 	NETGRAPH_MPPC_ENCRYPTION
+-options 	NETGRAPH_UI
+-options 	NETGRAPH_VJC
+-options 	NETGRAPH_KSOCKET
+-options 	NETGRAPH_LMI
+-options 	NETGRAPH_ONE2MANY
+-options 	NETGRAPH_BRIDGE
+-options 	NETGRAPH_CISCO
+-options 	NETGRAPH_ECHO
+-options 	NETGRAPH_ASYNC
+-options 	NETGRAPH_FRAME_RELAY
+-options 	NETGRAPH_HOLE
+-options 	NETGRAPH_TEE
+-options 	NETGRAPH_TCPMSS
+-options 	NETGRAPH_PIPE
+-options 	NETGRAPH_CAR
+-options 	NETGRAPH_DEFLATE
+-options 	NETGRAPH_PRED1
+-
+-# IPSEC
+-options 	TCP_SIGNATURE
+-options		IPSEC
+-device		enc
+-
+-# ALTQ
+-options 	ALTQ
+-options 	ALTQ_CBQ
+-options 	ALTQ_RED
+-options 	ALTQ_RIO
+-options 	ALTQ_HFSC
+-options 	ALTQ_PRIQ
+-options 	ALTQ_FAIRQ
+-options 	ALTQ_NOPCC
+-options 	ALTQ_CODEL
+-
+-# Squid related settings
+-options 	MSGMNB=8192	# max # of bytes in a queue
+-options 	MSGMNI=40	# number of message queue identifiers
+-options 	MSGSEG=512	# number of message segments per queue
+-options 	MSGSSZ=32	# size of a message segment
+-options 	MSGTQL=2048	# max messages in system
+-
+-device		pf
+-device		pflog
+-device		pfsync
+-
+-device		rndtest		# FIPS 140-2 entropy tester
+-
+-device		speaker
+-
+-options 	MROUTING
+-
+-# Additional cards
+-device		mxge		# mxge - Myricom Myri10GE 10 Gigabit Ethernet adapter driver
+-device		cxgb		# cxgb -- Chelsio T3 10 Gigabit Ethernet adapter driver
+-device		cxgbe		# cxgbe -- Chelsio T4-, T5-, and T6-based 100Gb, 40Gb, 25Gb, 10Gb, and 1Gb Ethernet adapter driver
+-device		cxgbev	# cxgbev -- Chelsio T4-, T5-, and T6-based 100Gb, 40Gb, 25Gb, 10Gb, and 1Gb Ethernet VF driver
+-#device		nve		# nVidia nForce MCP on-board Ethernet Networking
+-device		oce
+-device  	mlxfw
+-device  	mlx4		# Shared code module between IB and Ethernet
+-device  	mlx4en		# Mellanox ConnectX HCA Ethernet
+-device		mlx5		# Shared code module between IB and Ethernet
+-device		mlx5en		# Mellanox ConnectX-4 and ConnectX-4 LX
+-device		qlxgb		# QLogic 10 Gigabit Ethernet adapter driver
+-device		bnxt		# Broadcom NetXtreme-C/NetXtreme-E Family Ethernet driver
+-
+-# Enable Linux Kernel Programming Interface - required by mlx[45]
+-options 	COMPAT_LINUXKPI
+-
+-# Required by mlx5en
+-options 	RATELIMIT		# TX rate limiting support
+-
+-# Enable gpioapu
+-#device		gpioapu
+-#device		gpiorcc
+-
+-# Enable virtio_console
+-device		virtio_console	# VirtIO Console device
+-
+-# Use AESNI as a module
+-nodevice	aesni
+-
+-options 	RSS
+diff --git a/sys/amd64/conf/FREESENSE-HW b/sys/amd64/conf/FREESENSE-HW
+new file mode 100755
+index 000000000..fec78f0c0
+--- /dev/null
++++ b/sys/amd64/conf/FREESENSE-HW
+@@ -0,0 +1,40 @@
++# FreeSense amd64 hardware support, shared by FREESENSE and FREESENSE-DEBUG.
++# Copyright (c) 2026 The FreeSense Project, Apache-2.0.
++
++# Wireless (Wi-Fi access point and client cards that FreeBSD supports well)
++device		wlan_rssadapt
++device		wlan_xauth
++device		wlan_acl
++device		iwm
++device		rtwn
++device		rtwnfw
++device		rtwn_pci
++device		rtwn_usb
++device		rsu
++device		rsufw
++device		run
++device		runfw
++
++# Ethernet
++device		igc			# Intel i225/i226 2.5G
++device		mxge
++device		cxgbe
++device		cxgbev
++device		mlxfw
++device		mlx5
++device		mlx5en
++device		bnxt
++device		axe			# USB Ethernet adapters
++device		axge
++options 	COMPAT_LINUXKPI		# required by mlx5
++options 	RATELIMIT		# required by mlx5en
++
++# USB serial and cellular modems
++device		ucom
++device		uftdi
++device		uplcom
++device		uslcom
++device		u3g
++device		umodem
++device		cdce
++device		uhid
+diff --git a/sys/arm64/conf/FREESENSE b/sys/arm64/conf/FREESENSE
+old mode 100644
+new mode 100755
+index 2d8968498..86f4d6d9a
+--- a/sys/arm64/conf/FREESENSE
++++ b/sys/arm64/conf/FREESENSE
+@@ -1,179 +1,7 @@
++# FreeSense arm64 kernel (release).
++# Copyright (c) 2026 The FreeSense Project, Apache-2.0.
+ include		GENERIC
+-# release kernel: GENERIC on main pulls in std.debug (INVARIANTS, WITNESS)
+ include		"../../conf/std.nodebug"
+-
+-nooptions	KDB_TRACE
+-
++include		"../../conf/FREESENSE-COMMON"
++include		"FREESENSE-HW"
+ ident		FREESENSE
+-
+-nooptions	MAC		# TrustedBSD MAC Framework
+-nooptions	COMPAT_FREEBSD4	# Compatible with FreeBSD4
+-nooptions	COMPAT_FREEBSD5	# Compatible with FreeBSD5
+-nooptions	COMPAT_FREEBSD6	# Compatible with FreeBSD6
+-nooptions	COMPAT_FREEBSD7	# Compatible with FreeBSD7
+-
+-options 	GEOM_MIRROR
+-options 	GEOM_UZIP
+-options 	GEOM_ELI
+-
+-options 	TMPFS
+-options 	UNIONFS
+-options 	NULLFS
+-options 	PPS_SYNC
+-
+-options 	KDTRACE_MIB_SDT
+-
+-# Required by athp
+-options 	ALQ
+-
+-# Wireless
+-device		wlan_rssadapt
+-device		wlan_xauth
+-device		wlan                    # 802.11 support
+-device		wlan_acl
+-nooptions	IEEE80211_DEBUG		# enable debug msgs
+-options 	IEEE80211_SUPPORT_MESH  # enable 802.11s draft support
+-device		wlan_wep                # 802.11 WEP support
+-device		wlan_ccmp               # 802.11 CCMP support
+-device		wlan_tkip               # 802.11 TKIP support
+-device		wlan_amrr               # AMRR transmit rate control algorithm
+-device		ath                     # Atheros NICs
+-device		ath_hal                 # pci/cardbus chip support
+-options 	AH_AR5416_INTERRUPT_MITIGATION  # AR5416 interrupt mitigation
+-device		ath_rate_sample         # SampleRate tx rate control for ath
+-device		iwm
+-device		iwifw
+-device		ipwfw		# Firmware for Intel PRO/Wireless 2100 IEEE 802.11 driver
+-device		wpifw		# Firmware for Intel 3945ABG Wireless LAN IEEE 802.11 driver
+-device		iwnfw		# Firmware for Intel Wireless WiFi Link 4965AGN IEEE 802.11n driver
+-device		uath		# Atheros USB IEEE 802.11a/b/g wireless network device
+-device		ralfw		# Firmware for Ralink Technology RT2500 wireless NICs.
+-device		ural		# Ralink Technology RT2500USB IEEE 802.11 driver
+-device		urtw		# Realtek RTL8187B/L USB IEEE 802.11b/g wireless network device
+-device		rum		# Ralink Technology USB IEEE 802.11a/b/g wireless network device
+-device		mwlfw		# Firmware for Marvell 88W8363 IEEE 802.11n wireless network driver
+-device		upgt		# Conexant/Intersil PrismGT SoftMAC USB IEEE 802.11b/g wireless
+-device		udav		# Davicom DM9601 USB Ethernet driver
+-device		axe
+-device		axge
+-device		ure
+-device		aue
+-device		cue
+-device		kue
+-device		mos
+-device		rsu
+-device		rsufw
+-device		run		# Ralink RT2700U/RT2800U/RT3000U USB 802.11agn
+-device		runfw
+-device		ral		# Ralink RT2500, RT2501, RT2600, RT2700, RT2800, RT3090 and RT3900E chipsets
+-device		rue
+-device		rtwn
+-device		rtwnfw
+-device		rtwn_pci
+-device		rtwn_usb
+-device		bwn		# Broadcom BCM43xx IEEE 802.11b/g wireless network driver
+-device		bwi		# Broadcom BCM43xx IEEE 802.11b/g wireless network driver
+-
+-# USB support
+-nooptions	USB_DEBUG	# enable debug msgs
+-
+-# 3G devices
+-device		ufoma
+-device		ucom
+-device		uslcom
+-device		uplcom
+-device		umct
+-device		uvisor
+-device		uark
+-device		uftdi
+-device		uvscom
+-device		umodem
+-device		u3g
+-device		cdce
+-
+-device		uhid		# "Human Interface Devices"
+-
+-# FreeSense additions
+-
+-device		xz
+-device		gre
+-device		if_bridge
+-device		carp
+-device		lagg
+-device		vte
+-device		vxlan
+-
+-# IP/IPFW
+-options 	IPFIREWALL_DEFAULT_TO_ACCEPT
+-options 	IPFIREWALL_VERBOSE
+-options 	IPSTEALTH
+-
+-# Netgraph
+-options 	NETGRAPH		#netgraph(4) system
+-options 	NETGRAPH_VLAN
+-options 	NETGRAPH_L2TP
+-options 	NETGRAPH_BPF
+-options 	NETGRAPH_ETHER
+-options 	NETGRAPH_IFACE
+-options 	NETGRAPH_EIFACE
+-options 	NETGRAPH_PPP
+-options 	NETGRAPH_PPPOE
+-options 	NETGRAPH_PPTPGRE
+-options 	NETGRAPH_RFC1490
+-options 	NETGRAPH_SOCKET
+-options 	NETGRAPH_TTY
+-options 	NETGRAPH_MPPC_ENCRYPTION
+-options 	NETGRAPH_UI
+-options 	NETGRAPH_VJC
+-options 	NETGRAPH_KSOCKET
+-options 	NETGRAPH_LMI
+-options 	NETGRAPH_ONE2MANY
+-options 	NETGRAPH_BRIDGE
+-options 	NETGRAPH_CISCO
+-options 	NETGRAPH_ECHO
+-options 	NETGRAPH_ASYNC
+-options 	NETGRAPH_FRAME_RELAY
+-options 	NETGRAPH_HOLE
+-options 	NETGRAPH_TEE
+-options 	NETGRAPH_TCPMSS
+-options 	NETGRAPH_PIPE
+-options 	NETGRAPH_CAR
+-options 	NETGRAPH_DEFLATE
+-options 	NETGRAPH_PRED1
+-
+-# IPSEC
+-options 	TCP_SIGNATURE
+-options		IPSEC
+-device		enc
+-
+-# ALTQ
+-options 	ALTQ
+-options 	ALTQ_CBQ
+-options 	ALTQ_RED
+-options 	ALTQ_RIO
+-options 	ALTQ_HFSC
+-options 	ALTQ_PRIQ
+-options 	ALTQ_FAIRQ
+-options 	ALTQ_NOPCC
+-options 	ALTQ_CODEL
+-
+-# Squid related settings
+-options 	MSGMNB=8192	# max # of bytes in a queue
+-options 	MSGMNI=40	# number of message queue identifiers
+-options 	MSGSEG=512	# number of message segments per queue
+-options 	MSGSSZ=32	# size of a message segment
+-options 	MSGTQL=2048	# max messages in system
+-
+-device		pf
+-device		pflog
+-device		pfsync
+-
+-device		rndtest		# FIPS 140-2 entropy tester
+-device		safe		# safe -- SafeNet crypto accelerator
+-
+-options 	MROUTING
+-
+-# Enable virtio_console
+-device		virtio_console	# VirtIO Console device
+-
+-options 	RSS
+diff --git a/sys/arm64/conf/FREESENSE-DEBUG b/sys/arm64/conf/FREESENSE-DEBUG
+new file mode 100755
+index 000000000..92c785dfa
+--- /dev/null
++++ b/sys/arm64/conf/FREESENSE-DEBUG
+@@ -0,0 +1,6 @@
++# FreeSense arm64 debug kernel: GENERIC keeps INVARIANTS, WITNESS and the other debug options.
++# Copyright (c) 2026 The FreeSense Project, Apache-2.0.
++include		GENERIC
++include		"../../conf/FREESENSE-COMMON"
++include		"FREESENSE-HW"
++ident		FREESENSE-DEBUG
+diff --git a/sys/arm64/conf/FREESENSE-HW b/sys/arm64/conf/FREESENSE-HW
+new file mode 100755
+index 000000000..e26a7f302
+--- /dev/null
++++ b/sys/arm64/conf/FREESENSE-HW
+@@ -0,0 +1,32 @@
++# FreeSense arm64 hardware support (generic UEFI machines and Raspberry Pi).
++# Copyright (c) 2026 The FreeSense Project, Apache-2.0.
++options 	UNIONFS
++device		xz
++device		wlan
++options 	IEEE80211_SUPPORT_MESH
++device		wlan_wep
++device		wlan_ccmp
++device		wlan_tkip
++device		wlan_amrr
++device		wlan_rssadapt
++device		wlan_xauth
++device		wlan_acl
++device		rtwn
++device		rtwnfw
++device		rtwn_usb
++device		rsu
++device		rsufw
++device		run
++device		runfw
++device		igc
++device		ure
++device		axe
++device		axge
++device		ucom
++device		uftdi
++device		uplcom
++device		uslcom
++device		u3g
++device		umodem
++device		cdce
++device		uhid
+diff --git a/sys/conf/FREESENSE-COMMON b/sys/conf/FREESENSE-COMMON
+new file mode 100755
+index 000000000..382a7774e
+--- /dev/null
++++ b/sys/conf/FREESENSE-COMMON
+@@ -0,0 +1,72 @@
++# FreeSense kernel: the options and pseudo-devices every architecture shares.
++# Included by FREESENSE and FREESENSE-DEBUG after GENERIC. Copyright (c) 2026 The FreeSense Project, Apache-2.0.
++
++nooptions	MAC			# no TrustedBSD MAC framework
++nooptions	KDB_TRACE
++options 	DDB
++
++# Storage and filesystems
++options 	GEOM_ELI		# disk encryption
++options 	GEOM_MIRROR
++options 	GEOM_UZIP		# compressed images (live media)
++options 	TMPFS
++options 	NULLFS
++options 	PPS_SYNC		# PPS time sources
++options 	KDTRACE_MIB_SDT		# keep the MIB probes in release kernels
++
++# Network pseudo-devices
++device		gre
++device		if_bridge
++device		carp
++device		lagg
++device		vxlan
++device		enc			# IPsec packet inspection
++device		pf
++device		pflog
++device		pfsync
++options 	IPSTEALTH		# hide this router from traceroute (setting)
++options 	MROUTING		# multicast forwarding
++options 	RSS			# receive-side scaling for multi-queue NICs
++
++# IPsec
++options 	IPSEC
++options 	TCP_SIGNATURE		# TCP-MD5 for routing sessions
++
++# Traffic shaping
++options 	ALTQ
++options 	ALTQ_CBQ
++options 	ALTQ_RED
++options 	ALTQ_RIO
++options 	ALTQ_HFSC
++options 	ALTQ_PRIQ
++options 	ALTQ_FAIRQ
++options 	ALTQ_NOPCC
++options 	ALTQ_CODEL
++
++# Netgraph: what PPPoE, PPTP and L2TP clients and multilink PPP need
++options 	NETGRAPH
++options 	NETGRAPH_ETHER
++options 	NETGRAPH_SOCKET
++options 	NETGRAPH_KSOCKET
++options 	NETGRAPH_IFACE
++options 	NETGRAPH_VLAN
++options 	NETGRAPH_PPP
++options 	NETGRAPH_PPPOE
++options 	NETGRAPH_PPTPGRE
++options 	NETGRAPH_L2TP
++options 	NETGRAPH_ASYNC
++options 	NETGRAPH_BPF
++options 	NETGRAPH_ETF
++options 	NETGRAPH_ONE2MANY
++options 	NETGRAPH_TEE
++options 	NETGRAPH_TCPMSS
++options 	NETGRAPH_VJC
++options 	NETGRAPH_DEFLATE
++options 	NETGRAPH_PRED1
++options 	NETGRAPH_MPPC_ENCRYPTION
++
++# Console and virtual machines
++device		virtio_console
++
++# AES-NI runs as a module so ipsecmb and the crypto framework can pick the best provider
++nodevice	aesni

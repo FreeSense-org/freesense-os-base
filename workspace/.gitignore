@@ -1,0 +1,4 @@
+/NUL
+__pycache__/
+*.pyc
+/local-output/

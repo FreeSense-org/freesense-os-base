@@ -1,0 +1,109 @@
+name: "2.0 checks (shared)"
+
+# The one check of the four product repositories. Each calls this file from the 2.0 branch of freesense-os-base;
+# it checks out every repository, lays them out as one workspace and runs tools/check.py. Nothing is published.
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - name: Choose the commit of every repository
+        id: refs
+        env:
+          # A branch of the same name as the pull request's branch, else 2.0.
+          HEAD_BRANCH: ${{ github.head_ref }}
+        run: |
+          set -euo pipefail
+          for repository in freesense freesense-os-base freesense-system-ports freesense-packages freesense.org; do
+            ref=""
+            if [ "${GITHUB_REPOSITORY}" = "FreeSense-org/${repository}" ]; then
+              ref=${GITHUB_SHA}
+            else
+              for candidate in "${HEAD_BRANCH}" 2.0; do
+                [ -n "${candidate}" ] || continue
+                if git ls-remote --exit-code "https://github.com/FreeSense-org/${repository}.git" "refs/heads/${candidate}" >/dev/null; then
+                  ref=${candidate}
+                  break
+                fi
+              done
+            fi
+            if [ -z "${ref}" ]; then
+              echo "::error::${repository} has no 2.0 branch"
+              exit 1
+            fi
+            key=${repository//[.-]/_}
+            printf '%s=%s\n' "${key}" "${ref}" >> "${GITHUB_OUTPUT}"
+          done
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: FreeSense-org/freesense
+          ref: ${{ steps.refs.outputs.freesense }}
+          path: repos/freesense
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: FreeSense-org/freesense-os-base
+          ref: ${{ steps.refs.outputs.freesense_os_base }}
+          path: repos/freesense-os-base
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: FreeSense-org/freesense-system-ports
+          ref: ${{ steps.refs.outputs.freesense_system_ports }}
+          path: repos/freesense-system-ports
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: FreeSense-org/freesense-packages
+          ref: ${{ steps.refs.outputs.freesense_packages }}
+          path: repos/freesense-packages
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: FreeSense-org/freesense.org
+          ref: ${{ steps.refs.outputs.freesense_org }}
+          path: repos/freesense.org
+          persist-credentials: false
+      - name: Assemble the workspace
+        run: python3 repos/freesense-os-base/scripts/assemble-workspace.py --repos repos --dest ws
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+      - name: Install the check tools
+        run: |
+          set -euo pipefail
+          python3 -m pip install --disable-pip-version-check playwright==1.65.1
+          python3 -m playwright install --with-deps chromium
+          docker pull --quiet php:8.6.0-cli
+          docker pull --quiet koalaman/shellcheck:stable
+          # check.py prefers programs of the host. The runner's own PHP and ShellCheck differ from the pinned images.
+          for program in php shellcheck; do
+            while command -v "${program}" >/dev/null; do sudo rm -f "$(command -v "${program}")"; hash -r; done
+          done
+      - name: Workflow rules and committed key material
+        run: |
+          python3 ws/freesense-os-base/scripts/ci/workflow_lint.py repos
+          python3 ws/freesense-os-base/scripts/ci/hygiene.py ws
+      - name: Workflow syntax
+        run: |
+          set -euo pipefail
+          for repository in repos/*; do
+            [ -d "${repository}/.github/workflows" ] || continue
+            config=repos/freesense-os-base/.github/actionlint.yaml
+            find "${repository}/.github/workflows" -name 'v2-*.yml' -print0 |
+              xargs -0 -r docker run --rm -v "${PWD}:/work:ro" -w /work rhysd/actionlint:1.7.12 -config-file "${config}"
+          done
+      - name: FreeSense 2.0 checks
+        working-directory: ws
+        env:
+          FREESENSE_CHECK_JOBS: '4'
+        run: python3 -B tools/check.py

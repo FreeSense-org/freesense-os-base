@@ -1,0 +1,9 @@
+# Sources are LF in the repository and in every checkout; tools/check.py fails on CRLF.
+* text=auto eol=lf
+# Patch series and third-party files are kept byte for byte.
+*.patch -text
+**/third-party/** -text
+*.png binary
+*.woff2 binary
+# Public package signing keys are kept byte for byte.
+**/keys/*.pub -text

@@ -1,0 +1,15 @@
+diff --git a/sys/modules/Makefile b/sys/modules/Makefile
+index 8a6832441..55b85b77e 100644
+--- a/sys/modules/Makefile
++++ b/sys/modules/Makefile
+@@ -728,6 +728,10 @@ _thunderbolt=	thunderbolt
+ . endif
+ .endif
+ 
++.if ${MACHINE_CPUARCH} == "amd64"
++SUBDIR+=	ipsecmb
++.endif
++
+ .if ${MK_ZFS} != "no" || defined(ALL_MODULES)
+ SUBDIR+=	zfs
+ .endif

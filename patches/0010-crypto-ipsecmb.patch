@@ -1305,7 +1305,7 @@ index 0000000..e0fad31
 +# ipsecmb(4): an OpenCrypto driver on Intel's multi-buffer crypto library.
 +#
 +# The library (sys/contrib/intel-ipsec-mb, fetched at a pinned commit by
-+# freesense-os-base apply.sh) is built into the module: its NASM sources with
++# freesense-os-base build/build, stage source) is built in: its NASM sources with
 +# nasm, its C sources with the kernel flags minus the ones that forbid SIMD.
 +# All library code runs only in an FPU context (the worker threads use
 +# fpu_kern_thread(), key setup uses fpu_kern_enter()), so SIMD is safe there.
@@ -1318,7 +1318,7 @@ index 0000000..e0fad31
 +
 +IPSECMB_LIB?=	${SRCTOP}/sys/contrib/intel-ipsec-mb/lib
 +IPSECMB_COMPAT=	${SRCTOP}/sys/crypto/ipsecmb/compat
-+# freesense-os-base scripts/kernel-contrib.sh builds the pinned nasm here.
++# freesense-os-base build/nasm.sh builds the pinned nasm here.
 +.if exists(${IPSECMB_LIB}/../.nasm/nasm)
 +IPSECMB_NASM?=	${IPSECMB_LIB}/../.nasm/nasm
 +.else

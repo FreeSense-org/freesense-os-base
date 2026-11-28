@@ -1,0 +1,20 @@
+diff --git a/release/conf/FreeSense_build_src.conf b/release/conf/FreeSense_build_src.conf
+index afabac3b9..5d1c0e7a2 100644
+--- a/release/conf/FreeSense_build_src.conf
++++ b/release/conf/FreeSense_build_src.conf
+@@ -27,7 +27,6 @@ WITHOUT_NIS=YES
+ WITHOUT_NLS=YES
+ WITHOUT_NLS_CATALOGS=YES
+ WITHOUT_NS_CACHING=YES
+-WITHOUT_NTP=YES
+ WITHOUT_PROFILE=YES
+ WITHOUT_QUOTAS=YES
+ WITHOUT_SETUID_LOGIN=YES
+@@ -34,7 +33,6 @@ WITHOUT_SETUID_LOGIN=YES
+ WITHOUT_SHAREDOCS=YES
+ WITHOUT_TALK=YES
+ WITHOUT_TESTS=yes
+-WITHOUT_UNBOUND=YES
+ 
+ # The appliance ships no debug packages
+ WITHOUT_DEBUG_FILES=YES

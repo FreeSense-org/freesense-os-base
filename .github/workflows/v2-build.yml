@@ -1,0 +1,478 @@
+name: "2.0 build"
+
+# Build only. No publication and no channels. Results are artifacts of the run. The one credential is the signing key
+# of the 2.0 test package repository, in the `sign` job alone.
+#
+# A push to 2.0 that touches build inputs runs the quick `check` stage. A full build is started by hand
+# (gh workflow run v2-build.yml --ref 2.0) or by the nightly stub of this file on main.
+#
+# This repository is public: any signed-in GitHub user can download the artifacts of a run, including the work
+# artifacts passed between the jobs (kept 1 day). The installer image is uploaded only on request (upload_iso).
+on:
+  push:
+    branches: ['2.0']
+    paths: ['build/**', 'patches/**', 'boot/**', '.github/workflows/v2-build.yml']
+  workflow_dispatch:
+    inputs:
+      freesense_ref:
+        description: freesense branch or commit
+        default: '2.0'
+      ports_ref:
+        description: freesense-system-ports branch or commit
+        default: '2.0'
+      packages_ref:
+        description: freesense-packages branch or commit
+        default: '2.0'
+      target:
+        description: Target (arm64 is prepared in build/lock.json and disabled)
+        type: choice
+        options: [amd64]
+        default: amd64
+      from_stage:
+        description: Run this stage and the later ones again (empty to reuse what is unchanged)
+        default: ''
+      upload_iso:
+        description: Keep the ISO as an artifact (any signed-in GitHub user can download it)
+        type: boolean
+        default: false
+      nightly:
+        description: Set by the nightly start on main
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: freesense-2-build-${{ github.event_name }}
+  cancel-in-progress: false
+
+jobs:
+  check:
+    if: github.ref == 'refs/heads/2.0'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    outputs:
+      freesense: ${{ steps.commits.outputs.freesense }}
+      ports: ${{ steps.commits.outputs.ports }}
+      packages: ${{ steps.commits.outputs.packages }}
+      base_stage: ${{ steps.driver.outputs.base_stage }}
+      complete: ${{ steps.driver.outputs.complete }}
+      repo_stage: ${{ steps.driver.outputs.repo_stage }}
+      build_id: ${{ steps.commits.outputs.build_id }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: repos/freesense-os-base
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: FreeSense-org/freesense
+          ref: ${{ inputs.freesense_ref || '2.0' }}
+          path: repos/freesense
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: FreeSense-org/freesense-system-ports
+          ref: ${{ inputs.ports_ref || '2.0' }}
+          path: repos/freesense-system-ports
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: FreeSense-org/freesense-packages
+          ref: ${{ inputs.packages_ref || '2.0' }}
+          path: repos/freesense-packages
+          persist-credentials: false
+      - name: Record the commits and the build ID
+        id: commits
+        run: |
+          set -euo pipefail
+          {
+            echo "freesense=$(git -C repos/freesense rev-parse HEAD)"
+            echo "ports=$(git -C repos/freesense-system-ports rev-parse HEAD)"
+            echo "packages=$(git -C repos/freesense-packages rev-parse HEAD)"
+            echo "build_id=2.0.0-dev.$(date -u +%Y%m%d).${GITHUB_RUN_NUMBER}"
+          } >> "${GITHUB_OUTPUT}"
+      - name: Assemble the workspace
+        run: python3 repos/freesense-os-base/scripts/assemble-workspace.py --repos repos --dest ws
+      - name: Read the driver's stages
+        id: driver
+        run: python3 -B ws/freesense-os-base/scripts/ci/driver_stages.py ws/freesense-os-base/build/build >> "${GITHUB_OUTPUT}"
+      - name: Report the pins
+        run: python3 -B ws/freesense-os-base/scripts/ci/pin_report.py ws/freesense-os-base/build/lock.json >> "${GITHUB_STEP_SUMMARY}"
+      - name: Check the inputs
+        run: ws/freesense-os-base/build/build --work "${PWD}/work" check
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: work-check
+          path: |
+            work/state
+            work/out
+            work/cache/catalogue
+          retention-days: 1
+
+  base:
+    needs: check
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 355
+    steps:
+      - name: Free disk space and allow KVM
+        run: |
+          set -euo pipefail
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules >/dev/null
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          sudo apt-get update -q
+          sudo apt-get install -yq qemu-system-x86 qemu-utils ovmf xorriso zstd
+          test -w /dev/kvm
+          df -h .
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: repos/freesense-os-base
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: FreeSense-org/freesense
+          ref: ${{ needs.check.outputs.freesense }}
+          path: repos/freesense
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: FreeSense-org/freesense-system-ports
+          ref: ${{ needs.check.outputs.ports }}
+          path: repos/freesense-system-ports
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: FreeSense-org/freesense-packages
+          ref: ${{ needs.check.outputs.packages }}
+          path: repos/freesense-packages
+          persist-credentials: false
+      - name: Assemble the workspace
+        run: python3 repos/freesense-os-base/scripts/assemble-workspace.py --repos repos --dest ws
+      - name: Keep the pinned builder image
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: work/cache/images/*.xz
+          key: v2-builder-${{ hashFiles('ws/freesense-os-base/build/lock.json') }}
+          restore-keys: v2-builder-
+      # The newest earlier result. The driver compares its own stage hashes and rebuilds what changed.
+      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            work/state
+            work/out
+            work/cache/distfiles
+          key: v2-work-amd64-${{ github.run_id }}
+          restore-keys: v2-work-amd64-
+      # This run's checked inputs go on top of the restored results.
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: work-check
+          path: work
+      - name: Build up to the base system
+        env:
+          BASE_STAGE: ${{ needs.check.outputs.base_stage }}
+          FROM_STAGE: ${{ inputs.from_stage }}
+          FREESENSE_BUILD_ID: ${{ needs.check.outputs.build_id }}
+        run: |
+          set -euo pipefail
+          options=(--work "${PWD}/work" --offline)
+          # --from past this job's last stage belongs to the next job.
+          if [ -n "${FROM_STAGE}" ] && { [ "${FROM_STAGE}" = check ] || [ "${FROM_STAGE}" = source ] || [ "${FROM_STAGE}" = "${BASE_STAGE}" ]; }; then
+            options+=(--from "${FROM_STAGE}")
+          fi
+          ws/freesense-os-base/build/build "${options[@]}" "${BASE_STAGE}"
+          df -h .
+      - name: Key of these results
+        id: key
+        run: echo "hash=$(cat work/state/*.json | sha256sum | cut -c1-32)" >> "${GITHUB_OUTPUT}"
+      - uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            work/state
+            work/out
+            work/cache/distfiles
+          key: v2-work-amd64-${{ steps.key.outputs.hash }}
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: needs.check.outputs.complete == 'true'
+        with:
+          name: work-base
+          path: |
+            work/state
+            work/out
+            work/cache/catalogue
+            work/cache/distfiles
+          retention-days: 1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: failure()
+        with:
+          name: logs-base
+          path: |
+            work/out/**/*.log
+            work/out/**/*.json
+            work/vm/live.log
+          retention-days: 14
+      - name: A run without an installer image is not a build
+        if: needs.check.outputs.complete != 'true'
+        env:
+          BASE_STAGE: ${{ needs.check.outputs.base_stage }}
+        run: |
+          echo "::error::build/build has no repo and iso stages yet; this run stopped after '${BASE_STAGE}'"
+          exit 1
+
+  packages:
+    needs: [check, base]
+    if: needs.check.outputs.complete == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 355
+    steps:
+      - name: Free disk space and allow KVM
+        run: |
+          set -euo pipefail
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules >/dev/null
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          sudo apt-get update -q
+          sudo apt-get install -yq qemu-system-x86 qemu-utils ovmf xorriso zstd
+          test -w /dev/kvm
+          df -h .
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: repos/freesense-os-base
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: FreeSense-org/freesense
+          ref: ${{ needs.check.outputs.freesense }}
+          path: repos/freesense
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: FreeSense-org/freesense-system-ports
+          ref: ${{ needs.check.outputs.ports }}
+          path: repos/freesense-system-ports
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: FreeSense-org/freesense-packages
+          ref: ${{ needs.check.outputs.packages }}
+          path: repos/freesense-packages
+          persist-credentials: false
+      - name: Assemble the workspace
+        run: python3 repos/freesense-os-base/scripts/assemble-workspace.py --repos repos --dest ws
+      - name: Keep the pinned builder image
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: work/cache/images/*.xz
+          key: v2-builder-${{ hashFiles('ws/freesense-os-base/build/lock.json') }}
+          restore-keys: v2-builder-
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: work-base
+          path: work
+      - name: Build the packages and the unsigned repository
+        env:
+          FROM_STAGE: ${{ inputs.from_stage }}
+          REPO_STAGE: ${{ needs.check.outputs.repo_stage }}
+          FREESENSE_BUILD_ID: ${{ needs.check.outputs.build_id }}
+        run: |
+          set -euo pipefail
+          options=(--work "${PWD}/work" --offline)
+          case "${FROM_STAGE}" in
+            deps|freesense|repo) options+=(--from "${FROM_STAGE}") ;;
+          esac
+          ws/freesense-os-base/build/build "${options[@]}" "${REPO_STAGE}"
+          test -d work/out/repo
+          df -h .
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: work-packages
+          path: |
+            work/state
+            work/out
+            work/cache/catalogue
+            work/cache/distfiles
+          retention-days: 1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: repository-unsigned
+          path: work/out/repo
+          retention-days: 1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: failure()
+        with:
+          name: logs-packages
+          path: |
+            work/out/**/*.log
+            work/out/**/*.json
+            work/vm/live.log
+          retention-days: 14
+
+  # The only job that sees a secret: the key of the 2.0 test repository. The environment accepts the 2.0 branch only.
+  # It runs nothing but checkout, the artifact actions and build/sign-repo (scripts/ci/signing.md).
+  sign:
+    needs: [check, packages]
+    if: github.ref == 'refs/heads/2.0' && github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    environment: signing-2.0
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install the virtual machine tools and allow KVM
+        run: |
+          set -euo pipefail
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules >/dev/null
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          sudo apt-get update -q
+          sudo apt-get install -yq qemu-system-x86 qemu-utils ovmf xorriso zstd
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: repository-unsigned
+          path: repository
+      - name: Sign the repository and verify it with the public key
+        env:
+          SIGNING_KEY_B64: ${{ secrets.FREESENSE_2_PKG_SIGNING_KEY_B64 }}
+        run: |
+          set -euo pipefail
+          test -x build/sign-repo || { echo '::error::build/sign-repo is missing (scripts/ci/signing.md)'; exit 1; }
+          umask 077
+          key=$(mktemp "${RUNNER_TEMP}/signing.XXXXXX")
+          trap 'shred -u "${key}" 2>/dev/null || rm -f "${key}"' EXIT
+          printf '%s' "${SIGNING_KEY_B64}" | base64 --decode > "${key}"
+          unset SIGNING_KEY_B64
+          test -s "${key}"
+          build/sign-repo "${PWD}/repository" "${key}" "${PWD}/keys/freesense-2.0-pkg.pub"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: repository-signed
+          path: repository
+          retention-days: 1
+
+  image:
+    needs: [check, sign]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 355
+    steps:
+      - name: Free disk space and allow KVM
+        run: |
+          set -euo pipefail
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules >/dev/null
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          sudo apt-get update -q
+          sudo apt-get install -yq qemu-system-x86 qemu-utils ovmf xorriso zstd
+          test -w /dev/kvm
+          df -h .
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: repos/freesense-os-base
+          fetch-depth: 300
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: FreeSense-org/freesense
+          ref: ${{ needs.check.outputs.freesense }}
+          path: repos/freesense
+          fetch-depth: 300
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: FreeSense-org/freesense-system-ports
+          ref: ${{ needs.check.outputs.ports }}
+          path: repos/freesense-system-ports
+          fetch-depth: 300
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: FreeSense-org/freesense-packages
+          ref: ${{ needs.check.outputs.packages }}
+          path: repos/freesense-packages
+          fetch-depth: 300
+          persist-credentials: false
+      - name: Assemble the workspace
+        run: python3 repos/freesense-os-base/scripts/assemble-workspace.py --repos repos --dest ws
+      - name: Keep the pinned builder image
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: work/cache/images/*.xz
+          key: v2-builder-${{ hashFiles('ws/freesense-os-base/build/lock.json') }}
+          restore-keys: v2-builder-
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: work-packages
+          path: work
+      - name: Make room for the signed repository
+        run: rm -rf work/out/repo
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: repository-signed
+          path: work/out/repo
+      - name: Build and test the installer from the signed repository
+        env:
+          FREESENSE_REQUIRE_SIGNED: '1'
+          FROM_STAGE: ${{ inputs.from_stage }}
+          FREESENSE_BUILD_ID: ${{ needs.check.outputs.build_id }}
+        run: |
+          set -euo pipefail
+          options=(--work "${PWD}/work" --offline)
+          case "${FROM_STAGE}" in
+            iso|smoke) options+=(--from "${FROM_STAGE}") ;;
+          esac
+          ws/freesense-os-base/build/build "${options[@]}"
+          df -h .
+      - name: What changed since the last successful build
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BUILD_ID: ${{ needs.check.outputs.build_id }}
+        run: |
+          set -euo pipefail
+          mkdir -p results previous
+          earlier=$(gh run list --repo "${GITHUB_REPOSITORY}" --workflow v2-build.yml --branch 2.0 --event workflow_dispatch \
+            --status success --limit 1 --json databaseId --jq '.[0].databaseId // empty')
+          if [ -n "${earlier}" ]; then
+            gh run download "${earlier}" --repo "${GITHUB_REPOSITORY}" --name results --dir previous ||
+              echo "The earlier results have expired."
+          fi
+          python3 -B ws/freesense-os-base/scripts/ci/change_list.py --repos repos --build-id "${BUILD_ID}" \
+            --record freesense --record freesense-os-base --record freesense-system-ports --record freesense-packages \
+            --current results/sources.json --previous previous/sources.json --output results/CHANGES.md
+          cat results/CHANGES.md >> "${GITHUB_STEP_SUMMARY}"
+      - name: Collect the results
+        run: |
+          set -euo pipefail
+          # Checksums, manifests and logs only: no package and no image.
+          (cd work/out && find . \( -name '*.json' -o -name '*.log' -o -name 'SHA256SUMS*' \) -exec cp --parents -t ../../results {} +)
+          (cd work/out/iso && find . -name '*.iso' -exec sha256sum {} +) | tee results/ISO.sha256 >> "${GITHUB_STEP_SUMMARY}"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: results
+          path: results
+          retention-days: 30
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: inputs.upload_iso || (inputs.nightly && vars.FREESENSE2_UPLOAD_ISO == 'true')
+        with:
+          name: installer-${{ needs.check.outputs.build_id }}
+          path: work/out/iso/*.iso
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: failure()
+        with:
+          name: logs-image
+          path: |
+            work/out/**/*.log
+            work/out/**/*.json
+            work/vm/live.log
+          retention-days: 14

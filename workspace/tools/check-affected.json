@@ -1,0 +1,111 @@
+{
+	"_comment": "tools/check.py --affected. groups: shared files that almost every test names; a change adds the group's tests (and, with 'mentions', every test that contains that text) instead of every test that names the file. 'names': true also keeps the by-name selection. always: runs on every --affected pass that has a change. Paths are relative to refactor2.0.",
+	"groups": [
+		{
+			"name": "shared UI and request handling",
+			"files": [
+				"freesense/src/usr/local/www/assets/shared/*",
+				"freesense/src/usr/local/www/assets/shell/*",
+				"freesense/src/usr/local/www/assets/third-party/*",
+				"freesense/src/usr/local/FreeSense/web/*",
+				"freesense/src/usr/local/FreeSense/autoload.php",
+				"freesense/src/usr/local/FreeSense/lib/Http/ManagementResponse.php",
+				"freesense/src/usr/local/FreeSense/lib/Http/ManagementRouter.php",
+				"freesense/src/usr/local/FreeSense/lib/Http/FeatureRoutes.php",
+				"freesense/src/usr/local/FreeSense/lib/Config/ConfigurationStore.php",
+				"freesense/src/usr/local/FreeSense/lib/Validation/*",
+				"freesense/tests/web/*.py",
+				"freesense/tests/web/*.json",
+				"tools/browser_shell.py"
+			],
+			"tests": [
+				"freesense/tests/web/test_sign_in.py",
+				"freesense/tests/web/test_navigation.py",
+				"freesense/tests/web/test_overlays.py",
+				"freesense/tests/web/test_help_popover.py",
+				"freesense/tests/web/test_dashboard.py",
+				"freesense/tests/web/test_general_setup.py",
+				"freesense/tests/MenuCatalogTest.php",
+				"freesense/tests/SystemCommandContractTest.php",
+				"tools/tests/test_check.py"
+			]
+		},
+		{
+			"name": "route registry",
+			"files": ["freesense/src/usr/local/FreeSense/lib/Http/ManagementRoute.php"],
+			"tests": [
+				"freesense/tests/MenuCatalogTest.php",
+				"freesense/tests/SystemCommandContractTest.php",
+				"freesense/tests/RouterFormsRegistryTest.php",
+				"freesense/tests/web/test_sign_in.py",
+				"freesense/tests/web/test_navigation.py"
+			]
+		},
+		{
+			"name": "feature routes",
+			"files": ["freesense/src/usr/local/FreeSense/lib/Http/*/*Routes.php"],
+			"names": true,
+			"tests": [
+				"freesense/tests/MenuCatalogTest.php",
+				"freesense/tests/SystemCommandContractTest.php",
+				"freesense/tests/RouterFormsRegistryTest.php",
+				"freesense/tests/web/test_navigation.py"
+			]
+		},
+		{
+			"name": "translations",
+			"files": ["freesense/src/usr/local/www/assets/locales/*"],
+			"mentions": "locales",
+			"tests": ["freesense/tests/web/test_general_setup.py"]
+		},
+		{
+			"name": "System port",
+			"files": [
+				"freesense-system-ports/security/FreeSense-system/pkg-plist",
+				"freesense-system-ports/security/FreeSense-system/Makefile"
+			],
+			"mentions": "security/FreeSense-system"
+		},
+		{
+			"name": "build driver",
+			"files": [
+				"freesense-os-base/build/*",
+				"freesense-os-base/patches/*",
+				"freesense-os-base/boot/images/*",
+				"freesense/src/usr/local/FreeSense/lib/Installer/PackageInstaller.php",
+				"freesense-system-ports/*/*/Makefile"
+			],
+			"names": true,
+			"tests": ["freesense-os-base/tests/test_build.py"]
+		},
+		{
+			"name": "check tooling",
+			"files": [
+				"tools/check.py",
+				"tools/affected.py",
+				"tools/check-affected.json",
+				"tools/parallel.py",
+				"tools/snapshot.py"
+			],
+			"tests": [
+				"tools/tests/test_check.py",
+				"tools/tests/test_affected.py",
+				"tools/tests/test_parallel.py"
+			]
+		},
+		{
+			"name": "PHP check runner",
+			"files": ["tools/php-check.php", "tools/check-stage.sh", "tools/php-imports.php"],
+			"tests": [
+				"tools/tests/test_check.py",
+				"tools/tests/test_parallel.py",
+				"tools/tests/test_php_imports.py",
+				"freesense/tests/SystemCommandContractTest.php",
+				"freesense/tests/LocalStatusHttpTest.php"
+			]
+		}
+	],
+	"always": [
+		"freesense/tests/AssetRouteCoverageTest.php"
+	]
+}

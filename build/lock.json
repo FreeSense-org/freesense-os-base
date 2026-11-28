@@ -1,0 +1,88 @@
+{
+	"schema": "freesense.build-lock/v1",
+	"target": "amd64",
+	"targets": {
+		"amd64": {"enabled": true, "abi": "FreeBSD:16:amd64"},
+		"arm64": {"enabled": false, "abi": "FreeBSD:16:aarch64"}
+	},
+	"freebsd_source": {
+		"url": "https://github.com/freebsd/freebsd-src.git",
+		"commit": "611046b15dbb92226c346cfbd61dffb4b402b4f6",
+		"osversion": 1600031
+	},
+	"builder_image": {
+		"file": "FreeBSD-16.0-CURRENT-amd64-BASIC-CLOUDINIT-20261117-611046b15dbb-291235-ufs.qcow2.xz",
+		"url": "https://download.freebsd.org/snapshots/VM-IMAGES/16.0-CURRENT/amd64/20261117/FreeBSD-16.0-CURRENT-amd64-BASIC-CLOUDINIT-20261117-611046b15dbb-291235-ufs.qcow2.xz",
+		"sha256": "3a117c0640f126f4a34476f1bf4c7756eef3ecf3764c7f008ddc47c64adf69a0"
+	},
+	"kernel_contrib": {
+		"intel-ipsec-mb": {
+			"url": "https://github.com/intel/intel-ipsec-mb.git",
+			"commit": "1ef14617d9415ac79d261c06b7ec98143e43ad42",
+			"destination": "sys/contrib/intel-ipsec-mb",
+			"exclude": ["docs"],
+			"license": "BSD-3-Clause (some files Apache-2.0, from OpenSSL)"
+		},
+		"nasm": {
+			"file": "nasm-2.16.03.tar.xz",
+			"urls": [
+				"https://www.nasm.us/pub/nasm/releasebuilds/2.16.03/nasm-2.16.03.tar.xz",
+				"https://mirror.sobukus.de/files/src/nasm/nasm-2.16.03.tar.xz"
+			],
+			"sha256": "1412a1c760bbd05db026b6c0d1657affd6631cd0a63cddb6f73cc6d4aa616148",
+			"destination": "sys/contrib/intel-ipsec-mb/.nasm",
+			"license": "BSD-2-Clause"
+		}
+	},
+	"tree_files": {
+		"add": {
+			"stand/images/freesense-brand-rev.png": "boot/images/freesense-brand-rev.png",
+			"stand/images/freesense-install-brand-rev.png": "boot/images/freesense-install-brand-rev.png",
+			"stand/images/freesense-logo-rev.png": "boot/images/freesense-logo-rev.png"
+		},
+		"remove": [
+			"stand/images/freebsd-brand-rev.png",
+			"stand/images/freebsd-brand.png",
+			"stand/images/freebsd-install-brand-rev.png",
+			"stand/images/freebsd-logo-rev.png"
+		]
+	},
+	"packages": {
+		"repository": "https://pkg.freebsd.org/FreeBSD:16:amd64/latest"
+	},
+	"ports_source": {
+		"url": "https://github.com/freebsd/freebsd-ports.git",
+		"commit": "68edce2ee778a82cc41138f080f66bc5b43cfbcc"
+	},
+	"custom_ports": {
+		"security/openvpn": {
+			"package": "openvpn",
+			"why": "1.2 builds --x509-username-field and async push",
+			"set": ["ASYNC_PUSH", "X509ALTUSERNAME"],
+			"unset": ["EASYRSA", "TEST"],
+			"runtime": ["liblz4", "lzo2", "pkcs11-helper"]
+		},
+		"security/strongswan": {
+			"package": "strongswan",
+			"why": "the stock package has no eap-radius or xauth-generic; options as in 1.2",
+			"set": ["CURL", "EAPDYNAMIC", "EAPRADIUS", "EAPSIMFILE", "GCM", "IKEV1", "UNBOUND", "XAUTH", "IPSECKEY", "PKCS11", "PKI", "UNITY", "VICI", "VSTR", "SWANCTL"],
+			"unset": ["EAPAKA3GPP2", "BUILTIN", "LIBC", "SMP"],
+			"runtime": ["curl", "ldns", "unbound", "vstr"]
+		},
+		"shells/scponly": {
+			"package": "scponly",
+			"why": "the stock package has no chroot shell (scponlyc); options as in 1.2",
+			"set": ["CHROOT", "SCP", "WILDCARDS", "WINSCP"],
+			"unset": ["DEFAULT_CHDIR", "GFTP", "RSYNC", "SUBVERSION", "SVNSERVE", "UNISON"],
+			"runtime": []
+		}
+	},
+	"build_host": {
+		"packages": ["python3", "git-lite"]
+	},
+	"php": {
+		"package": "php86",
+		"core_extensions": ["openssl"],
+		"built_extensions": {}
+	}
+}

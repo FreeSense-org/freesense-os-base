@@ -1,0 +1,116 @@
+#!/usr/bin/env python3
+"""Sign a FreeSense package repository in place: build/sign-repo REPOSITORY KEYFILE PUBLICKEY
+
+KEYFILE is the Ed25519 private key made by `pkg key --create -t eddsa`; PUBLICKEY verifies the result. On Linux with KVM
+the signing runs in a throwaway VM from the pinned image of lock.json; on FreeBSD (root) it runs here. The key is read
+only from KEYFILE, reaches the VM as one file on a disk that is removed afterwards, is kept in memory there, and is
+never printed. pkg update exits 0 even when a signature is wrong, so the check is that every package is visible with
+PUBLICKEY and none with another key. Needs only this folder; the repository stays unchanged when anything fails.
+See scripts/ci/signing.md.
+"""
+# Copyright (c) 2026 The FreeSense Project. SPDX-License-Identifier: Apache-2.0
+
+import argparse
+import json
+import os
+from pathlib import Path
+import shlex
+import shutil
+import subprocess
+import sys
+import tempfile
+
+sys.dont_write_bytecode = True
+BUILD = Path(__file__).resolve().parent
+sys.path.insert(0, str(BUILD))
+import vm  # noqa: E402
+
+SCRIPT = BUILD / "guest/sign.sh"
+
+
+def checked(repository: Path, key: Path, public: Path) -> int:
+    if not (repository / "All").is_dir() or not (repository / "packagesite.pkg").is_file():
+        raise ValueError(f"{repository} is not a package repository with All/ and a catalogue")
+    for path in (key, public):
+        if not path.is_file() or not path.stat().st_size:
+            raise ValueError(f"no key in {path}")
+    packages = len(list((repository / "All").glob("*.pkg")))
+    if not packages:
+        raise ValueError(f"{repository} has no packages")
+    return packages
+
+
+def sign_in_vm(repository: Path, key: Path, public: Path) -> None:
+    lock = json.loads((BUILD / "lock.json").read_text(encoding="utf-8"))
+    base_directory = Path(os.environ.get("RUNNER_TEMP") or os.environ.get("TMPDIR") or "/tmp")
+    with tempfile.TemporaryDirectory(prefix="freesense-sign.", dir=os.environ.get("FREESENSE_SIGN_DIR") or base_directory) as temporary:
+        directory = Path(temporary)
+        vm.preflight(directory, 8)
+        base = vm.image(lock, Path(os.environ.get("FREESENSE_IMAGE_CACHE") or directory / "images"))
+        run = directory / "run"
+        with vm.Scratch(run) as scratch:
+            public_stage = scratch / "public"
+            public_stage.mkdir()
+            shutil.copyfile(public, public_stage / "key.pub")
+            shutil.copyfile(SCRIPT, public_stage / "sign.sh")
+            given = vm.archive(scratch / "given.raw", public_stage, ["key.pub", "sign.sh"])
+            # The private key is a disk of its own, written with owner-only rights and removed with the scratch folder.
+            secret = scratch / "secret.raw"
+            os.close(os.open(secret, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600))
+            subprocess.run(["tar", "-cf", str(secret), "-C", str(key.parent), f"--transform=s,.*,key,", key.name], check=True)
+            incoming = vm.archive(scratch / "repo.raw", repository, ["."])
+            outgoing = vm.sparse(scratch / "out.raw", 8)
+            body = "\n".join([
+                "mkdir -p /work/repo /work/given /work/secret",
+                "tar -xf \"$(disk fsrepo)\" -C /work/repo --no-same-owner",
+                "tar -xf \"$(disk fsgiven)\" -C /work/given",
+                "mount -t tmpfs -o mode=700 tmpfs /work/secret",
+                "tar -xf \"$(disk fskey)\" -C /work/secret",
+                "status=0",
+                "sh /work/given/sign.sh /work/repo /work/secret/key /work/given/key.pub || status=$?",
+                "umount -f /work/secret",
+                "[ $status -eq 0 ] || return $status",
+                "tar -cf \"$(disk fsout)\" -C /work/repo .",
+            ])
+            disks = {"fsrepo": (incoming, True), "fsgiven": (given, True), "fskey": (secret, True), "fsout": (outgoing, False)}
+            vm.boot(scratch, base, disks, lambda nonce: vm.guest_script(nonce, "", [], False, body), 0, 1800)
+            result = scratch / "signed"
+            result.mkdir()
+            subprocess.run(["tar", "-xf", str(outgoing), "-C", str(result), "--no-same-owner"], check=True)
+            replace(repository, result)
+
+
+def replace(repository: Path, result: Path) -> None:
+    """Only the catalogue files at the top change; the packages are never rewritten."""
+    if not (result / "packagesite.pkg").is_file():
+        raise ValueError("the signing VM returned no repository")
+    for path in sorted(result.iterdir()):
+        if path.is_file():
+            shutil.copyfile(path, repository / path.name)
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("repository", type=Path)
+    parser.add_argument("keyfile", type=Path)
+    parser.add_argument("publickey", type=Path)
+    args = parser.parse_args()
+    repository, key, public = args.repository.resolve(), args.keyfile.resolve(), args.publickey.resolve()
+    count = checked(repository, key, public)
+    if sys.platform.startswith("linux"):
+        sign_in_vm(repository, key, public)
+    else:
+        subprocess.run(["sh", str(SCRIPT), str(repository), str(key), str(public)], check=True)
+    print(f"signed {repository}: {count} packages")
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except subprocess.CalledProcessError as error:
+        # Never the command line: it names the key file.
+        sys.exit(f"FAIL: signing step exited {error.returncode}")
+    except (ValueError, OSError) as error:
+        sys.exit(f"FAIL: {error}")
+    except KeyboardInterrupt:
+        sys.exit("FAIL: interrupted")
