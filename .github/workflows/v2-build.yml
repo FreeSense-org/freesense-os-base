@@ -1,0 +1,64 @@
+name: "2.0 build"
+
+# Stub on main for the experimental 2.0 line. GitHub starts `schedule` and `workflow_dispatch` only for files that are
+# on the default branch; the real workflow is this file on the 2.0 branch:
+#   gh workflow run v2-build.yml --ref 2.0
+# The nightly start below is off until the repository variable FREESENSE2_NIGHTLY is `true`. It builds and publishes
+# nothing, and it uses no part of the 1.x pipeline.
+on:
+  schedule:
+    - cron: '23 20 * * *'
+  workflow_dispatch:
+    inputs:
+      freesense_ref:
+        description: freesense branch or commit
+        default: '2.0'
+      ports_ref:
+        description: freesense-system-ports branch or commit
+        default: '2.0'
+      packages_ref:
+        description: freesense-packages branch or commit
+        default: '2.0'
+      target:
+        description: Target (arm64 is prepared in build/lock.json and disabled)
+        type: choice
+        options: [amd64]
+        default: amd64
+      from_stage:
+        description: Run this stage and the later ones again (empty to reuse what is unchanged)
+        default: ''
+      upload_iso:
+        description: Keep the ISO as an artifact (any signed-in GitHub user can download it)
+        type: boolean
+        default: false
+      nightly:
+        description: Set by the nightly start on main
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  nightly:
+    if: github.event_name == 'schedule' && vars.FREESENSE2_NIGHTLY == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      actions: write
+      contents: read
+    steps:
+      - name: Start the 2.0 build on its branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run v2-build.yml --repo "${GITHUB_REPOSITORY}" --ref 2.0 -f nightly=true
+
+  wrong-branch:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: The 2.0 build runs from the 2.0 branch
+        run: |
+          echo '::error::Run this workflow with the 2.0 branch: gh workflow run v2-build.yml --ref 2.0'
+          exit 1

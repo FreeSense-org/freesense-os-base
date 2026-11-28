@@ -30,6 +30,8 @@ expected_workflows = {
     "pin-target.yml", "release.yml",
     "retention.yml", "runner-build.yml", "stable.yml", "stable-refresh.yml", "system.yml",
     "testing.yml",
+    # Stub that starts the experimental 2.0 build on its own branch.
+    "v2-build.yml",
 }
 workflow_paths = sorted(WORKFLOWS.glob("*.yml"))
 require({path.name for path in workflow_paths} == expected_workflows,
