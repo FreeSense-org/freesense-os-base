@@ -223,14 +223,6 @@ index 88f159a6af4..51d5a97aeca 100644
  		if (V_ip6_no_radr)
  			nd->nd_flags |= ND6_IFF_NO_RADR;
  		if (V_ip6_use_stableaddr)
-@@ -2367,7 +2369,6 @@ nd6_get_llentry(struct ifnet *ifp, const struct in6_addr *addr, int family)
- 		} else {
- 			/* child lle already exists, free newly-created one */
- 			lltable_free_entry(LLTABLE6(ifp), child_lle);
--			LLE_WLOCK(lle_tmp);
- 			child_lle = lle_tmp;
- 		}
- 		LLE_WUNLOCK(lle);
 diff --git a/sys/netpfil/pf/pf.c b/sys/netpfil/pf/pf.c
 index 90342f04576..cbdb00a04eb 100644
 --- a/sys/netpfil/pf/pf.c
