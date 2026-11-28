@@ -100,7 +100,7 @@ def run_logged(argv: list, log: Path, what: str, show: str, environment: dict | 
                     quiet = time.monotonic()
             if time.monotonic() - quiet >= HEARTBEAT:
                 stream.flush()
-                print(f"    ... {what}: {(time.monotonic() - started) / 60:.0f} min, now: {last[:160]}", flush=True)
+                print(f"    ... {what}: {(time.monotonic() - started) / 60:.0f} min, now: ...{last[-150:]}", flush=True)
                 quiet = time.monotonic()
         status = process.wait()
     if status:

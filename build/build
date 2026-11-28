@@ -27,7 +27,8 @@ stage are in out/logs.
 --mirror DIR may hold freebsd-src.git, freebsd-ports.git, intel-ipsec-mb.git, packagesite.pkg, distfiles and packages;
 commits and checksums still decide.
 Environment: FREESENSE_BUILD_ID (X.Y.Z-dev.YYYYMMDD.N, names packages and ISO), FREESENSE_JOBS, FREESENSE_VM_CPUS,
-FREESENSE_VM_MEMORY_MB, FREESENSE_VM_PROFILE (runner: 4 CPUs, 12 GiB, as a GitHub-hosted runner), FREESENSE_VM_TIMEOUT, FREESENSE_MIN_FREE_GIB, FREESENSE_BUILDER_IMAGE (local .qcow2.xz).
+FREESENSE_VM_MEMORY_MB, FREESENSE_VM_PROFILE (runner: 4 CPUs, 12 GiB, as a GitHub-hosted runner), FREESENSE_VM_TIMEOUT, FREESENSE_MIN_FREE_GIB, FREESENSE_BUILDER_IMAGE (local .qcow2.xz), FREESENSE_VM_DISK (a .qcow2 kept between runs, with the
+obj tree; persistent machines only).
 Needs Python 3.11, git and a tar that reads zstd.
 """
 # Copyright (c) 2026 The FreeSense Project. SPDX-License-Identifier: Apache-2.0

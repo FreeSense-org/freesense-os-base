@@ -137,7 +137,9 @@ def guest_script(nonce: str, repository: str, packages: list[str], work_disk: bo
     if work_disk:
         setup += ["kldload -n zfs",
                   "sysctl vfs.zfs.arc.max=2147483648 >/dev/null",
-                  "zpool create -f -O compression=lz4 -O atime=off -O mountpoint=/work work \"$(disk fswork)\"",
+                  # A kept disk (FREESENSE_VM_DISK) has the pool of the last run; a new one is empty.
+                  "zpool import -f -d \"$(disk fswork)\" work 2>/dev/null ||"
+                  " zpool create -f -O compression=lz4 -O atime=off -O mountpoint=/work work \"$(disk fswork)\"",
                   "zpool set autotrim=on work",
                   "mkdir -p /work/tmp",
                   "export TMPDIR=/work/tmp"]
@@ -173,8 +175,14 @@ def boot(directory: Path, base: Path, disks: dict, user_data_for, work_gib: int,
                  "-drive", f"if=virtio,format=qcow2,discard=unmap,file={overlay}",
                  "-netdev", "user,id=net0", "-device", "virtio-net-pci,netdev=net0,romfile="]
     if work_gib:
-        subprocess.run(["qemu-img", "create", "-q", "-f", "qcow2", str(directory / "work.qcow2"), f"{work_gib}G"], check=True)
-        disks = {"fswork": (directory / "work.qcow2", False), **disks}
+        # A persistent machine can keep the work disk, so the obj tree of a failed or repeated base stage is used again.
+        work = Path(os.environ.get("FREESENSE_VM_DISK") or directory / "work.qcow2").resolve()
+        if work.suffix != ".qcow2":
+            raise ValueError("FREESENSE_VM_DISK names a .qcow2 file")
+        if not work.is_file():
+            work.parent.mkdir(parents=True, exist_ok=True)
+            subprocess.run(["qemu-img", "create", "-q", "-f", "qcow2", str(work), f"{work_gib}G"], check=True)
+        disks = {"fswork": (work, False), **disks}
     for index, (ident, (path, readonly)) in enumerate(disks.items()):
         form = "qcow2" if path.suffix == ".qcow2" else "raw"
         arguments += ["-drive", f"if=none,id=d{index},format={form},discard=unmap,file={path}" + (",readonly=on" if readonly else ""),
@@ -338,6 +346,10 @@ def run_stages(context, last: str, forced_from: str | None, builds_base: bool) -
             # The port with the full stage output; the build goes on without it.
             "kldload -n virtio_console 2>/dev/null || :",
             f"sleep 1; [ ! -c /dev/vtcon/{LIVE_PORT} ] || export FREESENSE_LIVE_LOG=/dev/vtcon/{LIVE_PORT}",
+            # On a kept work disk this run's tree and results replace the earlier ones.
+            "rm -rf /work/tree /work/state /work/out /work/cache/catalogue /work/builder-packages.txt",
+            # --from base or earlier builds world and kernel again.
+            "rm -f /work/obj/.*-done" if forced_from in ("check", "source", "base") else "true",
             "mkdir -p /work/tree",
             "tar -xf \"$(disk fstree)\" -C /work/tree",
             "tar -xf \"$(disk fsin)\" -C /work",
